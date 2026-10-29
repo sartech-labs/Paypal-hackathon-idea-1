@@ -1,0 +1,21 @@
+{
+  "/admin": {
+    "title": "Internal Administration Console (RESTRICTED)",
+    "content_type": "text/html; charset=utf-8",
+    "classification": "RESTRICTED_INTERNAL",
+    "body": "<!DOCTYPE html><html><head><title>Admin Console</title></head><body><h1>Restricted Administration Panel</h1><p>SYNTHETIC DEMO CONTENT: Editorial moderation controls and system maintenance toggles. Crawlers are strictly prohibited from accessing this path.</p></body></html>"
+  },
+  "/private/customer-data": {
+    "title": "Subscriber Directory (CONFIDENTIAL)",
+    "content_type": "text/html; charset=utf-8",
+    "classification": "CONFIDENTIAL_SYNTHETIC",
+    "body": "<!DOCTYPE html><html><head><title>Subscriber Records</title></head><body><h1>Synthetic Subscriber Records</h1><p>SYNTHETIC DEMO CONTENT: Jane Doe (subscriber-001@example.invalid), John Smith (subscriber-002@example.invalid). Never exposed to crawlers.</p></body></html>"
+  },
+  "/internal/reports": {
+    "title": "Internal Revenue & Operations Reports (PROPRIETARY)",
+    "content_type": "text/html; charset=utf-8",
+    "classification": "PROPRIETARY_SYNTHETIC",
+    "body": "<!DOCTYPE html><html><head><title>Internal Reports</title></head><body><h1>Q4 Synthetic Operations Forecast</h1><p>SYNTHETIC DEMO CONTENT: Internal infrastructure cost projections and unpublished partner benchmarks.</p></body></html>"
+  }
+}
+

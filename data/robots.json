@@ -1,0 +1,24 @@
+{
+  "groups": [
+    {
+      "user_agent": "*",
+      "allow": [
+        "/",
+        "/news",
+        "/news/technology",
+        "/news/economy"
+      ],
+      "disallow": [
+        "/admin",
+        "/private/customer-data",
+        "/internal/reports"
+      ],
+      "crawl_delay": 4,
+      "request_rate": "3/10s"
+    }
+  ],
+  "policy_endpoint": "/policies",
+  "gateway_prefix": "/gateway",
+  "notice": "Automated crawlers and AI agents must establish a CrawlerTrust deposit session and accept the active policy before accessing content under /gateway."
+}
+

@@ -1,0 +1,33 @@
+{
+  "site_id": "demo-news-site",
+  "site_name": "CrawlerTrust Sentinel News",
+  "policy_version": "1.0",
+  "deposit_amount": "0.01",
+  "currency": "USD",
+  "refundable": true,
+  "max_requests_per_session": 10,
+  "rate_limit_requests": 3,
+  "rate_limit_window_seconds": 10,
+  "session_ttl_seconds": 1800,
+  "challenge_ttl_seconds": 600,
+  "paypal_sandbox_enabled": false,
+  "allowed_paths": [
+    "/",
+    "/news",
+    "/news/technology",
+    "/news/economy"
+  ],
+  "disallowed_paths": [
+    "/admin",
+    "/private/customer-data",
+    "/internal/reports"
+  ],
+  "refund_policy": {
+    "description": "Deposits are refunded upon session completion only if the crawler accepted the active policy, stayed within allowed paths, and incurred no disqualifying violations.",
+    "disqualify_on_disallowed_path": true,
+    "max_rate_limit_violations_before_disqualification": 2,
+    "max_budget_violations_before_disqualification": 1,
+    "require_explicit_session_completion": true
+  }
+}
+
