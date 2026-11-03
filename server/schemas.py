@@ -279,6 +279,17 @@ class DepositResponse(BaseModel):
     forfeited_at: Optional[str] = None
 
 
+class PayPalApprovalCallbackResponse(BaseModel):
+    outcome: Literal["CAPTURED", "CANCELLED", "ALREADY_CAPTURED"]
+    deposit_id: str
+    payment_status: PaymentStatus
+    deposit_state: DepositState
+    provider_order_id: str
+    provider_capture_id: Optional[str] = None
+    captured_amount: Optional[str] = None
+    currency: str
+
+
 class DepositActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -436,4 +447,3 @@ class AuditSummaryResponse(BaseModel):
     refunds_by_status: dict[str, int]
     sessions_by_status: dict[str, int]
     violation_counts_by_reason: dict[str, int]
-

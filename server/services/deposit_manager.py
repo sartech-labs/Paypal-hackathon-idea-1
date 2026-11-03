@@ -706,6 +706,10 @@ class DepositManager:
                     "A refund request is already in progress for this deposit"
                 )
 
+            reconcile_before_refund = record.refund_status in (
+                RefundTransactionStatus.REFUND_IN_PROGRESS,
+                RefundTransactionStatus.REFUND_PENDING,
+            )
             self._transition_decision(record, PolicyDecisionStatus.ELIGIBLE_FOR_REFUND)
             if record.refund_status != RefundTransactionStatus.REFUND_IN_PROGRESS:
                 self._transition_refund(record, RefundTransactionStatus.REFUND_IN_PROGRESS)
@@ -732,6 +736,7 @@ class DepositManager:
                 currency=currency,
                 request_id=refund_req_id,
                 reason=f"CrawlerTrust compliant session refund ({session.session_id})",
+                reconcile_before_refund=reconcile_before_refund,
             )
         except (Exception, asyncio.CancelledError):
             async with self._lock:

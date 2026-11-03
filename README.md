@@ -34,7 +34,7 @@ As autonomous agents and LLM data pipelines increasingly traverse the web progra
 
 CrawlerTrust sits in front of protected website content (`/gateway/{path}`) and enforces a six-stage lifecycle:
 1. **Challenge (`HTTP 402 Payment Required`)**: Unauthenticated crawler requests receive a unique, single-use `challenge_id`, deposit requirements, and a link to `/policies`.
-2. **Deposit & Payment Capture**: The crawler initiates a deposit (`/deposits/create`), completes payment via PayPal Sandbox (or labeled mock mode), and requests server-side capture and verification (`/deposits/{id}/capture`, `/deposits/{id}/verify`).
+2. **Deposit & Payment Capture**: The crawler initiates a deposit (`/deposits/create`), approves the PayPal Sandbox order in a browser, and returns through `/deposits/paypal/return`; the backend then captures and verifies the payment. Mock mode and the existing explicit capture/verify endpoints remain available.
 3. **Explicit Policy Acceptance**: The crawler explicitly records agreement to the current `policy_version` (`/sessions/accept-policy`).
 4. **Cryptographic Session Issuance**: The server issues a high-entropy bearer token (`secrets.token_urlsafe(32)`) once and stores only its **SHA-256 hash** (`sessions_db.json`).
 5. **Real-Time Policy & Rate-Limit Enforcement**: Every `/gateway/{path}` request is evaluated against session validity, path normalization, allowed/disallowed rules, session request budget, and a monotonic sliding-window rate limiter.
@@ -168,12 +168,18 @@ sequenceDiagram
     G->>A: Log DEPOSIT_INITIATED
     G-->>C: 201 Created (deposit_id, provider_order_id, approval_url)
 
-    Note over C,P: In PayPal Sandbox mode, payer approves order at approval_url
+    Note over C,P: In PayPal Sandbox mode, buyer approves order at approval_url
+    P-->>C: Redirect browser to configured return_url with token (order ID)
+    C->>G: GET /deposits/paypal/return?deposit_id=...&token=...
+    G->>G: Match token against persisted deposit order ID
+    G->>P: Capture with stable PayPal-Request-Id; verify completed status, amount, currency, capture ID
+    P-->>G: Capture response
+    G-->>C: CAPTURED only after backend verification
 
-    C->>G: 4. POST /deposits/{id}/capture & POST /deposits/{id}/verify
-    G->>P: Capture & Verify Order (Check COMPLETED, $1.00, USD, capture_id)
-    P-->>G: Verified Capture Details
-    G->>A: Log PAYMENT_VERIFIED
+    C->>G: 4. Browser return invokes GET /deposits/paypal/return
+    G->>P: Capture and verify via Orders API (COMPLETED, $1.00, USD, capture_id)
+    P-->>G: Capture result
+    G->>A: Log PAYMENT_VERIFIED only after backend validation
     G-->>C: 200 OK (payment_status=CAPTURED)
 
     C->>G: 5. POST /sessions/accept-policy (agree_to_terms=true, policy_version="1.0")
@@ -299,7 +305,7 @@ Every authenticated request to `/gateway/{path}` is evaluated by `PolicyEngine.e
 
 `PayPalSandboxProvider` (`server/services/payment_service.py`) integrates directly with the official PayPal REST APIs over `httpx.AsyncClient`:
 1. **OAuth 2.0 Client Credentials**: `POST /v1/oauth2/token` using HTTP Basic Auth (`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`). Tokens are cached in memory until 60 seconds before expiry.
-2. **Order Creation**: `POST /v2/checkout/orders` with `intent: "CAPTURE"`, exact server-configured `Decimal` deposit amount and currency, and a deterministic `PayPal-Request-Id` header (`ord_req_<deposit_id>`). Extracts the HATEOAS `approve` URL for payer approval.
+2. **Order Creation**: `POST /v2/checkout/orders` with `intent: "CAPTURE"`, exact server-configured `Decimal` deposit amount and currency, a deterministic `PayPal-Request-Id` header (`ord_req_<deposit_id>`), and `payment_source.paypal.experience_context.return_url` / `cancel_url`. These callback URLs use the configured `APP_PUBLIC_URL` and include the existing `deposit_id`; PayPal supplies the order ID as `token` when returning. Extracts the HATEOAS `approve` URL for payer approval.
 3. **Order Capture**: `POST /v2/checkout/orders/{order_id}/capture` with `PayPal-Request-Id: cap_req_<deposit_id>`. Detects `ORDER_NOT_APPROVED` (returning HTTP `409 Conflict` with `approval_url`) and `ORDER_ALREADY_CAPTURED` (reconciling via order lookup).
 4. **Authoritative Server-Side Verification**: `GET /v2/checkout/orders/{order_id}` verifies:
    - Order status is `COMPLETED` and capture status is `COMPLETED`.
@@ -307,6 +313,8 @@ Every authenticated request to `/gateway/{path}` is evaluated by `PolicyEngine.e
    - Captured currency matches `deposit.currency`.
    - `capture_id` is present.
 5. **Idempotent Capture Refund**: `POST /v2/payments/captures/{capture_id}/refund` with `PayPal-Request-Id: ref_req_<deposit_id>`. Before issuing or retrying a refund, the provider reconciles against `GET /v2/checkout/orders/{order_id}` to verify whether a refund was already created before a timeout or crash.
+
+The browser return callback checks that PayPal's `token` matches the order ID persisted for that deposit, then invokes the existing backend capture path. It does not treat the redirect itself as payment proof. Buyer cancellation leaves the deposit uncaptured. Configure `APP_PUBLIC_URL` as the base URL reachable by the buyer's browser and PayPal; the local default is for same-machine development only.
 
 ---
 
@@ -330,6 +338,7 @@ Copy `.env.example` to `.env`. All variables are validated at startup via `serve
 | `APP_ENV` | `development` | `development`, `test`, or `production` |
 | `APP_HOST` | `127.0.0.1` | Bind host for Uvicorn |
 | `APP_PORT` | `8000` | Bind port for Uvicorn |
+| `APP_PUBLIC_URL` | `http://127.0.0.1:8000` | Canonical externally reachable app URL used to construct PayPal return/cancel callback URLs |
 | `PAYMENT_MODE` | `mock` | `mock` (simulated) or `paypal_sandbox` (live PayPal Sandbox APIs) |
 | `PAYPAL_BASE_URL` | `https://api-m.sandbox.paypal.com` | PayPal Sandbox REST API base URL |
 | `PAYPAL_CLIENT_ID` | *(empty)* | PayPal Sandbox OAuth2 Client ID |
@@ -443,6 +452,7 @@ PayPal's standard Orders API v2 creates checkout orders in `CREATED` status that
 1. In `.env`, set:
    ```dotenv
    PAYMENT_MODE=paypal_sandbox
+   APP_PUBLIC_URL=https://your-public-crawlertrust-host.example
    PAYPAL_CLIENT_ID=your_sandbox_client_id
    PAYPAL_CLIENT_SECRET=your_sandbox_client_secret
    ```
@@ -452,7 +462,7 @@ PayPal's standard Orders API v2 creates checkout orders in `CREATED` status that
    - Open the `approval_url` in your browser.
    - Log in with your PayPal Sandbox Personal (Buyer) account and click **Complete Purchase / Approve**.
    - Return to **Terminal 2** and press **Enter**.
-5. The CLI calls `/deposits/{deposit_id}/capture` and `/deposits/{deposit_id}/verify`. The backend captures the funds via PayPal Orders API v2, verifies the exact `1.00 USD` capture server-side, issues the session token, completes the compliant crawl, and executes a real Sandbox refund via `POST /v2/payments/captures/{capture_id}/refund`.
+5. PayPal redirects the browser to the configured return callback, which matches the returned order ID to the persisted deposit and runs the existing capture and verification flow. The backend verifies the exact `1.00 USD` capture before access is granted. The CLI's existing capture/verify requests remain idempotent if also used. The compliant crawl can then complete and execute a Sandbox refund via `POST /v2/payments/captures/{capture_id}/refund`.
 
 ---
 
@@ -560,7 +570,7 @@ The test suite (`tests/`) verifies:
 - `test_policy_engine.py`: Rule specificity precedence, session budgets, and policy version checks.
 - `test_rate_limiter.py`: Monotonic sliding window calculation and recovery with a deterministic `FakeClock`.
 - `test_deposits.py`: Single-use challenges, challenge expiration, cross-crawler ownership isolation, concurrent completion idempotency, and separated `payment_status` / `policy_decision` / `refund_status` outcomes.
-- `test_payments.py`: Mocked `PayPalSandboxProvider` OAuth2, order creation, buyer approval handling (`409 Conflict`), amount/currency mismatch rejection (`402`), upstream timeouts (`504`), and failed/pending refund preservation.
+- `test_payments.py`: Mocked `PayPalSandboxProvider` OAuth2, checkout return/cancel URLs and callbacks, callback order/deposit matching, capture verification and repeat handling, amount/currency mismatch rejection (`402`), upstream timeouts (`504`), and refund recovery.
 - `test_audit.py`: Append-only JSONL logging, token/secret scrubbing, session-scoped vs. admin-scoped authorization, server restart recovery, and corrupted JSON detection.
 
 ---
@@ -661,4 +671,3 @@ python -m client.violating --base-url http://127.0.0.1:8000
 - Sends rapid burst to `/gateway/news/technology` → blocked with `HTTP 429` (`RATE_LIMIT_EXCEEDED`).
 - Requests completion and refund → backend denies refund and records `deposit_state: FORFEITED` (`payment_status: CAPTURED`, `policy_decision: FORFEITED_BY_POLICY`, `refund_status: NOT_APPLICABLE_FORFEITED`).
 - Post-completion reuse attempt on `/gateway/news` → blocked with `HTTP 403` (`SESSION_ALREADY_COMPLETED`).
-

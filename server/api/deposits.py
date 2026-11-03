@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, status
 
@@ -18,7 +18,9 @@ from server.schemas import (
     DepositCreateRequest,
     DepositRecord,
     DepositResponse,
+    PaymentMode,
     PaymentStatus,
+    PayPalApprovalCallbackResponse,
 )
 from server.services.payment_service import (
     PaymentApprovalRequiredError,
@@ -27,6 +29,50 @@ from server.services.payment_service import (
 )
 
 router = APIRouter(prefix="/deposits", tags=["Deposits & Payments"])
+
+
+async def _get_paypal_callback_deposit(
+    *,
+    deposit_id: str,
+    order_id: str,
+    container: AppContainer,
+) -> DepositRecord:
+    deposit = await container.deposit_manager.get_deposit(deposit_id)
+    if deposit is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "deposit_not_found", "message": "Unknown deposit_id."},
+        )
+    if deposit.payment_mode != PaymentMode.PAYPAL_SANDBOX:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "unsupported_payment_mode", "message": "This is not a PayPal deposit."},
+        )
+    if not deposit.provider_order_id or order_id != deposit.provider_order_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "paypal_order_mismatch",
+                "message": "The returned PayPal order does not match this deposit.",
+            },
+        )
+    return deposit
+
+
+def _paypal_callback_response(
+    deposit: DepositRecord,
+    outcome: Literal["CAPTURED", "CANCELLED", "ALREADY_CAPTURED"],
+) -> PayPalApprovalCallbackResponse:
+    return PayPalApprovalCallbackResponse(
+        outcome=outcome,
+        deposit_id=deposit.deposit_id,
+        payment_status=deposit.payment_status,
+        deposit_state=deposit.deposit_state,
+        provider_order_id=deposit.provider_order_id or "",
+        provider_capture_id=deposit.provider_capture_id,
+        captured_amount=deposit.captured_amount,
+        currency=deposit.currency,
+    )
 
 
 async def _authorize_deposit_access(
@@ -96,6 +142,81 @@ async def _authorize_deposit_access(
                 "message": "Provided challenge_id does not match this deposit.",
             },
         )
+
+
+@router.get(
+    "/paypal/return",
+    response_model=PayPalApprovalCallbackResponse,
+    summary="Capture and verify an order after the buyer returns from PayPal approval",
+)
+async def paypal_approval_return(
+    deposit_id: str,
+    token: str,
+    container: AppContainer = Depends(get_container),
+) -> PayPalApprovalCallbackResponse:
+    deposit = await _get_paypal_callback_deposit(
+        deposit_id=deposit_id,
+        order_id=token,
+        container=container,
+    )
+    try:
+        updated = await container.deposit_manager.capture_deposit(
+            deposit_id=deposit_id,
+            crawler_id=deposit.crawler_id,
+        )
+    except PaymentApprovalRequiredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "payer_approval_required", "message": str(exc)},
+        ) from exc
+    except StateTransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "invalid_state_transition", "message": str(exc)},
+        ) from exc
+    except PaymentProviderTimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={"error": "payment_provider_timeout", "message": str(exc)},
+        ) from exc
+    except PaymentProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"error": "payment_provider_error", "message": str(exc)},
+        ) from exc
+
+    if updated.payment_status != PaymentStatus.CAPTURED:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error": "capture_verification_failed",
+                "message": updated.failure_reason or "PayPal capture could not be verified.",
+            },
+        )
+    return _paypal_callback_response(updated, "CAPTURED")
+
+
+@router.get(
+    "/paypal/cancel",
+    response_model=PayPalApprovalCallbackResponse,
+    summary="Handle buyer cancellation without capturing or changing deposit payment status",
+)
+async def paypal_approval_cancel(
+    deposit_id: str,
+    token: str,
+    container: AppContainer = Depends(get_container),
+) -> PayPalApprovalCallbackResponse:
+    deposit = await _get_paypal_callback_deposit(
+        deposit_id=deposit_id,
+        order_id=token,
+        container=container,
+    )
+    outcome = (
+        "ALREADY_CAPTURED"
+        if deposit.payment_status == PaymentStatus.CAPTURED
+        else "CANCELLED"
+    )
+    return _paypal_callback_response(deposit, outcome)
 
 
 @router.post(
@@ -396,4 +517,3 @@ async def refund_deposit(
         ) from exc
 
     return container.deposit_manager.to_response(updated_deposit)
-

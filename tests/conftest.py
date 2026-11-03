@@ -38,6 +38,7 @@ def test_settings(tmp_path: Path) -> Settings:
         app_env="test",
         app_host="127.0.0.1",
         app_port=8000,
+        app_public_url="http://testserver",
         payment_mode="mock",
         paypal_base_url="https://api-m.sandbox.paypal.com",
         paypal_client_id="test_client_id",
@@ -130,4 +131,3 @@ async def complete_onboarding_flow(
     session_issue = ses_resp.json()
 
     return challenge, verified_deposit, session_issue
-

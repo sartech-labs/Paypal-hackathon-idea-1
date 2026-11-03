@@ -97,11 +97,16 @@ sequenceDiagram
 
     Note over Crawler,PayPal: In PayPal Sandbox mode, payer approves order in browser
 
-    Crawler->>Gateway: 4. POST /deposits/{id}/capture & verify
-    Gateway->>PayPal: Capture & Verify Order (COMPLETED, $0.01, USD, capture_id)
-    PayPal-->>Gateway: Verified Capture Details
-    Gateway->>Audit: Log PAYMENT_VERIFIED (payment_status=CAPTURED)
+    PayPal-->>Crawler: Redirect browser to return_url with token (order ID)
+    Crawler->>Gateway: 4. GET /deposits/paypal/return?deposit_id=...&token=...
+    Gateway->>Gateway: Match returned order ID to persisted deposit
+    Gateway->>PayPal: Capture with stable request ID; verify COMPLETED, amount, currency, capture_id
+    PayPal-->>Gateway: Capture response
+    Gateway->>Audit: Log PAYMENT_VERIFIED only after backend verification
     Gateway-->>Crawler: 200 OK (payment_status=CAPTURED)
+    PayPal-->>Crawler: On cancel, redirect to cancel_url
+    Crawler->>Gateway: GET /deposits/paypal/cancel?deposit_id=...&token=...
+    Gateway-->>Crawler: Cancellation reported; deposit remains uncaptured
 
     Crawler->>Gateway: 5. POST /sessions/accept-policy (agree_to_terms=true, v1.0)
     Gateway->>Audit: Log POLICY_ACCEPTED & SESSION_ISSUED (SHA-256 hash stored)
@@ -222,4 +227,3 @@ sequenceDiagram
   </script>
 </body>
 </html>
-

@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
+from urllib.parse import urlencode
 
 import httpx
 
@@ -52,6 +53,14 @@ class OrderVerifyResult:
     simulated: bool
     approval_url: Optional[str] = None
     failure_reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class CapturedPaymentLookupResult:
+    capture_id: str
+    status: str
+    amount: Decimal
+    currency: str
 
 
 @dataclass(frozen=True)
@@ -116,6 +125,7 @@ class PaymentProvider(abc.ABC):
         currency: str,
         request_id: str,
         reason: str,
+        reconcile_before_refund: bool = False,
     ) -> RefundExecutionResult:
         """Refund a previously captured payment idempotently."""
 
@@ -292,6 +302,7 @@ class MockPaymentProvider(PaymentProvider):
         currency: str,
         request_id: str,
         reason: str,
+        reconcile_before_refund: bool = False,
     ) -> RefundExecutionResult:
         if request_id in self._refund_by_request_id:
             return self._refund_by_request_id[request_id]
@@ -327,6 +338,7 @@ class PayPalSandboxProvider(PaymentProvider):
         transport: Optional[httpx.AsyncBaseTransport] = None,
     ) -> None:
         self._base_url = settings.paypal_base_url.rstrip("/")
+        self._app_public_url = settings.app_public_url.rstrip("/")
         self._client_id = settings.paypal_client_id.strip()
         self._client_secret = settings.paypal_client_secret.strip()
         self._timeout = httpx.Timeout(settings.paypal_timeout_seconds)
@@ -530,6 +542,7 @@ class PayPalSandboxProvider(PaymentProvider):
         quantized = amount.quantize(Decimal("0.01"))
         async with self._build_client() as client:
             token = await self._get_access_token(client)
+            callback_query = urlencode({"deposit_id": deposit_id})
             body = {
                 "intent": "CAPTURE",
                 "purchase_units": [
@@ -542,6 +555,20 @@ class PayPalSandboxProvider(PaymentProvider):
                         },
                     }
                 ],
+                "payment_source": {
+                    "paypal": {
+                        "experience_context": {
+                            "return_url": (
+                                f"{self._app_public_url}/deposits/paypal/return?"
+                                f"{callback_query}"
+                            ),
+                            "cancel_url": (
+                                f"{self._app_public_url}/deposits/paypal/cancel?"
+                                f"{callback_query}"
+                            ),
+                        }
+                    }
+                },
             }
             try:
                 response = await client.post(
@@ -801,6 +828,134 @@ class PayPalSandboxProvider(PaymentProvider):
             provider_status=provider_status,
         )
 
+    async def _get_captured_payment(
+        self,
+        client: httpx.AsyncClient,
+        token: str,
+        *,
+        capture_id: str,
+        expected_amount: Decimal,
+        expected_currency: str,
+    ) -> CapturedPaymentLookupResult:
+        try:
+            response = await client.get(
+                f"/v2/payments/captures/{capture_id}",
+                headers={"Authorization": f"******", "Accept": "application/json"},
+            )
+        except httpx.TimeoutException as exc:
+            raise PaymentProviderTimeoutError(
+                "Timed out retrieving the PayPal capture for refund reconciliation."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise PaymentProviderError(
+                "Transport error retrieving the PayPal capture for refund reconciliation "
+                f"({type(exc).__name__})."
+            ) from exc
+
+        if response.status_code != 200:
+            raise PaymentProviderError(
+                "PayPal capture lookup failed with HTTP "
+                f"{response.status_code}; refund reconciliation is inconclusive."
+            )
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise PaymentProviderError(
+                "PayPal capture lookup returned unreadable JSON; "
+                "refund reconciliation is inconclusive."
+            ) from exc
+        if not isinstance(payload, dict):
+            raise PaymentProviderError(
+                "PayPal capture lookup returned a malformed response; "
+                "refund reconciliation is inconclusive."
+            )
+
+        returned_id = payload.get("id")
+        if not isinstance(returned_id, str) or not returned_id.strip():
+            raise PaymentProviderError(
+                "PayPal capture lookup omitted the capture ID; "
+                "refund reconciliation is inconclusive."
+            )
+        if returned_id.strip() != capture_id:
+            raise PaymentProviderError(
+                "PayPal capture lookup returned a different capture ID; "
+                "refund reconciliation is inconclusive."
+            )
+
+        raw_status = payload.get("status")
+        if not isinstance(raw_status, str) or not raw_status.strip():
+            raise PaymentProviderError(
+                "PayPal capture lookup omitted the capture status; "
+                "refund reconciliation is inconclusive."
+            )
+
+        amount_obj = payload.get("amount")
+        if not isinstance(amount_obj, dict):
+            raise PaymentProviderError(
+                "PayPal capture lookup omitted the amount; "
+                "refund reconciliation is inconclusive."
+            )
+        raw_value = amount_obj.get("value")
+        if not isinstance(raw_value, (str, int, float)) or isinstance(raw_value, bool):
+            raise PaymentProviderError(
+                "PayPal capture lookup omitted a valid amount; "
+                "refund reconciliation is inconclusive."
+            )
+        try:
+            amount = Decimal(str(raw_value))
+            if not amount.is_finite():
+                raise InvalidOperation
+            amount = amount.quantize(Decimal("0.01"))
+        except (InvalidOperation, ValueError):
+            raise PaymentProviderError(
+                "PayPal capture lookup returned an invalid amount; "
+                "refund reconciliation is inconclusive."
+            ) from None
+        if amount != expected_amount.quantize(Decimal("0.01")):
+            raise PaymentProviderError(
+                "PayPal capture amount does not match the persisted payment; "
+                "refund reconciliation is inconclusive."
+            )
+
+        raw_currency = amount_obj.get("currency_code")
+        if not isinstance(raw_currency, str) or not raw_currency.strip():
+            raise PaymentProviderError(
+                "PayPal capture lookup omitted the currency; "
+                "refund reconciliation is inconclusive."
+            )
+        currency = raw_currency.strip().upper()
+        if currency != expected_currency.upper():
+            raise PaymentProviderError(
+                "PayPal capture currency does not match the persisted payment; "
+                "refund reconciliation is inconclusive."
+            )
+
+        return CapturedPaymentLookupResult(
+            capture_id=returned_id.strip(),
+            status=raw_status.strip().upper(),
+            amount=amount,
+            currency=currency,
+        )
+
+    async def get_captured_payment(
+        self,
+        *,
+        capture_id: str,
+        expected_amount: Decimal,
+        expected_currency: str,
+    ) -> CapturedPaymentLookupResult:
+        """Retrieve and validate one capture using the Payments v2 API."""
+        async with self._build_client() as client:
+            token = await self._get_access_token(client)
+            return await self._get_captured_payment(
+                client,
+                token,
+                capture_id=capture_id,
+                expected_amount=expected_amount,
+                expected_currency=expected_currency,
+            )
+
     async def _reconcile_existing_refund(
         self,
         client: httpx.AsyncClient,
@@ -809,10 +964,10 @@ class PayPalSandboxProvider(PaymentProvider):
         capture_id: str,
         expected_amount: Decimal,
         expected_currency: str,
-    ) -> Optional[RefundExecutionResult]:
+    ) -> RefundExecutionResult:
         """
-        Return None only when PayPal confirms the capture and reports no refunds.
-        Any inconclusive lookup must prevent another refund request.
+        Reconcile details only after capture status indicates a refund may exist.
+        An absent or empty refund collection is never proof that no refund exists.
         """
         if not order_id:
             return RefundExecutionResult(
@@ -912,7 +1067,18 @@ class PayPalSandboxProvider(PaymentProvider):
                 ),
             )
         if not refunds:
-            return None
+            return RefundExecutionResult(
+                refund_id=None,
+                status="PENDING",
+                refunded_amount=None,
+                currency=None,
+                simulated=False,
+                failure_reason=(
+                    "Capture status indicates a refund, but the order lookup did not provide "
+                    "refund details; manual reconciliation is required."
+                ),
+                provider_status=None,
+            )
         if len(refunds) != 1 or not isinstance(refunds[0], dict):
             return RefundExecutionResult(
                 refund_id=None,
@@ -942,6 +1108,7 @@ class PayPalSandboxProvider(PaymentProvider):
         currency: str,
         request_id: str,
         reason: str,
+        reconcile_before_refund: bool = False,
     ) -> RefundExecutionResult:
         quantized = amount.quantize(Decimal("0.01"))
         async with self._build_client() as client:
@@ -960,17 +1127,73 @@ class PayPalSandboxProvider(PaymentProvider):
                     ),
                 )
 
-            # Only a confirmed empty refund list permits a new refund request.
-            existing = await self._reconcile_existing_refund(
-                client,
-                token,
-                order_id,
-                capture_id,
-                quantized,
-                currency,
-            )
-            if existing is not None:
+            try:
+                capture = await self._get_captured_payment(
+                    client,
+                    token,
+                    capture_id=capture_id,
+                    expected_amount=quantized,
+                    expected_currency=currency,
+                )
+            except PaymentProviderError as exc:
+                return RefundExecutionResult(
+                    refund_id=None,
+                    status="PENDING",
+                    refunded_amount=None,
+                    currency=None,
+                    simulated=False,
+                    failure_reason=str(exc),
+                    provider_status="UNKNOWN",
+                )
+
+            if capture.status == "COMPLETED":
+                # This is only a preflight status, never proof that a refund completed.
+                if reconcile_before_refund:
+                    return await self._reconcile_existing_refund(
+                        client,
+                        token,
+                        order_id,
+                        capture_id,
+                        quantized,
+                        currency,
+                    )
+            elif capture.status in ("PARTIALLY_REFUNDED", "REFUNDED"):
+                existing = await self._reconcile_existing_refund(
+                    client,
+                    token,
+                    order_id,
+                    capture_id,
+                    quantized,
+                    currency,
+                )
+                if capture.status == "PARTIALLY_REFUNDED":
+                    return RefundExecutionResult(
+                        refund_id=existing.refund_id,
+                        status="PENDING",
+                        refunded_amount=existing.refunded_amount,
+                        currency=existing.currency,
+                        simulated=False,
+                        failure_reason=(
+                            "PayPal reports a partially refunded capture; no additional "
+                            "automatic full refund was submitted."
+                        ),
+                        provider_status=existing.provider_status or capture.status,
+                    )
                 return existing
+            else:
+                return RefundExecutionResult(
+                    refund_id=None,
+                    status="PENDING",
+                    refunded_amount=None,
+                    currency=None,
+                    simulated=False,
+                    failure_reason=(
+                        "PayPal capture status "
+                        f"'{capture.status}' does not authorize a refund request; "
+                        "refund reconciliation remains pending."
+                    ),
+                    provider_status=capture.status,
+                )
 
             body = {
                 "amount": {

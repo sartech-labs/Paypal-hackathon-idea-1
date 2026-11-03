@@ -6,6 +6,7 @@ import os
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -19,6 +20,7 @@ class Settings(BaseModel):
     app_env: Literal["development", "test", "production"] = Field(default="development")
     app_host: str = Field(default="127.0.0.1")
     app_port: int = Field(default=8000, ge=1, le=65535)
+    app_public_url: str = Field(default="http://127.0.0.1:8000")
 
     payment_mode: Literal["mock", "paypal_sandbox"] = Field(default="mock")
 
@@ -75,6 +77,24 @@ class Settings(BaseModel):
             raise ValueError("paypal_base_url must use https://")
         return cleaned
 
+    @field_validator("app_public_url")
+    @classmethod
+    def validate_app_public_url(cls, value: str) -> str:
+        cleaned = value.strip().rstrip("/")
+        parsed = urlsplit(cleaned)
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.netloc
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "app_public_url must be an absolute HTTP(S) URL without credentials, query, or fragment"
+            )
+        return cleaned
+
     @model_validator(mode="after")
     def validate_production_constraints(self) -> "Settings":
         if self.app_env == "production" and not self.admin_api_token.strip():
@@ -88,6 +108,7 @@ def load_settings_from_env() -> Settings:
         app_env=os.getenv("APP_ENV", "development"),  # type: ignore[arg-type]
         app_host=os.getenv("APP_HOST", "127.0.0.1"),
         app_port=int(os.getenv("APP_PORT", "8000")),
+        app_public_url=os.getenv("APP_PUBLIC_URL", "http://127.0.0.1:8000"),
         payment_mode=os.getenv("PAYMENT_MODE", "mock"),  # type: ignore[arg-type]
         paypal_base_url=os.getenv("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com"),
         paypal_client_id=os.getenv("PAYPAL_CLIENT_ID", ""),
@@ -112,4 +133,3 @@ def load_settings_from_env() -> Settings:
         admin_api_token=os.getenv("ADMIN_API_TOKEN", ""),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
     )
-
