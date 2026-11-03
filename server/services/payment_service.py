@@ -840,7 +840,7 @@ class PayPalSandboxProvider(PaymentProvider):
         try:
             response = await client.get(
                 f"/v2/payments/captures/{capture_id}",
-                headers={"Authorization": f"******", "Accept": "application/json"},
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
             )
         except httpx.TimeoutException as exc:
             raise PaymentProviderTimeoutError(

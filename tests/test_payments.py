@@ -39,6 +39,7 @@ def _build_paypal_mock_transport(
     call_counters: dict[str, int] | None = None,
     order_requests: list[dict[str, Any]] | None = None,
     capture_request_ids: list[str] | None = None,
+    capture_lookup_requests: list[dict[str, str]] | None = None,
 ) -> httpx.MockTransport:
     counters = call_counters if call_counters is not None else {}
     existing_refunds: list[dict[str, Any]] = []
@@ -161,6 +162,13 @@ def _build_paypal_mock_transport(
 
         if path.startswith("/v2/payments/captures/") and request.method == "GET":
             requested_capture_id = path.rsplit("/", 1)[-1]
+            if capture_lookup_requests is not None:
+                capture_lookup_requests.append(
+                    {
+                        "authorization": request.headers.get("authorization", ""),
+                        "url": str(request.url),
+                    }
+                )
             if capture_lookup_timeout:
                 raise httpx.ReadTimeout("Simulated capture lookup timeout", request=request)
             if capture_lookup_transport_error:
@@ -697,6 +705,30 @@ async def test_paypal_captured_payment_lookup_parses_status(
 
 
 @pytest.mark.asyncio
+async def test_paypal_capture_lookup_uses_oauth_bearer_and_sandbox_url_without_logging_token(
+    test_settings: Settings,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO")
+    requests: list[dict[str, str]] = []
+    await _call_paypal_capture_lookup(
+        test_settings,
+        capture_lookup_requests=requests,
+    )
+
+    assert requests == [
+        {
+            "authorization": "Bearer sandbox_oauth_token_xyz",
+            "url": (
+                "https://api-m.sandbox.paypal.com/"
+                "v2/payments/captures/PAYPAL_CAP_5001"
+            ),
+        }
+    ]
+    assert "sandbox_oauth_token_xyz" not in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "capture_lookup_payload",
     [
@@ -754,6 +786,22 @@ async def test_paypal_inconclusive_capture_lookup_blocks_refund(
 
     assert result.status == "PENDING"
     assert result.refund_id is None
+    assert counters["/v2/payments/captures/PAYPAL_CAP_5001"] == 1
+    assert counters.get("/v2/payments/captures/PAYPAL_CAP_5001/refund", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_paypal_capture_lookup_401_keeps_refund_pending_without_post(
+    test_settings: Settings,
+) -> None:
+    result, counters = await _call_paypal_refund(
+        test_settings,
+        capture_lookup_http_status=401,
+    )
+
+    assert result.status == "PENDING"
+    assert result.refund_id is None
+    assert "HTTP 401" in (result.failure_reason or "")
     assert counters["/v2/payments/captures/PAYPAL_CAP_5001"] == 1
     assert counters.get("/v2/payments/captures/PAYPAL_CAP_5001/refund", 0) == 0
 
