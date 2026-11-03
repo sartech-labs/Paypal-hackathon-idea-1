@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CrawlerTrust — End-to-End Request Lifecycle</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 30px;
+      background: #0d1117;
+      color: #c9d1d9;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 {
+      margin-bottom: 8px;
+      color: #58a6ff;
+    }
+    p {
+      margin-top: 0;
+      color: #8b949e;
+      font-size: 14px;
+    }
+    .toolbar {
+      margin: 20px 0;
+      display: flex;
+      gap: 12px;
+    }
+    button {
+      background: #238636;
+      color: #ffffff;
+      border: 1px solid rgba(240, 246, 252, 0.1);
+      padding: 10px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background: #2ea043;
+    }
+    button.secondary {
+      background: #21262d;
+      color: #c9d1d9;
+      border-color: #30363d;
+    }
+    button.secondary:hover {
+      background: #30363d;
+    }
+    #diagram-container {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 24px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      max-width: 95%;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>CrawlerTrust — End-to-End Request Lifecycle</h1>
+  <p>Deposit-Backed Accountability Flow for AI Crawlers</p>
+
+  <div class="toolbar">
+    <button onclick="downloadSVG()">⬇ Download as SVG</button>
+    <button onclick="downloadPNG()">⬇ Download as PNG (High-Res)</button>
+    <button class="secondary" onclick="openMermaidLive()">Open in Mermaid.live</button>
+  </div>
+
+  <div id="diagram-container">
+    <pre class="mermaid" id="mermaid-code">
+sequenceDiagram
+    autonumber
+    actor Crawler as AI Crawler Client
+    participant Gateway as FastAPI Gateway (:8000)
+    participant PayPal as PayPal Sandbox / Mock Provider
+    participant Audit as Audit Log (storage/audit.jsonl)
+
+    Crawler->>Gateway: 1. GET /gateway/news (No Bearer Token)
+    Gateway->>Audit: Log CHALLENGE_ISSUED
+    Gateway-->>Crawler: HTTP 402 Payment Required (challenge_id, deposit: $0.01 USD)
+
+    Crawler->>Gateway: 2. GET /policies & GET /robots.txt
+    Gateway-->>Crawler: 200 OK (Allowed paths, Disallowed paths, Rate limits)
+
+    Crawler->>Gateway: 3. POST /deposits/create (challenge_id, crawler_id)
+    Gateway->>PayPal: Create Order ($0.01 USD, PayPal-Request-Id)
+    PayPal-->>Gateway: Order ID + Approval URL
+    Gateway->>Audit: Log DEPOSIT_INITIATED
+    Gateway-->>Crawler: 201 Created (deposit_id, provider_order_id, approval_url)
+
+    Note over Crawler,PayPal: In PayPal Sandbox mode, payer approves order in browser
+
+    Crawler->>Gateway: 4. POST /deposits/{id}/capture & verify
+    Gateway->>PayPal: Capture & Verify Order (COMPLETED, $0.01, USD, capture_id)
+    PayPal-->>Gateway: Verified Capture Details
+    Gateway->>Audit: Log PAYMENT_VERIFIED (payment_status=CAPTURED)
+    Gateway-->>Crawler: 200 OK (payment_status=CAPTURED)
+
+    Crawler->>Gateway: 5. POST /sessions/accept-policy (agree_to_terms=true, v1.0)
+    Gateway->>Audit: Log POLICY_ACCEPTED & SESSION_ISSUED (SHA-256 hash stored)
+    Gateway-->>Crawler: 201 Created (One-time raw Bearer token)
+
+    loop Crawling Loop
+        Crawler->>Gateway: 6. GET /gateway/news (Authorization: Bearer token)
+        alt Authorized (Within rate limit & allowed path)
+            Gateway->>Audit: Log GATEWAY_ACCESS_ALLOWED
+            Gateway-->>Crawler: 200 OK HTML Content
+        else Violation (Disallowed path / Rate limit exceeded)
+            Gateway->>Audit: Log POLICY_VIOLATION (disqualifying=true/false)
+            Gateway-->>Crawler: 403 Forbidden / 429 Too Many Requests
+        end
+    end
+
+    Crawler->>Gateway: 7. POST /sessions/complete (Authorization: Bearer token)
+    Gateway->>Gateway: Evaluate session history for disqualifying violations
+    alt Compliant Session (0 disqualifying violations)
+        Gateway->>PayPal: POST /v2/payments/captures/{id}/refund
+        PayPal-->>Gateway: Refund COMPLETED (provider_refund_id)
+        Gateway->>Audit: Log DEPOSIT_REFUNDED
+        Gateway-->>Crawler: 200 OK (deposit_state=REFUNDED, refund_status=REFUNDED)
+    else Violating Session (Disqualified)
+        Gateway->>Audit: Log DEPOSIT_FORFEITED
+        Gateway-->>Crawler: 200 OK (deposit_state=FORFEITED, policy_decision=FORFEITED_BY_POLICY)
+    end
+    </pre>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      sequence: {
+        mirrorActors: false,
+        bottomMarginAdj: 10,
+        useMaxWidth: true
+      }
+    });
+
+    function getSVGElement() {
+      return document.querySelector('#diagram-container svg');
+    }
+
+    function downloadSVG() {
+      const svg = getSVGElement();
+      if (!svg) return alert("Diagram is still rendering, please wait a moment.");
+      const serializer = new XMLSerializer();
+      let source = serializer.serializeToString(svg);
+      if (!source.match(/^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/)) {
+        source = source.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
+      }
+      const blob = new Blob([source], {type: "image/svg+xml;charset=utf-8"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "crawlertrust-request-lifecycle.svg";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function downloadPNG() {
+      const svg = getSVGElement();
+      if (!svg) return alert("Diagram is still rendering, please wait a moment.");
+      const serializer = new XMLSerializer();
+      let source = serializer.serializeToString(svg);
+      const svgBlob = new Blob([source], {type: "image/svg+xml;charset=utf-8"});
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+
+      img.onload = function() {
+        const bbox = svg.getBoundingClientRect();
+        const scale = 2; // 2x resolution for retina / high-res slides
+        const canvas = document.createElement("canvas");
+        canvas.width = (bbox.width || 1200) * scale;
+        canvas.height = (bbox.height || 900) * scale;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#161b22";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+
+        canvas.toBlob(function(pngBlob) {
+          const pngUrl = URL.createObjectURL(pngBlob);
+          const a = document.createElement("a");
+          a.href = pngUrl;
+          a.download = "crawlertrust-request-lifecycle.png";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(pngUrl);
+        }, "image/png");
+      };
+      img.src = url;
+    }
+
+    function openMermaidLive() {
+      const code = document.getElementById("mermaid-code").innerText.trim();
+      const state = {
+        code: code,
+        mermaid: { theme: 'dark' },
+        autoSync: true,
+        updateDiagram: true
+      };
+      const json = JSON.stringify(state);
+      const bytes = new TextEncoder().encode(json);
+      let binary = '';
+      const len = bytes.byteLength;
+      for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const b64 = btoa(binary);
+      window.open('https://mermaid.live/edit#' + b64, '_blank');
+    }
+  </script>
+</body>
+</html>
+

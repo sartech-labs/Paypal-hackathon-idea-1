@@ -62,6 +62,7 @@ class RefundExecutionResult:
     currency: Optional[str]
     simulated: bool
     failure_reason: Optional[str] = None
+    provider_status: Optional[str] = None
 
 
 class PaymentProvider(abc.ABC):
@@ -691,52 +692,246 @@ class PayPalSandboxProvider(PaymentProvider):
                 payload, expected_amount, expected_currency
             )
 
+    @staticmethod
+    def _parse_refund_response(
+        payload: Any,
+        *,
+        expected_amount: Decimal,
+        expected_currency: str,
+        source: str,
+    ) -> RefundExecutionResult:
+        if not isinstance(payload, dict):
+            return RefundExecutionResult(
+                refund_id=None,
+                status="PENDING",
+                refunded_amount=None,
+                currency=None,
+                simulated=False,
+                failure_reason=f"{source} returned a malformed refund response.",
+            )
+
+        raw_id = payload.get("id")
+        refund_id = raw_id.strip() if isinstance(raw_id, str) and raw_id.strip() else None
+        raw_status = payload.get("status")
+        provider_status = (
+            raw_status.strip().upper()
+            if isinstance(raw_status, str) and raw_status.strip()
+            else None
+        )
+        amount_obj = payload.get("amount")
+        raw_value = amount_obj.get("value") if isinstance(amount_obj, dict) else None
+        raw_currency = amount_obj.get("currency_code") if isinstance(amount_obj, dict) else None
+
+        refunded_amount: Optional[Decimal] = None
+        if isinstance(raw_value, (str, int, float)) and not isinstance(raw_value, bool):
+            try:
+                parsed_amount = Decimal(str(raw_value))
+                if parsed_amount.is_finite():
+                    refunded_amount = parsed_amount.quantize(Decimal("0.01"))
+            except (InvalidOperation, ValueError):
+                pass
+        currency = (
+            raw_currency.strip().upper()
+            if isinstance(raw_currency, str) and raw_currency.strip()
+            else None
+        )
+
+        if provider_status == "COMPLETED":
+            if not refund_id:
+                reason = "PayPal reported COMPLETED without a refund ID."
+            elif refunded_amount is None:
+                reason = "PayPal reported COMPLETED without a valid refund amount."
+            elif currency is None:
+                reason = "PayPal reported COMPLETED without a refund currency."
+            elif refunded_amount != expected_amount.quantize(Decimal("0.01")):
+                reason = "PayPal's completed refund amount does not match the requested amount."
+            elif currency != expected_currency.upper():
+                reason = "PayPal's completed refund currency does not match the requested currency."
+            else:
+                return RefundExecutionResult(
+                    refund_id=refund_id,
+                    status="COMPLETED",
+                    refunded_amount=refunded_amount,
+                    currency=currency,
+                    simulated=False,
+                    provider_status=provider_status,
+                )
+            return RefundExecutionResult(
+                refund_id=refund_id,
+                status="PENDING",
+                refunded_amount=refunded_amount,
+                currency=currency,
+                simulated=False,
+                failure_reason=f"{reason} Manual reconciliation is required.",
+                provider_status=provider_status,
+            )
+
+        if provider_status == "PENDING":
+            return RefundExecutionResult(
+                refund_id=refund_id,
+                status="PENDING",
+                refunded_amount=refunded_amount,
+                currency=currency,
+                simulated=False,
+                failure_reason="PayPal refund is currently PENDING settlement.",
+                provider_status=provider_status,
+            )
+
+        if provider_status in ("FAILED", "CANCELLED"):
+            return RefundExecutionResult(
+                refund_id=refund_id,
+                status="FAILED",
+                refunded_amount=refunded_amount,
+                currency=currency,
+                simulated=False,
+                failure_reason=f"PayPal refund status was '{provider_status}'.",
+                provider_status=provider_status,
+            )
+
+        return RefundExecutionResult(
+            refund_id=refund_id,
+            status="PENDING",
+            refunded_amount=refunded_amount,
+            currency=currency,
+            simulated=False,
+            failure_reason=(
+                f"{source} did not provide a recognized refund status; "
+                "manual reconciliation is required."
+            ),
+            provider_status=provider_status,
+        )
+
     async def _reconcile_existing_refund(
         self,
         client: httpx.AsyncClient,
         token: str,
         order_id: Optional[str],
         capture_id: str,
+        expected_amount: Decimal,
+        expected_currency: str,
     ) -> Optional[RefundExecutionResult]:
         """
-        Inspect the order in PayPal to see if a refund already exists for capture_id
-        before issuing or retrying a refund request.
+        Return None only when PayPal confirms the capture and reports no refunds.
+        Any inconclusive lookup must prevent another refund request.
         """
         if not order_id:
-            return None
+            return RefundExecutionResult(
+                refund_id=None,
+                status="PENDING",
+                refunded_amount=None,
+                currency=None,
+                simulated=False,
+                failure_reason="Cannot reconcile refund without its PayPal order ID.",
+            )
         try:
             response = await client.get(
                 f"/v2/checkout/orders/{order_id}",
                 headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
             )
             if response.status_code != 200:
-                return None
+                return RefundExecutionResult(
+                    refund_id=None,
+                    status="PENDING",
+                    refunded_amount=None,
+                    currency=None,
+                    simulated=False,
+                    failure_reason=(
+                        "Could not reconcile the existing refund with PayPal "
+                        f"(order lookup returned HTTP {response.status_code})."
+                    ),
+                )
             payload = response.json()
-            units = payload.get("purchase_units", [])
-            if not isinstance(units, list) or not units:
-                return None
-            payments = units[0].get("payments", {}) if isinstance(units[0], dict) else {}
-            refunds = payments.get("refunds", []) if isinstance(payments, dict) else []
-            if not isinstance(refunds, list) or not refunds:
-                return None
-            first_refund = refunds[0]
-            if not isinstance(first_refund, dict):
-                return None
-            ref_id = str(first_refund.get("id", "")).strip() or None
-            ref_status = str(first_refund.get("status", "UNKNOWN")).strip().upper()
-            amt_obj = first_refund.get("amount", {})
-            val = amt_obj.get("value") if isinstance(amt_obj, dict) else None
-            curr = amt_obj.get("currency_code") if isinstance(amt_obj, dict) else None
-            parsed_amt = Decimal(str(val)).quantize(Decimal("0.01")) if val else None
+        except (httpx.HTTPError, ValueError) as exc:
             return RefundExecutionResult(
-                refund_id=ref_id,
-                status=ref_status,
-                refunded_amount=parsed_amt,
-                currency=str(curr).upper() if curr else None,
+                refund_id=None,
+                status="PENDING",
+                refunded_amount=None,
+                currency=None,
                 simulated=False,
+                failure_reason=(
+                    "Could not read PayPal's refund reconciliation response "
+                    f"({type(exc).__name__})."
+                ),
             )
-        except Exception:
+
+        units = payload.get("purchase_units") if isinstance(payload, dict) else None
+        if not isinstance(units, list):
+            units = []
+
+        matching_units: list[dict[str, Any]] = []
+        for unit in units:
+            if not isinstance(unit, dict):
+                continue
+            payments = unit.get("payments")
+            if not isinstance(payments, dict):
+                continue
+            captures = payments.get("captures")
+            if isinstance(captures, list) and any(
+                isinstance(capture, dict) and capture.get("id") == capture_id
+                for capture in captures
+            ):
+                matching_units.append(unit)
+
+        if len(matching_units) != 1:
+            return RefundExecutionResult(
+                refund_id=None,
+                status="PENDING",
+                refunded_amount=None,
+                currency=None,
+                simulated=False,
+                failure_reason=(
+                    "PayPal's order lookup did not unambiguously confirm the captured payment; "
+                    "no additional refund was submitted."
+                ),
+            )
+
+        payments = matching_units[0]["payments"]
+        if "refunds" not in payments:
+            return RefundExecutionResult(
+                refund_id=None,
+                status="PENDING",
+                refunded_amount=None,
+                currency=None,
+                simulated=False,
+                failure_reason=(
+                    "PayPal did not include refund information in the order lookup; "
+                    "no additional refund was submitted."
+                ),
+            )
+        refunds = payments.get("refunds", [])
+        if not isinstance(refunds, list):
+            return RefundExecutionResult(
+                refund_id=None,
+                status="PENDING",
+                refunded_amount=None,
+                currency=None,
+                simulated=False,
+                failure_reason=(
+                    "PayPal returned an invalid refunds collection; "
+                    "no additional refund was submitted."
+                ),
+            )
+        if not refunds:
             return None
+        if len(refunds) != 1 or not isinstance(refunds[0], dict):
+            return RefundExecutionResult(
+                refund_id=None,
+                status="PENDING",
+                refunded_amount=None,
+                currency=None,
+                simulated=False,
+                failure_reason=(
+                    "PayPal reports multiple or malformed refunds for this payment; "
+                    "manual reconciliation is required."
+                ),
+            )
+
+        return self._parse_refund_response(
+            refunds[0],
+            expected_amount=expected_amount,
+            expected_currency=expected_currency,
+            source="PayPal refund reconciliation",
+        )
 
     async def refund_capture(
         self,
@@ -750,13 +945,31 @@ class PayPalSandboxProvider(PaymentProvider):
     ) -> RefundExecutionResult:
         quantized = amount.quantize(Decimal("0.01"))
         async with self._build_client() as client:
-            token = await self._get_access_token(client)
+            try:
+                token = await self._get_access_token(client)
+            except (PaymentProviderError, ValueError, TypeError, AttributeError) as exc:
+                return RefundExecutionResult(
+                    refund_id=None,
+                    status="FAILED",
+                    refunded_amount=None,
+                    currency=None,
+                    simulated=False,
+                    failure_reason=(
+                        "PayPal credentials or token acquisition failed before the refund request "
+                        f"was submitted ({type(exc).__name__})."
+                    ),
+                )
 
-            # Reconcile first in case a previous attempt succeeded before a crash/timeout
+            # Only a confirmed empty refund list permits a new refund request.
             existing = await self._reconcile_existing_refund(
-                client, token, order_id, capture_id
+                client,
+                token,
+                order_id,
+                capture_id,
+                quantized,
+                currency,
             )
-            if existing is not None and existing.status in ("COMPLETED", "PENDING"):
+            if existing is not None:
                 return existing
 
             body = {
@@ -780,69 +993,62 @@ class PayPalSandboxProvider(PaymentProvider):
             except httpx.TimeoutException:
                 return RefundExecutionResult(
                     refund_id=None,
-                    status="FAILED",
+                    status="PENDING",
                     refunded_amount=None,
-                    currency=currency.upper(),
+                    currency=None,
                     simulated=False,
-                    failure_reason="Timed out waiting for PayPal refund response",
+                    failure_reason=(
+                        "Timed out waiting for PayPal's refund response; "
+                        "the refund outcome is unknown and must be reconciled."
+                    ),
                 )
             except httpx.HTTPError as exc:
                 return RefundExecutionResult(
                     refund_id=None,
-                    status="FAILED",
+                    status="PENDING",
                     refunded_amount=None,
-                    currency=currency.upper(),
+                    currency=None,
                     simulated=False,
-                    failure_reason=f"HTTP error calling PayPal refund endpoint: {exc}",
+                    failure_reason=(
+                        "The PayPal refund request outcome is unknown after a transport error "
+                        f"({type(exc).__name__}); it must be reconciled."
+                    ),
                 )
 
             if response.status_code not in (200, 201):
+                uncertain = response.status_code >= 500 or response.status_code == 409
                 return RefundExecutionResult(
                     refund_id=None,
-                    status="FAILED",
+                    status="PENDING" if uncertain else "FAILED",
                     refunded_amount=None,
-                    currency=currency.upper(),
+                    currency=None,
                     simulated=False,
-                    failure_reason=f"PayPal refund returned HTTP {response.status_code}",
+                    failure_reason=(
+                        "PayPal returned an ambiguous response to the refund request "
+                        f"(HTTP {response.status_code}); it must be reconciled."
+                        if uncertain
+                        else f"PayPal rejected the refund request with HTTP {response.status_code}."
+                    ),
                 )
 
-            payload = response.json()
-            refund_id = str(payload.get("id", "")).strip() or None
-            raw_status = str(payload.get("status", "FAILED")).strip().upper()
-            amt_obj = payload.get("amount", {})
-            raw_val = amt_obj.get("value") if isinstance(amt_obj, dict) else None
-            raw_curr = amt_obj.get("currency_code") if isinstance(amt_obj, dict) else currency
-
-            parsed_amt = quantized
-            if raw_val is not None:
-                try:
-                    parsed_amt = Decimal(str(raw_val)).quantize(Decimal("0.01"))
-                except (InvalidOperation, ValueError):
-                    parsed_amt = quantized
-
-            if raw_status == "COMPLETED":
+            try:
+                payload = response.json()
+            except ValueError as exc:
                 return RefundExecutionResult(
-                    refund_id=refund_id,
-                    status="COMPLETED",
-                    refunded_amount=parsed_amt,
-                    currency=str(raw_curr).upper(),
-                    simulated=False,
-                )
-            if raw_status == "PENDING":
-                return RefundExecutionResult(
-                    refund_id=refund_id,
+                    refund_id=None,
                     status="PENDING",
-                    refunded_amount=parsed_amt,
-                    currency=str(raw_curr).upper(),
+                    refunded_amount=None,
+                    currency=None,
                     simulated=False,
-                    failure_reason="PayPal refund is currently PENDING settlement.",
+                    failure_reason=(
+                        "PayPal accepted the refund request but returned unreadable JSON; "
+                        f"the outcome is unknown ({type(exc).__name__})."
+                    ),
                 )
-            return RefundExecutionResult(
-                refund_id=refund_id,
-                status="FAILED",
-                refunded_amount=None,
-                currency=str(raw_curr).upper(),
-                simulated=False,
-                failure_reason=f"PayPal refund status was '{raw_status}'.",
-            )
 
+            return self._parse_refund_response(
+                payload,
+                expected_amount=quantized,
+                expected_currency=currency,
+                source="PayPal refund response",
+            )

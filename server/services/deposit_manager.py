@@ -39,6 +39,7 @@ from server.services.payment_service import (
     PaymentApprovalRequiredError,
     PaymentProvider,
     PaymentProviderError,
+    RefundExecutionResult,
 )
 
 
@@ -62,6 +63,7 @@ class DepositManager:
         self._lock = asyncio.Lock()
         self._challenges: dict[str, ChallengeRecord] = {}
         self._deposits: dict[str, DepositRecord] = {}
+        self._active_refunds: set[str] = set()
 
     @property
     def payment_provider(self) -> PaymentProvider:
@@ -696,19 +698,24 @@ class DepositManager:
                     True,
                     record.decision_reason or "Already refunded",
                 )
-            if record.refund_status == RefundTransactionStatus.REFUND_IN_PROGRESS:
+            if (
+                record.refund_status == RefundTransactionStatus.REFUND_IN_PROGRESS
+                and deposit_id in self._active_refunds
+            ):
                 raise StateTransitionError(
                     "A refund request is already in progress for this deposit"
                 )
 
             self._transition_decision(record, PolicyDecisionStatus.ELIGIBLE_FOR_REFUND)
-            self._transition_refund(record, RefundTransactionStatus.REFUND_IN_PROGRESS)
+            if record.refund_status != RefundTransactionStatus.REFUND_IN_PROGRESS:
+                self._transition_refund(record, RefundTransactionStatus.REFUND_IN_PROGRESS)
             record.deposit_state = DepositState.REFUND_PENDING
             record.decision_reason = (
                 "Session completed with 0 disqualifying violations; eligible for full deposit refund."
             )
             record.updated_at = utc_now_iso()
             self._persist_unlocked()
+            self._active_refunds.add(deposit_id)
 
             capture_id = record.provider_capture_id or ""
             order_id = record.provider_order_id
@@ -717,19 +724,74 @@ class DepositManager:
             refund_req_id = record.refund_request_id
 
         # Execute provider refund outside lock using deterministic PayPal-Request-Id
-        refund_result = await self._payment_provider.refund_capture(
-            capture_id=capture_id,
-            order_id=order_id,
-            amount=refund_amt,
-            currency=currency,
-            request_id=refund_req_id,
-            reason=f"CrawlerTrust compliant session refund ({session.session_id})",
-        )
+        try:
+            refund_result = await self._payment_provider.refund_capture(
+                capture_id=capture_id,
+                order_id=order_id,
+                amount=refund_amt,
+                currency=currency,
+                request_id=refund_req_id,
+                reason=f"CrawlerTrust compliant session refund ({session.session_id})",
+            )
+        except (Exception, asyncio.CancelledError):
+            async with self._lock:
+                self._active_refunds.discard(deposit_id)
+                record = self._deposits[deposit_id]
+                if record.refund_status == RefundTransactionStatus.REFUND_IN_PROGRESS:
+                    self._transition_refund(record, RefundTransactionStatus.REFUND_PENDING)
+                record.deposit_state = DepositState.REFUND_PENDING
+                record.provider_refund_status = "UNKNOWN"
+                record.failure_reason = (
+                    "Refund outcome is unknown; reconcile with PayPal before another attempt."
+                )
+                record.updated_at = utc_now_iso()
+                self._persist_unlocked()
+            await self._audit.log_event(
+                event_type="DEPOSIT_REFUND_PENDING",
+                crawler_id=record.crawler_id,
+                challenge_id=record.challenge_id,
+                session_id=session.session_id,
+                deposit_id=record.deposit_id,
+                allowed=False,
+                reason_code="REFUND_OUTCOME_UNKNOWN",
+                policy_version=record.policy_version,
+                payment_mode=record.payment_mode.value,
+                details={
+                    "provider_capture_id": record.provider_capture_id,
+                    "provider_refund_status": record.provider_refund_status,
+                    "payment_status": record.payment_status.value,
+                    "policy_decision": record.policy_decision.value,
+                    "refund_status": record.refund_status.value,
+                },
+            )
+            raise
+
+        if refund_result.status == "COMPLETED" and (
+            not refund_result.refund_id
+            or refund_result.refunded_amount is None
+            or refund_result.refunded_amount.quantize(Decimal("0.01"))
+            != refund_amt.quantize(Decimal("0.01"))
+            or not refund_result.currency
+            or refund_result.currency.upper() != currency.upper()
+        ):
+            refund_result = RefundExecutionResult(
+                refund_id=refund_result.refund_id,
+                status="PENDING",
+                refunded_amount=refund_result.refunded_amount,
+                currency=refund_result.currency,
+                simulated=refund_result.simulated,
+                failure_reason=(
+                    "Refund provider result did not include a matching ID, amount, and currency; "
+                    "manual reconciliation is required."
+                ),
+                provider_status=refund_result.provider_status or "COMPLETED",
+            )
 
         async with self._lock:
+            self._active_refunds.discard(deposit_id)
             record = self._deposits[deposit_id]
             record.provider_refund_id = refund_result.refund_id
-            record.provider_refund_status = refund_result.status
+            record.provider_refund_status = refund_result.provider_status or refund_result.status
 
             if refund_result.status == "COMPLETED":
                 self._transition_refund(record, RefundTransactionStatus.REFUNDED)
@@ -781,4 +843,3 @@ class DepositManager:
             },
         )
         return final_copy, True, final_copy.decision_reason or ""
-
