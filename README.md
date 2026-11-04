@@ -316,6 +316,8 @@ Every authenticated request to `/gateway/{path}` is evaluated by `PolicyEngine.e
 
 The browser return callback checks that PayPal's `token` matches the order ID persisted for that deposit, then invokes the existing backend capture path. It does not treat the redirect itself as payment proof. Buyer cancellation leaves the deposit uncaptured. Configure `APP_PUBLIC_URL` as the base URL reachable by the buyer's browser and PayPal; the local default is for same-machine development only.
 
+For a refund that PayPal completed but CrawlerTrust conservatively left pending (for example, because the initial refund response omitted verifiable details), an administrator can call `POST /deposits/{deposit_id}/reconcile-refund` with the configured `X-Admin-Token`. This performs only `GET /v2/payments/refunds/{refund_id}` for the already-persisted provider refund ID. It never submits or retries a refund; local state changes to `REFUNDED` only after the returned ID, explicit `COMPLETED` status, exact amount, and currency all validate.
+
 ---
 
 ## 14. PayPal Developer Account and Sandbox Setup Instructions

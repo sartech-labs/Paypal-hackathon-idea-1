@@ -39,6 +39,7 @@ from server.services.payment_service import (
     PaymentApprovalRequiredError,
     PaymentProvider,
     PaymentProviderError,
+    RefundDetailsLookupResult,
     RefundExecutionResult,
 )
 
@@ -64,6 +65,7 @@ class DepositManager:
         self._challenges: dict[str, ChallengeRecord] = {}
         self._deposits: dict[str, DepositRecord] = {}
         self._active_refunds: set[str] = set()
+        self._active_refund_reconciliations: set[str] = set()
 
     @property
     def payment_provider(self) -> PaymentProvider:
@@ -209,6 +211,155 @@ class DepositManager:
     async def list_deposits(self) -> list[DepositRecord]:
         async with self._lock:
             return [rec.model_copy(deep=True) for rec in self._deposits.values()]
+
+    @staticmethod
+    def _refund_reconciliation_failure(
+        lookup: RefundDetailsLookupResult,
+        *,
+        expected_refund_id: str,
+        expected_amount: Decimal,
+        expected_currency: str,
+    ) -> Optional[str]:
+        if not lookup.refund_id:
+            return "PayPal refund lookup omitted the refund ID; reconciliation remains pending."
+        if lookup.refund_id != expected_refund_id:
+            return "PayPal refund lookup returned a different refund ID; reconciliation remains pending."
+        if lookup.status != "COMPLETED":
+            status = lookup.status or "missing status"
+            return f"PayPal refund status is {status}; reconciliation remains pending."
+        if lookup.refunded_amount is None or not lookup.refunded_amount.is_finite():
+            return "PayPal refund lookup omitted a valid amount; reconciliation remains pending."
+        if lookup.refunded_amount != expected_amount:
+            return "PayPal refund amount does not match the deposit; reconciliation remains pending."
+        if not lookup.currency:
+            return "PayPal refund lookup omitted the currency; reconciliation remains pending."
+        if lookup.currency != expected_currency.upper():
+            return "PayPal refund currency does not match the deposit; reconciliation remains pending."
+        return None
+
+    async def reconcile_refund(self, deposit_id: str) -> DepositRecord:
+        """Reconcile an existing pending refund by its persisted provider refund ID."""
+        async with self._lock:
+            record = self._deposits.get(deposit_id)
+            if record is None:
+                raise KeyError(f"Unknown deposit_id: {deposit_id}")
+            if record.refund_status == RefundTransactionStatus.REFUNDED:
+                return record.model_copy(deep=True)
+            if record.refund_status not in (
+                RefundTransactionStatus.REFUND_PENDING,
+                RefundTransactionStatus.REFUND_IN_PROGRESS,
+            ):
+                raise StateTransitionError(
+                    "Only an existing pending refund can be reconciled."
+                )
+            if record.payment_status != PaymentStatus.CAPTURED:
+                raise StateTransitionError(
+                    "Cannot reconcile a refund unless the original payment is captured."
+                )
+            if record.policy_decision != PolicyDecisionStatus.ELIGIBLE_FOR_REFUND:
+                raise StateTransitionError(
+                    "Cannot reconcile a refund that is not eligible under the recorded policy decision."
+                )
+            if not record.provider_refund_id:
+                raise StateTransitionError(
+                    "Cannot reconcile a refund without its persisted PayPal refund ID."
+                )
+            if deposit_id in self._active_refunds:
+                raise StateTransitionError(
+                    "A refund submission is already in progress for this deposit."
+                )
+            if deposit_id in self._active_refund_reconciliations:
+                raise StateTransitionError(
+                    "Refund reconciliation is already in progress for this deposit."
+                )
+
+            if record.refund_status == RefundTransactionStatus.REFUND_IN_PROGRESS:
+                self._transition_refund(record, RefundTransactionStatus.REFUND_PENDING)
+                record.deposit_state = DepositState.REFUND_PENDING
+                record.updated_at = utc_now_iso()
+                self._persist_unlocked()
+            self._active_refund_reconciliations.add(deposit_id)
+            refund_id = record.provider_refund_id
+            expected_amount = Decimal(
+                record.captured_amount or record.required_amount
+            ).quantize(Decimal("0.01"))
+            expected_currency = record.currency.upper()
+
+        try:
+            try:
+                lookup = await self._payment_provider.get_refund_details(
+                    refund_id=refund_id
+                )
+                failure_reason = self._refund_reconciliation_failure(
+                    lookup,
+                    expected_refund_id=refund_id,
+                    expected_amount=expected_amount,
+                    expected_currency=expected_currency,
+                )
+            except PaymentProviderError as exc:
+                lookup = None
+                failure_reason = str(exc)
+
+            async with self._lock:
+                record = self._deposits[deposit_id]
+                if record.refund_status == RefundTransactionStatus.REFUNDED:
+                    return record.model_copy(deep=True)
+
+                if lookup is not None and lookup.status:
+                    record.provider_refund_status = lookup.status
+                if failure_reason is None:
+                    assert lookup is not None
+                    self._transition_refund(record, RefundTransactionStatus.REFUNDED)
+                    record.deposit_state = DepositState.REFUNDED
+                    record.provider_refund_id = refund_id
+                    record.provider_refund_status = lookup.status
+                    record.refunded_at = utc_now_iso()
+                    record.failure_reason = None
+                    event_type = "DEPOSIT_REFUND_RECONCILED"
+                    reason_code = "REFUND_RECONCILIATION_COMPLETED"
+                    allowed = True
+                else:
+                    if record.refund_status == RefundTransactionStatus.REFUND_IN_PROGRESS:
+                        self._transition_refund(
+                            record, RefundTransactionStatus.REFUND_PENDING
+                        )
+                    record.deposit_state = DepositState.REFUND_PENDING
+                    record.provider_refund_id = refund_id
+                    record.failure_reason = failure_reason
+                    record.updated_at = utc_now_iso()
+                    event_type = "DEPOSIT_REFUND_RECONCILIATION_PENDING"
+                    reason_code = "REFUND_RECONCILIATION_INCONCLUSIVE"
+                    allowed = False
+
+                record.updated_at = utc_now_iso()
+                self._persist_unlocked()
+                reconciled_copy = record.model_copy(deep=True)
+
+            await self._audit.log_event(
+                event_type=event_type,
+                crawler_id=reconciled_copy.crawler_id,
+                challenge_id=reconciled_copy.challenge_id,
+                session_id=reconciled_copy.session_id,
+                deposit_id=reconciled_copy.deposit_id,
+                allowed=allowed,
+                reason_code=reason_code,
+                policy_version=reconciled_copy.policy_version,
+                payment_mode=reconciled_copy.payment_mode.value,
+                details={
+                    "provider_refund_status": reconciled_copy.provider_refund_status,
+                    "refund_status": reconciled_copy.refund_status.value,
+                    "deposit_state": reconciled_copy.deposit_state.value,
+                    "payment_status": reconciled_copy.payment_status.value,
+                    "policy_decision": reconciled_copy.policy_decision.value,
+                    "provider_refund_id_present": bool(reconciled_copy.provider_refund_id),
+                    "failure_reason": reconciled_copy.failure_reason,
+                    "simulated": self._payment_provider.mode.value == "mock",
+                },
+            )
+            return reconciled_copy
+        finally:
+            async with self._lock:
+                self._active_refund_reconciliations.discard(deposit_id)
 
     async def create_deposit(
         self,
@@ -689,6 +840,23 @@ class DepositManager:
                 f"Session must be in COMPLETED status before refund (current status: {session.status.value})"
             )
 
+        async with self._lock:
+            current_record = self._deposits[deposit_id]
+            has_existing_refund_id = bool(current_record.provider_refund_id) and (
+                current_record.refund_status
+                in (
+                    RefundTransactionStatus.REFUND_PENDING,
+                    RefundTransactionStatus.REFUND_IN_PROGRESS,
+                )
+            )
+        if has_existing_refund_id:
+            reconciled = await self.reconcile_refund(deposit_id)
+            return (
+                reconciled,
+                True,
+                reconciled.decision_reason or "Existing refund was reconciled.",
+            )
+
         # Mark refund in progress inside the lock to prevent concurrent duplicate provider calls
         async with self._lock:
             record = self._deposits[deposit_id]
@@ -847,4 +1015,11 @@ class DepositManager:
                 "simulated": refund_result.simulated,
             },
         )
+        if (
+            refund_result.status == "PENDING"
+            and final_copy.provider_refund_id
+        ):
+            reconciled = await self.reconcile_refund(deposit_id)
+            return reconciled, True, final_copy.decision_reason or ""
+
         return final_copy, True, final_copy.decision_reason or ""

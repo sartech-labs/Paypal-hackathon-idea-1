@@ -314,6 +314,51 @@ async def get_deposit(
 
 
 @router.post(
+    "/{deposit_id}/reconcile-refund",
+    response_model=DepositResponse,
+    summary="Reconcile a persisted PayPal refund without submitting another refund",
+)
+async def reconcile_refund(
+    deposit_id: str,
+    container: AppContainer = Depends(get_container),
+    x_admin_token: Optional[str] = Header(default=None),
+) -> DepositResponse:
+    if not is_valid_admin_token(container, x_admin_token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "invalid_admin_token",
+                "message": "A valid configured X-Admin-Token is required.",
+            },
+        )
+
+    deposit = await container.deposit_manager.get_deposit(deposit_id)
+    if deposit is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "deposit_not_found", "message": "Unknown deposit_id."},
+        )
+    if deposit.payment_mode != PaymentMode.PAYPAL_SANDBOX:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "unsupported_payment_mode",
+                "message": "Refund reconciliation is only available for PayPal Sandbox deposits.",
+            },
+        )
+
+    try:
+        reconciled = await container.deposit_manager.reconcile_refund(deposit_id)
+    except StateTransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "refund_reconciliation_conflict", "message": str(exc)},
+        ) from exc
+
+    return container.deposit_manager.to_response(reconciled)
+
+
+@router.post(
     "/{deposit_id}/capture",
     response_model=DepositResponse,
     summary="Capture an approved payment order and verify the captured amount server-side",

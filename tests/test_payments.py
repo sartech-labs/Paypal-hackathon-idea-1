@@ -25,6 +25,12 @@ def _build_paypal_mock_transport(
     refund_status: str = "COMPLETED",
     timeout_on_order: bool = False,
     timeout_on_refund: bool = False,
+    refund_details_payload: Any = None,
+    refund_details_payloads: list[Any] | None = None,
+    refund_details_http_status: int = 200,
+    refund_details_malformed_json: bool = False,
+    refund_details_timeout: bool = False,
+    refund_details_transport_error: bool = False,
     capture_lookup_status: str | None = None,
     capture_lookup_payload: Any = None,
     capture_lookup_http_status: int = 200,
@@ -40,9 +46,11 @@ def _build_paypal_mock_transport(
     order_requests: list[dict[str, Any]] | None = None,
     capture_request_ids: list[str] | None = None,
     capture_lookup_requests: list[dict[str, str]] | None = None,
+    refund_lookup_requests: list[dict[str, str]] | None = None,
 ) -> httpx.MockTransport:
     counters = call_counters if call_counters is not None else {}
     existing_refunds: list[dict[str, Any]] = []
+    queued_refund_details_payloads = list(refund_details_payloads or [])
 
     async def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -192,6 +200,41 @@ def _build_paypal_mock_transport(
                         "value": captured_amount,
                         "currency_code": captured_currency,
                     },
+                },
+            )
+
+        if path.startswith("/v2/payments/refunds/") and request.method == "GET":
+            requested_refund_id = path.rsplit("/", 1)[-1]
+            if refund_lookup_requests is not None:
+                refund_lookup_requests.append(
+                    {
+                        "authorization": request.headers.get("authorization", ""),
+                        "url": str(request.url),
+                    }
+                )
+            if refund_details_timeout:
+                raise httpx.ReadTimeout("Simulated refund lookup timeout", request=request)
+            if refund_details_transport_error:
+                raise httpx.ConnectError("Simulated refund lookup failure", request=request)
+            if refund_details_malformed_json:
+                return httpx.Response(200, content=b"{malformed json")
+            if refund_details_http_status != 200:
+                return httpx.Response(
+                    refund_details_http_status,
+                    json={"name": "RESOURCE_NOT_FOUND", "debug_id": "test-debug-id"},
+                )
+            if queued_refund_details_payloads:
+                details_payload = queued_refund_details_payloads.pop(0)
+            else:
+                details_payload = refund_details_payload
+            return httpx.Response(
+                200,
+                json=details_payload
+                if details_payload is not None
+                else {
+                    "id": requested_refund_id,
+                    "status": "COMPLETED",
+                    "amount": {"value": captured_amount, "currency_code": captured_currency},
                 },
             )
 
@@ -594,6 +637,56 @@ async def _call_paypal_capture_lookup(
     return result, counters
 
 
+async def _call_paypal_refund_details(
+    test_settings: Settings,
+    **transport_options: Any,
+) -> tuple[Any, dict[str, int]]:
+    counters: dict[str, int] = {}
+    provider = PayPalSandboxProvider(
+        test_settings,
+        transport=_build_paypal_mock_transport(
+            call_counters=counters,
+            **transport_options,
+        ),
+    )
+    result = await provider.get_refund_details(refund_id="PAYPAL_REF_9001")
+    return result, counters
+
+
+async def _start_pending_paypal_refund(
+    test_settings: Settings,
+    **transport_options: Any,
+) -> tuple[httpx.AsyncClient, Any, dict[str, int], dict[str, Any], dict[str, str]]:
+    test_settings.payment_mode = "paypal_sandbox"
+    test_settings.admin_api_token = "test-refund-reconcile-admin"
+    counters: dict[str, int] = {}
+    transport_options.setdefault(
+        "refund_details_payload",
+        {"id": "PAYPAL_REF_9001", "status": "COMPLETED"},
+    )
+    provider = PayPalSandboxProvider(
+        test_settings,
+        transport=_build_paypal_mock_transport(
+            call_counters=counters,
+            **transport_options,
+        ),
+    )
+    app = create_app(settings=test_settings, payment_provider=provider)
+    client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://testserver",
+    )
+    deposit, access_token = await _create_paypal_session(
+        client,
+        "crawler-refund-reconcile",
+    )
+    headers = {"Authorization": f"Bearer {access_token}"}
+    completion = await client.post("/sessions/complete", headers=headers)
+    assert completion.status_code == 200
+    assert completion.json()["deposit"]["refund_status"] == "REFUND_PENDING"
+    return client, app, counters, deposit, headers
+
+
 @pytest.mark.asyncio
 async def test_paypal_refund_requires_completed_status_and_matching_details(
     test_settings: Settings,
@@ -649,6 +742,103 @@ async def test_paypal_pending_refund_is_not_reported_as_completed(
 
     assert result.status == "PENDING"
     assert result.provider_status == "PENDING"
+
+
+@pytest.mark.asyncio
+async def test_paypal_refund_details_lookup_uses_oauth_and_parses_authoritative_details(
+    test_settings: Settings,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("INFO")
+    requests: list[dict[str, str]] = []
+    details, counters = await _call_paypal_refund_details(
+        test_settings,
+        refund_lookup_requests=requests,
+    )
+
+    assert details.refund_id == "PAYPAL_REF_9001"
+    assert details.status == "COMPLETED"
+    assert details.refunded_amount == Decimal("0.01")
+    assert details.currency == "USD"
+    assert requests == [
+        {
+            "authorization": "Bearer sandbox_oauth_token_xyz",
+            "url": (
+                "https://api-m.sandbox.paypal.com/"
+                "v2/payments/refunds/PAYPAL_REF_9001"
+            ),
+        }
+    ]
+    assert counters["/v1/oauth2/token"] == 1
+    assert counters["/v2/payments/refunds/PAYPAL_REF_9001"] == 1
+    assert "sandbox_oauth_token_xyz" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "refund_details_payload, expected_id, expected_status, expected_amount, expected_currency",
+    [
+        (
+            {"status": "COMPLETED", "amount": {"value": "0.01", "currency_code": "USD"}},
+            None,
+            "COMPLETED",
+            Decimal("0.01"),
+            "USD",
+        ),
+        (
+            {"id": "PAYPAL_REF_9001", "amount": {"value": "0.01", "currency_code": "USD"}},
+            "PAYPAL_REF_9001",
+            None,
+            Decimal("0.01"),
+            "USD",
+        ),
+        (
+            {"id": "PAYPAL_REF_9001", "status": "COMPLETED"},
+            "PAYPAL_REF_9001",
+            "COMPLETED",
+            None,
+            None,
+        ),
+        (
+            {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"currency_code": "USD"}},
+            "PAYPAL_REF_9001",
+            "COMPLETED",
+            None,
+            "USD",
+        ),
+        (
+            {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"value": "0.01"}},
+            "PAYPAL_REF_9001",
+            "COMPLETED",
+            Decimal("0.01"),
+            None,
+        ),
+        (
+            {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"value": "NaN", "currency_code": "USD"}},
+            "PAYPAL_REF_9001",
+            "COMPLETED",
+            None,
+            "USD",
+        ),
+    ],
+)
+async def test_paypal_refund_details_lookup_preserves_missing_or_invalid_fields(
+    test_settings: Settings,
+    refund_details_payload: dict[str, Any],
+    expected_id: str | None,
+    expected_status: str | None,
+    expected_amount: Decimal | None,
+    expected_currency: str | None,
+) -> None:
+    details, _ = await _call_paypal_refund_details(
+        test_settings,
+        refund_details_payload=refund_details_payload,
+    )
+
+    assert details.refund_id == expected_id
+    assert details.status == expected_status
+    assert details.refunded_amount == expected_amount
+    assert details.currency == expected_currency
 
 
 @pytest.mark.asyncio
@@ -804,6 +994,320 @@ async def test_paypal_capture_lookup_401_keeps_refund_pending_without_post(
     assert "HTTP 401" in (result.failure_reason or "")
     assert counters["/v2/payments/captures/PAYPAL_CAP_5001"] == 1
     assert counters.get("/v2/payments/captures/PAYPAL_CAP_5001/refund", 0) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_amount", [None, "not-a-number", "NaN", "Infinity"])
+async def test_paypal_completed_refund_without_valid_amount_retains_id_as_pending(
+    test_settings: Settings,
+    invalid_amount: str | None,
+) -> None:
+    payload: dict[str, Any] = {
+        "id": "PAYPAL_REF_9001",
+        "status": "COMPLETED",
+        "amount": {"currency_code": "USD"},
+    }
+    if invalid_amount is not None:
+        payload["amount"]["value"] = invalid_amount
+
+    client, app, counters, deposit, _ = await _start_pending_paypal_refund(
+        test_settings,
+        refund_payload=payload,
+    )
+    try:
+        stored = await app.state.container.deposit_manager.get_deposit(
+            deposit["deposit_id"]
+        )
+        assert stored is not None
+        assert stored.provider_refund_id == "PAYPAL_REF_9001"
+        assert stored.provider_refund_status == "COMPLETED"
+        assert stored.refund_status == RefundTransactionStatus.REFUND_PENDING
+        assert stored.deposit_state == DepositState.REFUND_PENDING
+        assert counters["/v2/payments/captures/PAYPAL_CAP_5001/refund"] == 1
+        assert counters["/v2/payments/refunds/PAYPAL_REF_9001"] == 1
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_amount", [None, "not-a-number", "NaN", "Infinity"])
+async def test_initial_pending_refund_is_reconciled_before_session_completion_returns(
+    test_settings: Settings,
+    invalid_amount: str | None,
+) -> None:
+    test_settings.payment_mode = "paypal_sandbox"
+    counters: dict[str, int] = {}
+    initial_refund_payload: dict[str, Any] = {
+        "id": "PAYPAL_REF_9001",
+        "status": "COMPLETED",
+        "amount": {"currency_code": "USD"},
+    }
+    if invalid_amount is not None:
+        initial_refund_payload["amount"]["value"] = invalid_amount
+
+    provider = PayPalSandboxProvider(
+        test_settings,
+        transport=_build_paypal_mock_transport(
+            call_counters=counters,
+            refund_payload=initial_refund_payload,
+            refund_details_payloads=[
+                {
+                    "id": "PAYPAL_REF_9001",
+                    "status": "COMPLETED",
+                    "amount": {"value": "0.01", "currency_code": "USD"},
+                }
+            ],
+        ),
+    )
+    app = create_app(settings=test_settings, payment_provider=provider)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://testserver",
+    ) as client:
+        deposit, access_token = await _create_paypal_session(
+            client,
+            "crawler-auto-refund-reconcile",
+        )
+        response = await client.post(
+            "/sessions/complete",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    assert response.status_code == 200
+    result = response.json()["deposit"]
+    assert result["deposit_id"] == deposit["deposit_id"]
+    assert result["deposit_state"] == "REFUNDED"
+    assert result["refund_status"] == "REFUNDED"
+    assert result["provider_refund_status"] == "COMPLETED"
+    assert result["payment_status"] == "CAPTURED"
+    assert result["provider_refund_id"] == "PAYPAL_REF_9001"
+    assert result["failure_reason"] is None
+    assert counters["/v2/payments/captures/PAYPAL_CAP_5001/refund"] == 1
+    assert counters["/v2/payments/refunds/PAYPAL_REF_9001"] == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_reconciles_existing_refund_after_restart_without_resubmitting(
+    test_settings: Settings,
+) -> None:
+    original_client, app, initial_counters, deposit, _ = await _start_pending_paypal_refund(
+        test_settings,
+        refund_payload={"id": "PAYPAL_REF_9001", "status": "COMPLETED"},
+    )
+    await original_client.aclose()
+
+    recovery_counters: dict[str, int] = {}
+    recovery_provider = PayPalSandboxProvider(
+        test_settings,
+        transport=_build_paypal_mock_transport(call_counters=recovery_counters),
+    )
+    restarted_app = create_app(settings=test_settings, payment_provider=recovery_provider)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=restarted_app),
+        base_url="http://testserver",
+    ) as client:
+        route = f"/deposits/{deposit['deposit_id']}/reconcile-refund"
+        unauthorized = await client.post(route)
+        assert unauthorized.status_code == 401
+        assert recovery_counters.get("/v2/payments/refunds/PAYPAL_REF_9001", 0) == 0
+
+        response = await client.post(
+            route,
+            headers={"X-Admin-Token": test_settings.admin_api_token},
+        )
+        assert response.status_code == 200
+        reconciled = response.json()
+
+        repeated = await client.post(
+            route,
+            headers={"X-Admin-Token": test_settings.admin_api_token},
+        )
+        assert repeated.status_code == 200
+        assert repeated.json()["deposit_state"] == "REFUNDED"
+
+    assert reconciled["refund_status"] == "REFUNDED"
+    assert reconciled["deposit_state"] == "REFUNDED"
+    assert reconciled["payment_status"] == "CAPTURED"
+    assert reconciled["provider_refund_id"] == "PAYPAL_REF_9001"
+    assert recovery_counters["/v2/payments/refunds/PAYPAL_REF_9001"] == 1
+    assert recovery_counters.get("/v2/payments/captures/PAYPAL_CAP_5001/refund", 0) == 0
+    assert initial_counters["/v2/payments/captures/PAYPAL_CAP_5001/refund"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "refund_details_payload",
+    [
+        {
+            "id": "PAYPAL_REF_OTHER",
+            "status": "COMPLETED",
+            "amount": {"value": "0.01", "currency_code": "USD"},
+        },
+        {
+            "id": "PAYPAL_REF_9001",
+            "status": "COMPLETED",
+            "amount": {"value": "0.02", "currency_code": "USD"},
+        },
+        {
+            "id": "PAYPAL_REF_9001",
+            "status": "COMPLETED",
+            "amount": {"value": "0.01", "currency_code": "EUR"},
+        },
+        {"status": "COMPLETED", "amount": {"value": "0.01", "currency_code": "USD"}},
+        {"id": "PAYPAL_REF_9001", "amount": {"value": "0.01", "currency_code": "USD"}},
+        {"id": "PAYPAL_REF_9001", "status": "COMPLETED"},
+        {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"currency_code": "USD"}},
+        {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"value": "0.01"}},
+        {
+            "id": "PAYPAL_REF_9001",
+            "status": "PENDING",
+            "amount": {"value": "0.01", "currency_code": "USD"},
+        },
+        {
+            "id": "PAYPAL_REF_9001",
+            "status": "FAILED",
+            "amount": {"value": "0.01", "currency_code": "USD"},
+        },
+        {
+            "id": "PAYPAL_REF_9001",
+            "status": "FUTURE_STATUS",
+            "amount": {"value": "0.01", "currency_code": "USD"},
+        },
+    ],
+)
+async def test_invalid_refund_details_keep_deposit_pending(
+    test_settings: Settings,
+    refund_details_payload: dict[str, Any],
+) -> None:
+    client, app, counters, deposit, _ = await _start_pending_paypal_refund(
+        test_settings,
+        refund_payload={"id": "PAYPAL_REF_9001", "status": "COMPLETED"},
+        refund_details_payload=refund_details_payload,
+    )
+    try:
+        response = await client.post(
+            f"/deposits/{deposit['deposit_id']}/reconcile-refund",
+            headers={"X-Admin-Token": test_settings.admin_api_token},
+        )
+        assert response.status_code == 200
+        assert response.json()["refund_status"] == "REFUND_PENDING"
+        assert response.json()["deposit_state"] == "REFUND_PENDING"
+        assert response.json()["payment_status"] == "CAPTURED"
+        assert response.json()["provider_refund_id"] == "PAYPAL_REF_9001"
+
+        stored = await app.state.container.deposit_manager.get_deposit(
+            deposit["deposit_id"]
+        )
+        assert stored is not None
+        assert stored.refund_status == RefundTransactionStatus.REFUND_PENDING
+        assert stored.deposit_state == DepositState.REFUND_PENDING
+        assert stored.failure_reason
+        assert counters["/v2/payments/captures/PAYPAL_CAP_5001/refund"] == 1
+        assert counters["/v2/payments/refunds/PAYPAL_REF_9001"] == 2
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "lookup_options",
+    [
+        {"refund_details_http_status": 401},
+        {"refund_details_http_status": 403},
+        {"refund_details_http_status": 404},
+        {"refund_details_http_status": 503},
+        {"refund_details_malformed_json": True},
+        {"refund_details_timeout": True},
+        {"refund_details_transport_error": True},
+    ],
+)
+async def test_refund_lookup_failures_preserve_pending_and_never_resubmit(
+    test_settings: Settings,
+    lookup_options: dict[str, Any],
+) -> None:
+    client, app, counters, deposit, _ = await _start_pending_paypal_refund(
+        test_settings,
+        refund_payload={"id": "PAYPAL_REF_9001", "status": "COMPLETED"},
+        **lookup_options,
+    )
+    try:
+        response = await client.post(
+            f"/deposits/{deposit['deposit_id']}/reconcile-refund",
+            headers={"X-Admin-Token": test_settings.admin_api_token},
+        )
+        assert response.status_code == 200
+        assert response.json()["refund_status"] == "REFUND_PENDING"
+        assert response.json()["provider_refund_id"] == "PAYPAL_REF_9001"
+        assert counters["/v2/payments/refunds/PAYPAL_REF_9001"] == 2
+        assert counters["/v2/payments/captures/PAYPAL_CAP_5001/refund"] == 1
+
+        stored = await app.state.container.deposit_manager.get_deposit(
+            deposit["deposit_id"]
+        )
+        assert stored is not None
+        assert stored.payment_status == PaymentStatus.CAPTURED
+        assert stored.deposit_state == DepositState.REFUND_PENDING
+        assert stored.refund_status == RefundTransactionStatus.REFUND_PENDING
+        assert stored.failure_reason
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sessions_complete_reconciles_existing_refund_and_cli_reports_refunded(
+    test_settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from client.common import print_final_summary
+
+    client, app, counters, deposit, headers = await _start_pending_paypal_refund(
+        test_settings,
+        refund_payload={"id": "PAYPAL_REF_9001", "status": "COMPLETED"},
+        refund_details_payloads=[
+            {"id": "PAYPAL_REF_9001", "status": "COMPLETED"},
+            {
+                "id": "PAYPAL_REF_9001",
+                "status": "COMPLETED",
+                "amount": {"value": "0.01", "currency_code": "USD"},
+            },
+        ],
+    )
+    try:
+        response = await client.post("/sessions/complete", headers=headers)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["deposit"]["deposit_state"] == "REFUNDED"
+        assert body["deposit"]["refund_status"] == "REFUNDED"
+        assert body["deposit"]["payment_status"] == "CAPTURED"
+        assert counters["/v2/payments/refunds/PAYPAL_REF_9001"] == 2
+        assert counters["/v2/payments/captures/PAYPAL_CAP_5001/refund"] == 1
+
+        audit_response = await client.get("/audit/summary", headers=headers)
+        assert audit_response.status_code == 200
+        print_final_summary(
+            body["deposit"],
+            body["session"],
+            audit_response.json(),
+        )
+        output = capsys.readouterr().out
+        assert "Composite Deposit State : REFUNDED" in output
+        assert "Refund Transaction      : REFUNDED" in output
+
+        stored = await app.state.container.deposit_manager.get_deposit(
+            deposit["deposit_id"]
+        )
+        assert stored is not None
+        assert stored.payment_status == PaymentStatus.CAPTURED
+        assert stored.deposit_state == DepositState.REFUNDED
+        assert stored.refund_status == RefundTransactionStatus.REFUNDED
+        events = await app.state.container.audit_logger.get_events(
+            deposit_id=deposit["deposit_id"],
+            event_type="DEPOSIT_REFUND_RECONCILED",
+            limit=10,
+        )
+        assert len(events) == 1
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.asyncio
@@ -1055,9 +1559,19 @@ async def test_paypal_failed_or_pending_refund_preserves_captured_record(
     simulated_refund_outcome: str,
 ) -> None:
     test_settings.payment_mode = "paypal_sandbox"
+    transport_options: dict[str, Any] = {}
+    if simulated_refund_outcome == "PENDING":
+        transport_options["refund_details_payload"] = {
+            "id": "PAYPAL_REF_9001",
+            "status": "PENDING",
+            "amount": {"value": "0.01", "currency_code": "USD"},
+        }
     provider = PayPalSandboxProvider(
         test_settings,
-        transport=_build_paypal_mock_transport(refund_status=simulated_refund_outcome),
+        transport=_build_paypal_mock_transport(
+            refund_status=simulated_refund_outcome,
+            **transport_options,
+        ),
     )
     app = create_app(settings=test_settings, payment_provider=provider)
 

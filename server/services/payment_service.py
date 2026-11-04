@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -74,6 +74,14 @@ class RefundExecutionResult:
     provider_status: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class RefundDetailsLookupResult:
+    refund_id: Optional[str]
+    status: Optional[str]
+    refunded_amount: Optional[Decimal]
+    currency: Optional[str]
+
+
 class PaymentProvider(abc.ABC):
     """Abstract interface for deposit order creation, capture, verification, and refunds."""
 
@@ -128,6 +136,10 @@ class PaymentProvider(abc.ABC):
         reconcile_before_refund: bool = False,
     ) -> RefundExecutionResult:
         """Refund a previously captured payment idempotently."""
+
+    @abc.abstractmethod
+    async def get_refund_details(self, *, refund_id: str) -> RefundDetailsLookupResult:
+        """Retrieve an existing refund without submitting a new financial operation."""
 
 
 class MockPaymentProvider(PaymentProvider):
@@ -320,6 +332,17 @@ class MockPaymentProvider(PaymentProvider):
         self._refund_by_request_id[request_id] = result
         self._refund_by_capture_id[capture_id] = result
         return result
+
+    async def get_refund_details(self, *, refund_id: str) -> RefundDetailsLookupResult:
+        for result in self._refund_by_capture_id.values():
+            if result.refund_id == refund_id:
+                return RefundDetailsLookupResult(
+                    refund_id=result.refund_id,
+                    status=result.provider_status or result.status,
+                    refunded_amount=result.refunded_amount,
+                    currency=result.currency,
+                )
+        raise PaymentProviderError("Mock refund was not found.")
 
 
 class PayPalSandboxProvider(PaymentProvider):
@@ -954,6 +977,117 @@ class PayPalSandboxProvider(PaymentProvider):
                 capture_id=capture_id,
                 expected_amount=expected_amount,
                 expected_currency=expected_currency,
+            )
+
+    @staticmethod
+    def _refund_details_from_payload(payload: Any) -> RefundDetailsLookupResult:
+        if not isinstance(payload, dict):
+            raise PaymentProviderError(
+                "PayPal refund lookup returned a malformed response."
+            )
+
+        raw_id = payload.get("id")
+        refund_id = raw_id if isinstance(raw_id, str) and raw_id else None
+        raw_status = payload.get("status")
+        provider_status = (
+            raw_status.strip().upper()
+            if isinstance(raw_status, str) and raw_status.strip()
+            else None
+        )
+
+        amount_obj = payload.get("amount")
+        raw_amount = amount_obj.get("value") if isinstance(amount_obj, dict) else None
+        refunded_amount: Optional[Decimal] = None
+        if isinstance(raw_amount, (str, int, float)) and not isinstance(raw_amount, bool):
+            try:
+                parsed_amount = Decimal(str(raw_amount))
+                if parsed_amount.is_finite():
+                    refunded_amount = parsed_amount
+            except (InvalidOperation, ValueError):
+                pass
+
+        raw_currency = amount_obj.get("currency_code") if isinstance(amount_obj, dict) else None
+        currency = (
+            raw_currency.strip().upper()
+            if isinstance(raw_currency, str) and raw_currency.strip()
+            else None
+        )
+        return RefundDetailsLookupResult(
+            refund_id=refund_id,
+            status=provider_status,
+            refunded_amount=refunded_amount,
+            currency=currency,
+        )
+
+    @staticmethod
+    def _safe_refund_lookup_error_metadata(response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+        except ValueError:
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+
+        metadata: list[str] = []
+        for field in ("name", "debug_id"):
+            value = payload.get(field)
+            if isinstance(value, str):
+                safe_value = "".join(
+                    character for character in value[:80]
+                    if character.isalnum() or character in "._-"
+                )
+                if safe_value:
+                    metadata.append(f"{field}={safe_value}")
+        return f" ({', '.join(metadata)})" if metadata else ""
+
+    async def _get_refund_details(
+        self,
+        client: httpx.AsyncClient,
+        token: str,
+        *,
+        refund_id: str,
+    ) -> RefundDetailsLookupResult:
+        if not refund_id.strip():
+            raise PaymentProviderError("Cannot look up a PayPal refund without its persisted refund ID.")
+
+        try:
+            response = await client.get(
+                f"/v2/payments/refunds/{quote(refund_id, safe='')}",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+        except httpx.TimeoutException as exc:
+            raise PaymentProviderTimeoutError(
+                "Timed out retrieving PayPal refund details; reconciliation remains pending."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise PaymentProviderError(
+                "Transport error retrieving PayPal refund details "
+                f"({type(exc).__name__}); reconciliation remains pending."
+            ) from exc
+
+        if response.status_code != 200:
+            raise PaymentProviderError(
+                "PayPal refund lookup failed with HTTP "
+                f"{response.status_code}{self._safe_refund_lookup_error_metadata(response)}; "
+                "reconciliation remains pending."
+            )
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise PaymentProviderError(
+                "PayPal refund lookup returned unreadable JSON; reconciliation remains pending."
+            ) from exc
+        return self._refund_details_from_payload(payload)
+
+    async def get_refund_details(self, *, refund_id: str) -> RefundDetailsLookupResult:
+        """Retrieve an existing PayPal refund through the Payments v2 API."""
+        async with self._build_client() as client:
+            token = await self._get_access_token(client)
+            return await self._get_refund_details(
+                client,
+                token,
+                refund_id=refund_id,
             )
 
     async def _reconcile_existing_refund(

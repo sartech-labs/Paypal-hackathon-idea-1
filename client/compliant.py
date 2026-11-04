@@ -138,6 +138,33 @@ def run_compliant_crawler(
         final_session = complete_data["session"]
         final_deposit = complete_data["deposit"]
 
+        try:
+            deposit_resp = client.get(
+                f"/deposits/{final_deposit['deposit_id']}",
+                headers=auth_headers,
+            )
+            deposit_resp.raise_for_status()
+            refreshed_deposit = deposit_resp.json()
+            if (
+                not isinstance(refreshed_deposit, dict)
+                or refreshed_deposit.get("deposit_id") != final_deposit["deposit_id"]
+                or not {
+                    "payment_mode",
+                    "simulated",
+                    "deposit_state",
+                    "payment_status",
+                    "policy_decision",
+                    "refund_status",
+                }.issubset(refreshed_deposit)
+            ):
+                raise ValueError("Deposit status response is incomplete or mismatched.")
+            final_deposit = refreshed_deposit
+        except (httpx.HTTPError, ValueError) as exc:
+            print(
+                "  [WARNING] Could not refresh the latest deposit state "
+                f"({type(exc).__name__}); displaying the session-completion response."
+            )
+
         # Step 6: Fetch session-scoped audit summary and display outcome
         print_step(6, "Final Deposit Accountability & Audit Summary")
         summary_resp = client.get("/audit/summary", headers=auth_headers)
@@ -181,4 +208,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
