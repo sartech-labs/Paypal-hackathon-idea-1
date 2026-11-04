@@ -132,8 +132,15 @@ def execute_deposit_and_policy_flow(
             f"Deposit capture failed (HTTP {cap_resp.status_code}): {cap_resp.text}"
         )
     captured_deposit = cap_resp.json()
-    print(f"  -> Capture ID          : {captured_deposit.get('provider_capture_id')}")
-    print(f"  -> Captured Amount     : {captured_deposit.get('captured_amount')} {captured_deposit.get('currency')}")
+    if captured_deposit.get("payment_status") == "AUTHORIZED":
+        print(f"  -> Authorization ID    : {captured_deposit.get('provider_authorization_id')}")
+        print(
+            f"  -> Amount On Hold      : {captured_deposit.get('required_amount')} "
+            f"{captured_deposit.get('currency')} (authorization hold; no funds captured)"
+        )
+    else:
+        print(f"  -> Capture ID          : {captured_deposit.get('provider_capture_id')}")
+        print(f"  -> Captured Amount     : {captured_deposit.get('captured_amount')} {captured_deposit.get('currency')}")
 
     # 3. Verify deposit server-side
     ver_resp = client.post(

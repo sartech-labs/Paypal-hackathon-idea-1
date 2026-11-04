@@ -32,15 +32,19 @@ from server.schemas import (
     RefundTransactionStatus,
     SessionRecord,
     SessionStatus,
+    SettlementMode,
     SiteConfig,
 )
 from server.services.audit_logger import AuditLogger
 from server.services.payment_service import (
+    AuthorizationResult,
+    OrderVerifyResult,
     PaymentApprovalRequiredError,
     PaymentProvider,
     PaymentProviderError,
     RefundDetailsLookupResult,
     RefundExecutionResult,
+    SettlementResult,
 )
 
 
@@ -56,16 +60,24 @@ class DepositManager:
         site_config: SiteConfig,
         payment_provider: PaymentProvider,
         audit_logger: AuditLogger,
+        settlement_mode: SettlementMode = SettlementMode.REFUND,
     ) -> None:
         self._db_path = payments_db_path
         self._site_config = site_config
         self._payment_provider = payment_provider
         self._audit = audit_logger
+        # Applies to new deposits; each record keeps the mode it was created with.
+        self._settlement_mode = settlement_mode
         self._lock = asyncio.Lock()
         self._challenges: dict[str, ChallengeRecord] = {}
         self._deposits: dict[str, DepositRecord] = {}
         self._active_refunds: set[str] = set()
         self._active_refund_reconciliations: set[str] = set()
+        self._active_settlements: set[str] = set()
+
+    @property
+    def settlement_mode(self) -> SettlementMode:
+        return self._settlement_mode
 
     @property
     def payment_provider(self) -> PaymentProvider:
@@ -190,6 +202,10 @@ class DepositManager:
             captured_at=record.captured_at,
             refunded_at=record.refunded_at,
             forfeited_at=record.forfeited_at,
+            settlement_mode=record.settlement_mode,
+            provider_authorization_id=record.provider_authorization_id,
+            provider_authorization_status=record.provider_authorization_status,
+            released_at=record.released_at,
         )
 
     async def register_challenge(self, challenge: ChallengeRecord) -> None:
@@ -406,6 +422,7 @@ class DepositManager:
                 refund_request_id=f"ref_req_{deposit_id}",
                 created_at=now_iso,
                 updated_at=now_iso,
+                settlement_mode=self._settlement_mode,
             )
 
             challenge.consumed = True
@@ -424,6 +441,11 @@ class DepositManager:
                 description=(
                     f"CrawlerTrust refundable deposit for {record.site_id} "
                     f"(crawler={record.crawler_id})"
+                ),
+                intent=(
+                    "AUTHORIZE"
+                    if record.settlement_mode == SettlementMode.AUTHORIZATION
+                    else "CAPTURE"
                 ),
             )
         except PaymentProviderError as exc:
@@ -487,8 +509,9 @@ class DepositManager:
         crawler_id: str,
     ) -> DepositRecord:
         """
-        Capture an order through the payment provider and validate captured
-        amount, currency, capture ID, and completion status.
+        Fund the deposit through the payment provider and validate amount, currency,
+        and status. In refund mode the order is captured; in authorization mode the
+        order is authorized, which places a hold without moving funds.
         """
         async with self._lock:
             record = self._deposits.get(deposit_id)
@@ -497,7 +520,11 @@ class DepositManager:
             if record.crawler_id != crawler_id:
                 raise PermissionError("Deposit belongs to a different crawler_id")
 
-            if record.payment_status == PaymentStatus.CAPTURED:
+            if record.payment_status in (
+                PaymentStatus.CAPTURED,
+                PaymentStatus.AUTHORIZED,
+                PaymentStatus.VOIDED,
+            ):
                 return record.model_copy(deep=True)
 
             if not record.provider_order_id:
@@ -509,14 +536,25 @@ class DepositManager:
             capture_req_id = record.capture_request_id
             expected_amt = Decimal(record.required_amount)
             expected_curr = record.currency
+            settlement = record.settlement_mode
 
+        verify_res: Optional[OrderVerifyResult] = None
+        auth_res: Optional[AuthorizationResult] = None
         try:
-            verify_res = await self._payment_provider.capture_order(
-                order_id=order_id,
-                request_id=capture_req_id,
-                expected_amount=expected_amt,
-                expected_currency=expected_curr,
-            )
+            if settlement == SettlementMode.AUTHORIZATION:
+                auth_res = await self._payment_provider.authorize_order(
+                    order_id=order_id,
+                    request_id=f"auth_req_{deposit_id}",
+                    expected_amount=expected_amt,
+                    expected_currency=expected_curr,
+                )
+            else:
+                verify_res = await self._payment_provider.capture_order(
+                    order_id=order_id,
+                    request_id=capture_req_id,
+                    expected_amount=expected_amt,
+                    expected_currency=expected_curr,
+                )
         except PaymentApprovalRequiredError as exc:
             async with self._lock:
                 stored = self._deposits[deposit_id]
@@ -552,6 +590,9 @@ class DepositManager:
             )
             raise
 
+        if auth_res is not None:
+            return await self._apply_authorization_result(deposit_id, auth_res)
+        assert verify_res is not None
         return await self._apply_verification_result(deposit_id, verify_res)
 
     async def verify_deposit(
@@ -576,13 +617,27 @@ class DepositManager:
             order_id = record.provider_order_id
             expected_amt = Decimal(record.required_amount)
             expected_curr = record.currency
+            settlement = record.settlement_mode
+            if settlement == SettlementMode.AUTHORIZATION and record.payment_status in (
+                PaymentStatus.CAPTURED,
+                PaymentStatus.VOIDED,
+            ):
+                # The hold is already settled; re-verifying it would only report VOIDED/CAPTURED.
+                return record.model_copy(deep=True)
 
         try:
-            verify_res = await self._payment_provider.verify_order(
-                order_id=order_id,
-                expected_amount=expected_amt,
-                expected_currency=expected_curr,
-            )
+            if settlement == SettlementMode.AUTHORIZATION:
+                auth_res = await self._payment_provider.verify_authorization(
+                    order_id=order_id,
+                    expected_amount=expected_amt,
+                    expected_currency=expected_curr,
+                )
+            else:
+                verify_res = await self._payment_provider.verify_order(
+                    order_id=order_id,
+                    expected_amount=expected_amt,
+                    expected_currency=expected_curr,
+                )
         except PaymentProviderError as exc:
             await self._audit.log_event(
                 event_type="PAYMENT_VERIFICATION_ERROR",
@@ -594,7 +649,67 @@ class DepositManager:
             )
             raise
 
+        if settlement == SettlementMode.AUTHORIZATION:
+            return await self._apply_authorization_result(deposit_id, auth_res)
         return await self._apply_verification_result(deposit_id, verify_res)
+
+    async def _apply_authorization_result(
+        self,
+        deposit_id: str,
+        auth_res: AuthorizationResult,
+    ) -> DepositRecord:
+        """Record a verified hold, or the reason the authorization could not be verified."""
+        async with self._lock:
+            stored = self._deposits[deposit_id]
+            stored.provider_order_status = auth_res.order_status
+            if auth_res.approval_url:
+                stored.approval_url = auth_res.approval_url
+            if auth_res.authorization_status:
+                stored.provider_authorization_status = auth_res.authorization_status
+
+            success = bool(auth_res.verified and auth_res.authorization_id)
+            if success:
+                if stored.payment_status != PaymentStatus.AUTHORIZED:
+                    self._transition_payment(stored, PaymentStatus.AUTHORIZED)
+                if stored.deposit_state in (DepositState.PENDING, DepositState.APPROVED, DepositState.FAILED):
+                    stored.deposit_state = DepositState.AUTHORIZED
+                stored.provider_authorization_id = auth_res.authorization_id
+                stored.failure_reason = None
+            else:
+                if auth_res.authorization_id and auth_res.authorization_status in ("CREATED", "DENIED"):
+                    # An authorization exists but is unusable (amount/currency mismatch or denied).
+                    self._transition_payment(stored, PaymentStatus.FAILED)
+                    stored.deposit_state = DepositState.FAILED
+                elif auth_res.order_status == "APPROVED" and stored.payment_status == PaymentStatus.PENDING:
+                    self._transition_payment(stored, PaymentStatus.APPROVED)
+                    stored.deposit_state = DepositState.APPROVED
+                stored.failure_reason = auth_res.failure_reason or "Authorization not verified"
+            stored.updated_at = utc_now_iso()
+            self._persist_unlocked()
+            result_copy = stored.model_copy(deep=True)
+
+        await self._audit.log_event(
+            event_type="PAYMENT_AUTHORIZED" if success else "PAYMENT_VERIFICATION_REJECTED",
+            crawler_id=result_copy.crawler_id,
+            challenge_id=result_copy.challenge_id,
+            deposit_id=result_copy.deposit_id,
+            allowed=success,
+            reason_code="AUTHORIZATION_VERIFIED" if success else "VERIFICATION_FAILED",
+            policy_version=result_copy.policy_version,
+            payment_mode=result_copy.payment_mode.value,
+            details={
+                "provider_order_id": result_copy.provider_order_id,
+                "provider_authorization_id": result_copy.provider_authorization_id,
+                "authorization_status": auth_res.authorization_status,
+                "authorized_amount": (
+                    f"{auth_res.authorized_amount:.2f}" if auth_res.authorized_amount is not None else None
+                ),
+                "currency": result_copy.currency,
+                "failure_reason": None if success else result_copy.failure_reason,
+                "simulated": auth_res.simulated,
+            },
+        )
+        return result_copy
 
     async def _apply_verification_result(
         self,
@@ -713,9 +828,10 @@ class DepositManager:
                     "challenge_id does not match the challenge bound to this deposit"
                 )
 
-            if record.payment_status != PaymentStatus.CAPTURED or not record.provider_capture_id:
+            if not record.is_funded:
                 raise StateTransitionError(
-                    "Deposit payment must be CAPTURED and verified before accepting policy"
+                    "Deposit payment must be captured (or authorized, in authorization mode) "
+                    "and verified before accepting policy"
                 )
 
             if record.policy_accepted or record.session_id is not None:
@@ -742,7 +858,16 @@ class DepositManager:
         - Separates `payment_status`, `policy_decision`, and `refund_status`.
         - Preserves `payment_status == CAPTURED` even if a refund fails or a policy is violated.
         - Idempotent on repeated calls.
+        - Authorization-mode deposits are settled by voiding or capturing the hold instead.
         """
+        async with self._lock:
+            existing = self._deposits.get(deposit_id)
+            settlement = existing.settlement_mode if existing is not None else None
+        if settlement == SettlementMode.AUTHORIZATION:
+            return await self._settle_authorization(
+                deposit_id=deposit_id, crawler_id=crawler_id, session=session
+            )
+
         async with self._lock:
             record = self._deposits.get(deposit_id)
             if record is None:
@@ -1023,3 +1148,171 @@ class DepositManager:
             return reconciled, True, final_copy.decision_reason or ""
 
         return final_copy, True, final_copy.decision_reason or ""
+
+    async def _settle_authorization(
+        self,
+        *,
+        deposit_id: str,
+        crawler_id: str,
+        session: Optional[SessionRecord],
+    ) -> tuple[DepositRecord, bool, str]:
+        """
+        Settle an authorization-mode deposit from the authoritative session history:
+        void the hold for a compliant session (no funds move), or capture it when the
+        session was disqualified. The policy decision is recorded before the provider
+        call, so a provider failure never changes the decision; retries are idempotent.
+        """
+        async with self._lock:
+            record = self._deposits.get(deposit_id)
+            if record is None:
+                raise KeyError(f"Unknown deposit_id: {deposit_id}")
+            if record.crawler_id != crawler_id:
+                raise PermissionError("Deposit belongs to a different crawler_id")
+
+            if record.deposit_state == DepositState.RELEASED:
+                return (
+                    record.model_copy(deep=True),
+                    True,
+                    record.decision_reason or "The deposit hold was released.",
+                )
+            if record.deposit_state == DepositState.FORFEITED:
+                return (
+                    record.model_copy(deep=True),
+                    False,
+                    record.decision_reason or "The deposit was forfeited due to policy violations.",
+                )
+            if record.payment_status != PaymentStatus.AUTHORIZED or not record.provider_authorization_id:
+                raise StateTransitionError(
+                    "Cannot settle a deposit whose payment hold is not AUTHORIZED"
+                )
+            if not record.policy_accepted or session is None or record.session_id != session.session_id:
+                raise StateTransitionError(
+                    "Cannot evaluate refund before policy acceptance and session creation"
+                )
+            if deposit_id in self._active_settlements:
+                raise StateTransitionError("Settlement of this deposit hold is already in progress")
+
+            forfeit = session.disqualified or (
+                record.policy_decision == PolicyDecisionStatus.FORFEITED_BY_POLICY
+            )
+            if (
+                not forfeit
+                and self._site_config.refund_policy.require_explicit_session_completion
+                and session.status != SessionStatus.COMPLETED
+            ):
+                raise StateTransitionError(
+                    f"Session must be in COMPLETED status before refund (current status: {session.status.value})"
+                )
+
+            if forfeit:
+                self._transition_decision(record, PolicyDecisionStatus.FORFEITED_BY_POLICY)
+                reasons = "; ".join(session.disqualification_reasons) or (
+                    "Disqualifying crawling policy violation recorded"
+                )
+                record.decision_reason = (
+                    "Deposit forfeited under site policy (authorization hold captured; "
+                    f"no refund issued): {reasons}"
+                )
+            else:
+                self._transition_decision(record, PolicyDecisionStatus.ELIGIBLE_FOR_REFUND)
+                record.decision_reason = (
+                    "Session completed with 0 disqualifying violations; the deposit hold is "
+                    "released and no funds were captured."
+                )
+            record.updated_at = utc_now_iso()
+            self._persist_unlocked()
+            self._active_settlements.add(deposit_id)
+
+            authorization_id = record.provider_authorization_id
+            order_id = record.provider_order_id
+            amount = Decimal(record.required_amount)
+            currency = record.currency
+            capture_request_id = record.capture_request_id
+            decision_reason = record.decision_reason
+
+        try:
+            if forfeit:
+                result = await self._payment_provider.capture_authorization(
+                    authorization_id=authorization_id,
+                    order_id=order_id,
+                    amount=amount,
+                    currency=currency,
+                    request_id=capture_request_id,
+                    note=f"CrawlerTrust deposit forfeited under site policy ({session.session_id})",
+                )
+            else:
+                result = await self._payment_provider.void_authorization(
+                    authorization_id=authorization_id,
+                    order_id=order_id,
+                    request_id=f"void_req_{deposit_id}",
+                )
+        except PaymentProviderError as exc:
+            result = SettlementResult(
+                status="PENDING",
+                simulated=self._payment_provider.mode.value == "mock",
+                failure_reason=f"Settlement outcome unknown ({exc}); retry to reconcile.",
+            )
+        finally:
+            async with self._lock:
+                self._active_settlements.discard(deposit_id)
+
+        async with self._lock:
+            record = self._deposits[deposit_id]
+            if result.provider_status:
+                record.provider_authorization_status = result.provider_status
+            now_iso = utc_now_iso()
+            if forfeit and result.status == "CAPTURED":
+                self._transition_payment(record, PaymentStatus.CAPTURED)
+                self._transition_refund(record, RefundTransactionStatus.NOT_APPLICABLE_FORFEITED)
+                record.provider_capture_id = result.capture_id
+                record.captured_amount = (
+                    f"{result.amount:.2f}" if result.amount is not None else record.required_amount
+                )
+                record.captured_at = now_iso
+                record.forfeited_at = now_iso
+                record.deposit_state = DepositState.FORFEITED
+                record.failure_reason = None
+                event_type, reason_code = "DEPOSIT_FORFEITED", "FORFEITED_BY_POLICY"
+            elif not forfeit and result.status == "VOIDED":
+                self._transition_payment(record, PaymentStatus.VOIDED)
+                self._transition_refund(record, RefundTransactionStatus.NOT_APPLICABLE_RELEASED)
+                record.released_at = now_iso
+                record.deposit_state = DepositState.RELEASED
+                record.failure_reason = None
+                event_type, reason_code = "DEPOSIT_RELEASED", "HOLD_VOIDED"
+            else:
+                # Decision stands; the hold remains AUTHORIZED until a retry settles it.
+                record.failure_reason = result.failure_reason or "Settlement with the payment provider failed."
+                if forfeit:
+                    event_type, reason_code = "DEPOSIT_FORFEIT_CAPTURE_PENDING", "HOLD_CAPTURE_NOT_CONFIRMED"
+                else:
+                    event_type, reason_code = "DEPOSIT_RELEASE_PENDING", "HOLD_VOID_NOT_CONFIRMED"
+            record.updated_at = now_iso
+            self._persist_unlocked()
+            final_copy = record.model_copy(deep=True)
+
+        await self._audit.log_event(
+            event_type=event_type,
+            crawler_id=final_copy.crawler_id,
+            challenge_id=final_copy.challenge_id,
+            session_id=session.session_id,
+            deposit_id=final_copy.deposit_id,
+            allowed=not forfeit and final_copy.deposit_state == DepositState.RELEASED,
+            reason_code=reason_code,
+            policy_version=final_copy.policy_version,
+            payment_mode=final_copy.payment_mode.value,
+            details={
+                "settlement_mode": final_copy.settlement_mode.value,
+                "provider_authorization_id": final_copy.provider_authorization_id,
+                "provider_authorization_status": final_copy.provider_authorization_status,
+                "provider_capture_id": final_copy.provider_capture_id,
+                "payment_status": final_copy.payment_status.value,
+                "policy_decision": final_copy.policy_decision.value,
+                "refund_status": final_copy.refund_status.value,
+                "deposit_state": final_copy.deposit_state.value,
+                "disqualification_reasons": session.disqualification_reasons,
+                "failure_reason": final_copy.failure_reason,
+                "simulated": result.simulated,
+            },
+        )
+        return final_copy, not forfeit, decision_reason or ""

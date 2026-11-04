@@ -82,6 +82,97 @@ class RefundDetailsLookupResult:
     currency: Optional[str]
 
 
+@dataclass(frozen=True)
+class AuthorizationResult:
+    """Outcome of authorizing (placing a hold on) a deposit order."""
+
+    order_id: str
+    order_status: str
+    authorization_id: Optional[str]
+    authorization_status: Optional[str]
+    authorized_amount: Optional[Decimal]
+    currency: Optional[str]
+    verified: bool
+    simulated: bool
+    approval_url: Optional[str] = None
+    failure_reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SettlementResult:
+    """Outcome of settling an authorization: VOIDED, CAPTURED, PENDING, or FAILED."""
+
+    status: str
+    simulated: bool
+    capture_id: Optional[str] = None
+    amount: Optional[Decimal] = None
+    currency: Optional[str] = None
+    provider_status: Optional[str] = None
+    failure_reason: Optional[str] = None
+
+
+def _parse_money(amount_obj: Any) -> tuple[Optional[Decimal], Optional[str]]:
+    """Parse a PayPal money object into (amount, currency), tolerating malformed input."""
+    if not isinstance(amount_obj, dict):
+        return None, None
+    amount: Optional[Decimal] = None
+    raw_value = amount_obj.get("value")
+    if isinstance(raw_value, (str, int, float)) and not isinstance(raw_value, bool):
+        try:
+            parsed = Decimal(str(raw_value))
+            if parsed.is_finite():
+                amount = parsed.quantize(Decimal("0.01"))
+        except (InvalidOperation, ValueError):
+            amount = None
+    raw_currency = amount_obj.get("currency_code")
+    currency = raw_currency.strip().upper() if isinstance(raw_currency, str) and raw_currency.strip() else None
+    return amount, currency
+
+
+def _evaluate_authorization(
+    *,
+    order_id: str,
+    order_status: str,
+    authorization_id: Optional[str],
+    authorization_status: Optional[str],
+    amount: Optional[Decimal],
+    currency: Optional[str],
+    expected_amount: Decimal,
+    expected_currency: str,
+    simulated: bool,
+    approval_url: Optional[str] = None,
+) -> AuthorizationResult:
+    """Accept an authorization only when it exists, is CREATED, and matches the deposit."""
+
+    def result(verified: bool, failure_reason: Optional[str] = None) -> AuthorizationResult:
+        return AuthorizationResult(
+            order_id=order_id,
+            order_status=order_status,
+            authorization_id=authorization_id,
+            authorization_status=authorization_status,
+            authorized_amount=amount,
+            currency=currency,
+            verified=verified,
+            simulated=simulated,
+            approval_url=approval_url,
+            failure_reason=failure_reason,
+        )
+
+    if not authorization_id or not authorization_status:
+        return result(False, f"Order {order_id} is in status '{order_status}' with no authorization yet.")
+    if authorization_status != "CREATED":
+        return result(False, f"Authorization status is '{authorization_status}' (expected CREATED).")
+    expected = expected_amount.quantize(Decimal("0.01"))
+    if amount is None or amount != expected:
+        return result(False, f"Authorized amount '{amount}' does not match required deposit '{expected}'.")
+    if currency != expected_currency.upper():
+        return result(
+            False,
+            f"Authorized currency '{currency}' does not match required currency '{expected_currency.upper()}'.",
+        )
+    return result(True)
+
+
 class PaymentProvider(abc.ABC):
     """Abstract interface for deposit order creation, capture, verification, and refunds."""
 
@@ -99,8 +190,53 @@ class PaymentProvider(abc.ABC):
         currency: str,
         request_id: str,
         description: str,
+        intent: str = "CAPTURE",
     ) -> OrderCreationResult:
-        """Create a deposit order."""
+        """Create a deposit order with intent CAPTURE or AUTHORIZE."""
+
+    @abc.abstractmethod
+    async def authorize_order(
+        self,
+        *,
+        order_id: str,
+        request_id: str,
+        expected_amount: Decimal,
+        expected_currency: str,
+    ) -> AuthorizationResult:
+        """Authorize an approved AUTHORIZE-intent order, placing a hold on the deposit."""
+
+    @abc.abstractmethod
+    async def verify_authorization(
+        self,
+        *,
+        order_id: str,
+        expected_amount: Decimal,
+        expected_currency: str,
+    ) -> AuthorizationResult:
+        """Look up the order's authorization and verify status, amount, and currency."""
+
+    @abc.abstractmethod
+    async def void_authorization(
+        self,
+        *,
+        authorization_id: str,
+        order_id: Optional[str],
+        request_id: str,
+    ) -> SettlementResult:
+        """Release a hold without capturing funds (compliant session)."""
+
+    @abc.abstractmethod
+    async def capture_authorization(
+        self,
+        *,
+        authorization_id: str,
+        order_id: Optional[str],
+        amount: Decimal,
+        currency: str,
+        request_id: str,
+        note: str,
+    ) -> SettlementResult:
+        """Capture a held deposit (forfeiture)."""
 
     @abc.abstractmethod
     async def capture_order(
@@ -166,6 +302,7 @@ class MockPaymentProvider(PaymentProvider):
         currency: str,
         request_id: str,
         description: str,
+        intent: str = "CAPTURE",
     ) -> OrderCreationResult:
         if request_id in self._order_by_request_id:
             existing_id = self._order_by_request_id[request_id]
@@ -185,10 +322,13 @@ class MockPaymentProvider(PaymentProvider):
             "deposit_id": deposit_id,
             "amount": amount.quantize(Decimal("0.01")),
             "currency": currency.upper(),
+            "intent": intent.upper(),
             "status": "APPROVED",
             "approval_url": approval_url,
             "capture_id": None,
             "capture_status": None,
+            "authorization_id": None,
+            "authorization_status": None,
             "description": description,
         }
         self._order_by_request_id[request_id] = order_id
@@ -343,6 +483,121 @@ class MockPaymentProvider(PaymentProvider):
                     currency=result.currency,
                 )
         raise PaymentProviderError("Mock refund was not found.")
+
+    def _order_for_authorization(self, authorization_id: str) -> Optional[dict[str, Any]]:
+        for order in self._orders.values():
+            if order.get("authorization_id") == authorization_id:
+                return order
+        return None
+
+    async def authorize_order(
+        self,
+        *,
+        order_id: str,
+        request_id: str,
+        expected_amount: Decimal,
+        expected_currency: str,
+    ) -> AuthorizationResult:
+        order = self._orders.get(order_id)
+        if order is None:
+            raise PaymentProviderError(f"Mock order not found: {order_id}")
+        if order["intent"] != "AUTHORIZE":
+            raise PaymentProviderError(f"Mock order {order_id} was not created with intent AUTHORIZE.")
+        if order["authorization_id"] is None:
+            order["authorization_id"] = f"mock_auth_{secrets.token_hex(8)}"
+            order["authorization_status"] = "CREATED"
+            order["status"] = "COMPLETED"
+        return await self.verify_authorization(
+            order_id=order_id,
+            expected_amount=expected_amount,
+            expected_currency=expected_currency,
+        )
+
+    async def verify_authorization(
+        self,
+        *,
+        order_id: str,
+        expected_amount: Decimal,
+        expected_currency: str,
+    ) -> AuthorizationResult:
+        order = self._orders.get(order_id)
+        if order is None:
+            return AuthorizationResult(
+                order_id=order_id,
+                order_status="NOT_FOUND",
+                authorization_id=None,
+                authorization_status=None,
+                authorized_amount=None,
+                currency=None,
+                verified=False,
+                simulated=True,
+                failure_reason=f"Order {order_id} does not exist in mock provider.",
+            )
+        return _evaluate_authorization(
+            order_id=order_id,
+            order_status=str(order["status"]),
+            authorization_id=order["authorization_id"],
+            authorization_status=order["authorization_status"],
+            amount=order["amount"],
+            currency=order["currency"],
+            expected_amount=expected_amount,
+            expected_currency=expected_currency,
+            simulated=True,
+            approval_url=order["approval_url"],
+        )
+
+    async def void_authorization(
+        self,
+        *,
+        authorization_id: str,
+        order_id: Optional[str],
+        request_id: str,
+    ) -> SettlementResult:
+        order = self._order_for_authorization(authorization_id)
+        if order is None:
+            return SettlementResult(status="FAILED", simulated=True, failure_reason="Mock authorization not found.")
+        if order["authorization_status"] == "CAPTURED":
+            return SettlementResult(
+                status="FAILED",
+                simulated=True,
+                provider_status="CAPTURED",
+                failure_reason="Authorization was already captured and cannot be voided.",
+            )
+        order["authorization_status"] = "VOIDED"
+        return SettlementResult(status="VOIDED", simulated=True, provider_status="VOIDED")
+
+    async def capture_authorization(
+        self,
+        *,
+        authorization_id: str,
+        order_id: Optional[str],
+        amount: Decimal,
+        currency: str,
+        request_id: str,
+        note: str,
+    ) -> SettlementResult:
+        order = self._order_for_authorization(authorization_id)
+        if order is None:
+            return SettlementResult(status="FAILED", simulated=True, failure_reason="Mock authorization not found.")
+        if order["authorization_status"] == "VOIDED":
+            return SettlementResult(
+                status="FAILED",
+                simulated=True,
+                provider_status="VOIDED",
+                failure_reason="Authorization was already voided and cannot be captured.",
+            )
+        if order["capture_id"] is None:
+            order["capture_id"] = f"mock_cap_{secrets.token_hex(8)}"
+            order["capture_status"] = "COMPLETED"
+            order["authorization_status"] = "CAPTURED"
+        return SettlementResult(
+            status="CAPTURED",
+            simulated=True,
+            capture_id=order["capture_id"],
+            amount=amount.quantize(Decimal("0.01")),
+            currency=currency.upper(),
+            provider_status="COMPLETED",
+        )
 
 
 class PayPalSandboxProvider(PaymentProvider):
@@ -561,13 +816,16 @@ class PayPalSandboxProvider(PaymentProvider):
         currency: str,
         request_id: str,
         description: str,
+        intent: str = "CAPTURE",
     ) -> OrderCreationResult:
         quantized = amount.quantize(Decimal("0.01"))
+        if intent.upper() not in ("CAPTURE", "AUTHORIZE"):
+            raise PaymentProviderError(f"Unsupported PayPal order intent: {intent!r}")
         async with self._build_client() as client:
             token = await self._get_access_token(client)
             callback_query = urlencode({"deposit_id": deposit_id})
             body = {
-                "intent": "CAPTURE",
+                "intent": intent.upper(),
                 "purchase_units": [
                     {
                         "custom_id": deposit_id,
@@ -1409,3 +1667,436 @@ class PayPalSandboxProvider(PaymentProvider):
                 expected_currency=currency,
                 source="PayPal refund response",
             )
+
+    # --- Authorization-hold settlement (Orders v2 authorize; Payments v2 void/capture) ----
+
+    @staticmethod
+    def _error_issues(response: httpx.Response) -> tuple[list[str], str]:
+        """Return PayPal error issue codes and the error name from an error response."""
+        try:
+            payload = response.json()
+        except ValueError:
+            return [], ""
+        if not isinstance(payload, dict):
+            return [], ""
+        details = payload.get("details")
+        issues = [
+            str(item.get("issue"))
+            for item in (details if isinstance(details, list) else [])
+            if isinstance(item, dict) and item.get("issue")
+        ]
+        name = payload.get("name")
+        return issues, name if isinstance(name, str) else ""
+
+    @classmethod
+    def _parse_authorization(
+        cls,
+        payload: Any,
+        expected_amount: Decimal,
+        expected_currency: str,
+    ) -> AuthorizationResult:
+        if not isinstance(payload, dict):
+            raise PaymentProviderError("PayPal returned a malformed order response.")
+        order_id = str(payload.get("id", ""))
+        order_status = str(payload.get("status", "UNKNOWN"))
+        approval_url = cls._extract_approval_url(payload)
+
+        authorization: Optional[dict[str, Any]] = None
+        units = payload.get("purchase_units")
+        if isinstance(units, list) and units and isinstance(units[0], dict):
+            payments = units[0].get("payments")
+            if isinstance(payments, dict):
+                authorizations = payments.get("authorizations")
+                if (
+                    isinstance(authorizations, list)
+                    and authorizations
+                    and isinstance(authorizations[0], dict)
+                ):
+                    authorization = authorizations[0]
+
+        if authorization is None:
+            return _evaluate_authorization(
+                order_id=order_id,
+                order_status=order_status,
+                authorization_id=None,
+                authorization_status=None,
+                amount=None,
+                currency=None,
+                expected_amount=expected_amount,
+                expected_currency=expected_currency,
+                simulated=False,
+                approval_url=approval_url,
+            )
+        amount, currency = _parse_money(authorization.get("amount"))
+        raw_status = authorization.get("status")
+        return _evaluate_authorization(
+            order_id=order_id,
+            order_status=order_status,
+            authorization_id=str(authorization.get("id", "")).strip() or None,
+            authorization_status=raw_status.strip().upper() if isinstance(raw_status, str) else None,
+            amount=amount,
+            currency=currency,
+            expected_amount=expected_amount,
+            expected_currency=expected_currency,
+            simulated=False,
+            approval_url=approval_url,
+        )
+
+    async def authorize_order(
+        self,
+        *,
+        order_id: str,
+        request_id: str,
+        expected_amount: Decimal,
+        expected_currency: str,
+    ) -> AuthorizationResult:
+        async with self._build_client() as client:
+            token = await self._get_access_token(client)
+            try:
+                response = await client.post(
+                    f"/v2/checkout/orders/{quote(order_id, safe='')}/authorize",
+                    json={},
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "PayPal-Request-Id": request_id,
+                        "Prefer": "return=representation",
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                )
+            except httpx.TimeoutException as exc:
+                raise PaymentProviderTimeoutError(
+                    f"Timed out authorizing PayPal order {order_id}"
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise PaymentProviderError(
+                    f"Transport error authorizing PayPal order {order_id} ({type(exc).__name__})"
+                ) from exc
+
+        if response.status_code in (200, 201):
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict):
+                return self._parse_authorization(payload, expected_amount, expected_currency)
+        if response.status_code in (200, 201, 202):
+            # Accepted, or the body was unreadable: read the authoritative order state.
+            return await self.verify_authorization(
+                order_id=order_id,
+                expected_amount=expected_amount,
+                expected_currency=expected_currency,
+            )
+
+        issues, error_name = self._error_issues(response)
+        if "ORDER_ALREADY_AUTHORIZED" in issues:
+            return await self.verify_authorization(
+                order_id=order_id,
+                expected_amount=expected_amount,
+                expected_currency=expected_currency,
+            )
+        if "ORDER_NOT_APPROVED" in issues or "PAYER_ACTION_REQUIRED" in issues:
+            current = await self.verify_authorization(
+                order_id=order_id,
+                expected_amount=expected_amount,
+                expected_currency=expected_currency,
+            )
+            raise PaymentApprovalRequiredError(
+                f"PayPal order {order_id} has not been approved by the payer yet.",
+                approval_url=current.approval_url,
+            )
+        raise PaymentProviderError(
+            f"PayPal order authorization failed with HTTP {response.status_code} "
+            f"({error_name}: {','.join(issues)})"
+        )
+
+    async def verify_authorization(
+        self,
+        *,
+        order_id: str,
+        expected_amount: Decimal,
+        expected_currency: str,
+    ) -> AuthorizationResult:
+        async with self._build_client() as client:
+            token = await self._get_access_token(client)
+            try:
+                response = await client.get(
+                    f"/v2/checkout/orders/{quote(order_id, safe='')}",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                )
+            except httpx.TimeoutException as exc:
+                raise PaymentProviderTimeoutError(
+                    f"Timed out looking up PayPal order {order_id}"
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise PaymentProviderError(
+                    f"Transport error looking up PayPal order {order_id} ({type(exc).__name__})"
+                ) from exc
+        if response.status_code != 200:
+            raise PaymentProviderError(
+                f"PayPal order lookup failed with HTTP {response.status_code}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise PaymentProviderError("PayPal order lookup returned unreadable JSON.") from exc
+        return self._parse_authorization(payload, expected_amount, expected_currency)
+
+    async def _get_authorization_status(
+        self,
+        client: httpx.AsyncClient,
+        token: str,
+        authorization_id: str,
+    ) -> Optional[str]:
+        """Return the authorization's current status, or None if it cannot be read."""
+        try:
+            response = await client.get(
+                f"/v2/payments/authorizations/{quote(authorization_id, safe='')}",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+            if response.status_code != 200:
+                return None
+            payload = response.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        status = payload.get("status") if isinstance(payload, dict) else None
+        return status.strip().upper() if isinstance(status, str) and status.strip() else None
+
+    async def void_authorization(
+        self,
+        *,
+        authorization_id: str,
+        order_id: Optional[str],
+        request_id: str,
+    ) -> SettlementResult:
+        async with self._build_client() as client:
+            try:
+                token = await self._get_access_token(client)
+            except PaymentProviderError as exc:
+                return SettlementResult(
+                    status="FAILED",
+                    simulated=False,
+                    failure_reason=f"PayPal token acquisition failed before voiding ({type(exc).__name__}).",
+                )
+            try:
+                response = await client.post(
+                    f"/v2/payments/authorizations/{quote(authorization_id, safe='')}/void",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "PayPal-Request-Id": request_id,
+                        "Accept": "application/json",
+                    },
+                )
+            except httpx.HTTPError as exc:
+                return await self._reconcile_void(
+                    client, token, authorization_id, reason=f"a transport error ({type(exc).__name__})"
+                )
+
+            # 204 No Content by default; 200 only with Prefer: return=representation.
+            if response.status_code in (200, 204):
+                return SettlementResult(status="VOIDED", simulated=False, provider_status="VOIDED")
+            if response.status_code == 409:
+                return SettlementResult(
+                    status="PENDING",
+                    simulated=False,
+                    failure_reason="A previous void request for this authorization is still in progress.",
+                )
+            issues, error_name = self._error_issues(response)
+            return await self._reconcile_void(
+                client,
+                token,
+                authorization_id,
+                reason=f"HTTP {response.status_code} ({error_name}: {','.join(issues)})",
+            )
+
+    async def _reconcile_void(
+        self,
+        client: httpx.AsyncClient,
+        token: str,
+        authorization_id: str,
+        *,
+        reason: str,
+    ) -> SettlementResult:
+        status = await self._get_authorization_status(client, token, authorization_id)
+        if status == "VOIDED":
+            return SettlementResult(status="VOIDED", simulated=False, provider_status="VOIDED")
+        if status is None:
+            return SettlementResult(
+                status="PENDING",
+                simulated=False,
+                failure_reason=f"Void outcome is unknown after {reason}; reconcile before retrying.",
+            )
+        return SettlementResult(
+            status="FAILED",
+            simulated=False,
+            provider_status=status,
+            failure_reason=f"PayPal did not void the authorization after {reason} (status {status}).",
+        )
+
+    async def capture_authorization(
+        self,
+        *,
+        authorization_id: str,
+        order_id: Optional[str],
+        amount: Decimal,
+        currency: str,
+        request_id: str,
+        note: str,
+    ) -> SettlementResult:
+        quantized = amount.quantize(Decimal("0.01"))
+        body = {
+            "amount": {"value": f"{quantized:.2f}", "currency_code": currency.upper()},
+            "final_capture": True,
+            "note_to_payer": note[:255],
+        }
+        async with self._build_client() as client:
+            try:
+                token = await self._get_access_token(client)
+            except PaymentProviderError as exc:
+                return SettlementResult(
+                    status="FAILED",
+                    simulated=False,
+                    failure_reason=f"PayPal token acquisition failed before capture ({type(exc).__name__}).",
+                )
+            try:
+                response = await client.post(
+                    f"/v2/payments/authorizations/{quote(authorization_id, safe='')}/capture",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "PayPal-Request-Id": request_id,
+                        "Prefer": "return=representation",
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                )
+            except httpx.HTTPError as exc:
+                return await self._reconcile_authorization_capture(
+                    client,
+                    token,
+                    order_id,
+                    quantized,
+                    currency,
+                    reason=f"a transport error ({type(exc).__name__})",
+                )
+
+            if response.status_code in (200, 201):
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = None
+                if isinstance(payload, dict):
+                    return self._parse_capture_settlement(payload, quantized, currency)
+                return await self._reconcile_authorization_capture(
+                    client, token, order_id, quantized, currency, reason="an unreadable capture response"
+                )
+            if response.status_code == 409:
+                return SettlementResult(
+                    status="PENDING",
+                    simulated=False,
+                    failure_reason="A previous capture request for this authorization is still in progress.",
+                )
+            issues, error_name = self._error_issues(response)
+            if "AUTHORIZATION_EXPIRED" in issues:
+                return SettlementResult(
+                    status="FAILED",
+                    simulated=False,
+                    provider_status="EXPIRED",
+                    failure_reason="The PayPal authorization expired before it could be captured.",
+                )
+            return await self._reconcile_authorization_capture(
+                client,
+                token,
+                order_id,
+                quantized,
+                currency,
+                reason=f"HTTP {response.status_code} ({error_name}: {','.join(issues)})",
+                unknown_status="PENDING" if response.status_code >= 500 else "FAILED",
+            )
+
+    @staticmethod
+    def _parse_capture_settlement(
+        payload: dict[str, Any],
+        expected_amount: Decimal,
+        expected_currency: str,
+    ) -> SettlementResult:
+        capture_id = str(payload.get("id", "")).strip() or None
+        raw_status = payload.get("status")
+        status = raw_status.strip().upper() if isinstance(raw_status, str) else None
+        amount, currency = _parse_money(payload.get("amount"))
+        if status == "COMPLETED" and capture_id:
+            if amount != expected_amount or currency != expected_currency.upper():
+                return SettlementResult(
+                    status="PENDING",
+                    simulated=False,
+                    capture_id=capture_id,
+                    amount=amount,
+                    currency=currency,
+                    provider_status=status,
+                    failure_reason="Captured amount or currency does not match the deposit; manual review required.",
+                )
+            return SettlementResult(
+                status="CAPTURED",
+                simulated=False,
+                capture_id=capture_id,
+                amount=amount,
+                currency=currency,
+                provider_status=status,
+            )
+        if status == "PENDING":
+            return SettlementResult(
+                status="PENDING",
+                simulated=False,
+                capture_id=capture_id,
+                amount=amount,
+                currency=currency,
+                provider_status=status,
+                failure_reason="PayPal reports the capture as PENDING settlement.",
+            )
+        return SettlementResult(
+            status="FAILED",
+            simulated=False,
+            capture_id=capture_id,
+            provider_status=status,
+            failure_reason=f"PayPal capture status was '{status}'.",
+        )
+
+    async def _reconcile_authorization_capture(
+        self,
+        client: httpx.AsyncClient,
+        token: str,
+        order_id: Optional[str],
+        expected_amount: Decimal,
+        currency: str,
+        *,
+        reason: str,
+        unknown_status: str = "PENDING",
+    ) -> SettlementResult:
+        """After an ambiguous capture response, look for a completed capture on the order."""
+        if order_id:
+            try:
+                response = await client.get(
+                    f"/v2/checkout/orders/{quote(order_id, safe='')}",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                )
+                payload = response.json() if response.status_code == 200 else None
+            except (httpx.HTTPError, ValueError):
+                payload = None
+            units = payload.get("purchase_units") if isinstance(payload, dict) else None
+            if isinstance(units, list) and units and isinstance(units[0], dict):
+                payments = units[0].get("payments")
+                captures = payments.get("captures") if isinstance(payments, dict) else None
+                for capture in captures if isinstance(captures, list) else []:
+                    if isinstance(capture, dict):
+                        settled = self._parse_capture_settlement(capture, expected_amount, currency)
+                        if settled.status == "CAPTURED":
+                            return settled
+        return SettlementResult(
+            status=unknown_status,
+            simulated=False,
+            failure_reason=(
+                f"Capture outcome is unknown after {reason}; reconcile before retrying."
+                if unknown_status == "PENDING"
+                else f"PayPal rejected the capture: {reason}."
+            ),
+        )

@@ -12,7 +12,6 @@ from server.core.security import (
 from server.schemas import (
     DepositRecord,
     DepositState,
-    PaymentStatus,
     PolicyDecision,
     PolicyDecisionStatus,
     SessionRecord,
@@ -183,8 +182,8 @@ class PolicyEngine:
         # 5. Deposit validation
         if (
             deposit is None
-            or deposit.payment_status != PaymentStatus.CAPTURED
-            or deposit.deposit_state != DepositState.CAPTURED
+            or not deposit.is_funded
+            or deposit.deposit_state not in (DepositState.CAPTURED, DepositState.AUTHORIZED)
             or deposit.policy_decision == PolicyDecisionStatus.FORFEITED_BY_POLICY
             or not deposit.policy_accepted
         ):

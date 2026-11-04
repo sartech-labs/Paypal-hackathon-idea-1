@@ -10,7 +10,7 @@ from server.config import Settings
 from server.core.identity import IdentityService
 from server.core.security import constant_time_equals
 from server.core.sessions import SessionManager
-from server.schemas import PaymentMode, SessionRecord
+from server.schemas import PaymentMode, SessionRecord, SettlementMode
 from server.services.ai_client import ClaudeTextGenerator, TextGenerator
 from server.services.audit_logger import AuditLogger
 from server.services.content_service import ContentService
@@ -59,6 +59,7 @@ class AppContainer:
             site_config=self.site_config,
             payment_provider=self.payment_provider,
             audit_logger=self.audit_logger,
+            settlement_mode=SettlementMode(settings.deposit_settlement),
         )
         self.session_manager = SessionManager(
             sessions_db_path=settings.sessions_db_path,

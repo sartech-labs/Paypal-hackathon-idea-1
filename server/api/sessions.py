@@ -15,7 +15,6 @@ from server.dependencies import (
     require_authenticated_session,
 )
 from server.schemas import (
-    PaymentStatus,
     PolicyAcceptRequest,
     SessionCompleteResponse,
     SessionIssueResponse,
@@ -83,12 +82,15 @@ async def accept_policy(
             },
         )
 
-    if deposit.payment_status != PaymentStatus.CAPTURED or not deposit.provider_capture_id:
+    if not deposit.is_funded or not deposit.payment_reference:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 "error": "payment_not_captured",
-                "message": "Deposit must be captured and verified server-side before session issuance.",
+                "message": (
+                    "Deposit must be captured (or authorized, in authorization mode) and "
+                    "verified server-side before session issuance."
+                ),
             },
         )
 
@@ -109,7 +111,7 @@ async def accept_policy(
             deposit_id=payload.deposit_id,
             policy_version=payload.policy_version,
             policy_accepted_at=accepted_at,
-            payment_reference=deposit.provider_capture_id,
+            payment_reference=deposit.payment_reference,
             payment_mode=deposit.payment_mode,
             session_ttl_seconds=container.site_config.session_ttl_seconds,
         )

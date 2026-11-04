@@ -14,12 +14,21 @@ class PaymentMode(str, Enum):
     PAYPAL_SANDBOX = "paypal_sandbox"
 
 
+class SettlementMode(str, Enum):
+    """How a deposit is settled with the payment provider."""
+
+    REFUND = "refund"  # capture up front, refund compliant sessions
+    AUTHORIZATION = "authorization"  # hold funds, void for compliant sessions, capture on forfeiture
+
+
 class PaymentStatus(str, Enum):
     """Status of the inbound deposit payment transaction."""
 
     PENDING = "PENDING"
     APPROVED = "APPROVED"
+    AUTHORIZED = "AUTHORIZED"  # funds on hold (authorization settlement mode)
     CAPTURED = "CAPTURED"
+    VOIDED = "VOIDED"  # hold released without capturing funds
     FAILED = "FAILED"
 
 
@@ -40,6 +49,7 @@ class RefundTransactionStatus(str, Enum):
     REFUNDED = "REFUNDED"
     REFUND_FAILED = "REFUND_FAILED"
     NOT_APPLICABLE_FORFEITED = "NOT_APPLICABLE_FORFEITED"
+    NOT_APPLICABLE_RELEASED = "NOT_APPLICABLE_RELEASED"  # hold voided; nothing to refund
 
 
 class DepositState(str, Enum):
@@ -47,9 +57,11 @@ class DepositState(str, Enum):
 
     PENDING = "PENDING"
     APPROVED = "APPROVED"
+    AUTHORIZED = "AUTHORIZED"
     CAPTURED = "CAPTURED"
     REFUND_PENDING = "REFUND_PENDING"
     REFUNDED = "REFUNDED"
+    RELEASED = "RELEASED"
     FORFEITED = "FORFEITED"
     FAILED = "FAILED"
 
@@ -68,15 +80,24 @@ ALLOWED_PAYMENT_TRANSITIONS: dict[PaymentStatus, set[PaymentStatus]] = {
     PaymentStatus.PENDING: {
         PaymentStatus.PENDING,
         PaymentStatus.APPROVED,
+        PaymentStatus.AUTHORIZED,
         PaymentStatus.CAPTURED,
         PaymentStatus.FAILED,
     },
     PaymentStatus.APPROVED: {
         PaymentStatus.APPROVED,
+        PaymentStatus.AUTHORIZED,
         PaymentStatus.CAPTURED,
         PaymentStatus.FAILED,
     },
+    PaymentStatus.AUTHORIZED: {
+        PaymentStatus.AUTHORIZED,
+        PaymentStatus.CAPTURED,
+        PaymentStatus.VOIDED,
+        PaymentStatus.FAILED,
+    },
     PaymentStatus.CAPTURED: {PaymentStatus.CAPTURED},
+    PaymentStatus.VOIDED: {PaymentStatus.VOIDED},
     PaymentStatus.FAILED: {PaymentStatus.PENDING, PaymentStatus.FAILED},
 }
 
@@ -94,6 +115,7 @@ ALLOWED_REFUND_TRANSITIONS: dict[RefundTransactionStatus, set[RefundTransactionS
     RefundTransactionStatus.NOT_REQUESTED: {
         RefundTransactionStatus.REFUND_IN_PROGRESS,
         RefundTransactionStatus.NOT_APPLICABLE_FORFEITED,
+        RefundTransactionStatus.NOT_APPLICABLE_RELEASED,
     },
     RefundTransactionStatus.REFUND_IN_PROGRESS: {
         RefundTransactionStatus.REFUND_PENDING,
@@ -113,6 +135,9 @@ ALLOWED_REFUND_TRANSITIONS: dict[RefundTransactionStatus, set[RefundTransactionS
     RefundTransactionStatus.REFUNDED: {RefundTransactionStatus.REFUNDED},
     RefundTransactionStatus.NOT_APPLICABLE_FORFEITED: {
         RefundTransactionStatus.NOT_APPLICABLE_FORFEITED
+    },
+    RefundTransactionStatus.NOT_APPLICABLE_RELEASED: {
+        RefundTransactionStatus.NOT_APPLICABLE_RELEASED
     },
 }
 
@@ -244,6 +269,25 @@ class DepositRecord(BaseModel):
     captured_at: Optional[str] = None
     refunded_at: Optional[str] = None
     forfeited_at: Optional[str] = None
+    # Authorization-hold settlement (records persisted before this field default to refund).
+    settlement_mode: SettlementMode = SettlementMode.REFUND
+    provider_authorization_id: Optional[str] = None
+    provider_authorization_status: Optional[str] = None
+    released_at: Optional[str] = None
+
+    @property
+    def is_funded(self) -> bool:
+        """True when the deposit is captured, or held by a verified authorization."""
+        if self.payment_status == PaymentStatus.CAPTURED:
+            return bool(self.provider_capture_id)
+        if self.payment_status == PaymentStatus.AUTHORIZED:
+            return bool(self.provider_authorization_id)
+        return False
+
+    @property
+    def payment_reference(self) -> Optional[str]:
+        """Provider reference that backs the session: capture ID or authorization ID."""
+        return self.provider_capture_id or self.provider_authorization_id
 
 
 class DepositResponse(BaseModel):
@@ -277,15 +321,22 @@ class DepositResponse(BaseModel):
     captured_at: Optional[str] = None
     refunded_at: Optional[str] = None
     forfeited_at: Optional[str] = None
+    settlement_mode: SettlementMode = SettlementMode.REFUND
+    provider_authorization_id: Optional[str] = None
+    provider_authorization_status: Optional[str] = None
+    released_at: Optional[str] = None
 
 
 class PayPalApprovalCallbackResponse(BaseModel):
-    outcome: Literal["CAPTURED", "CANCELLED", "ALREADY_CAPTURED"]
+    outcome: Literal[
+        "CAPTURED", "AUTHORIZED", "CANCELLED", "ALREADY_CAPTURED", "ALREADY_AUTHORIZED"
+    ]
     deposit_id: str
     payment_status: PaymentStatus
     deposit_state: DepositState
     provider_order_id: str
     provider_capture_id: Optional[str] = None
+    provider_authorization_id: Optional[str] = None
     captured_amount: Optional[str] = None
     currency: str
 

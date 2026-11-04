@@ -39,7 +39,12 @@ GATEWAY_EVENT_TYPES = frozenset(
 )
 # Deposit states whose outcome is final, so an explanation will not change.
 FINAL_DEPOSIT_STATES = frozenset(
-    {DepositState.REFUNDED, DepositState.FORFEITED, DepositState.REFUND_PENDING}
+    {
+        DepositState.REFUNDED,
+        DepositState.RELEASED,
+        DepositState.FORFEITED,
+        DepositState.REFUND_PENDING,
+    }
 )
 MAX_GATEWAY_EVIDENCE_HEAD = 60
 MAX_GATEWAY_EVIDENCE_TAIL = 20
@@ -310,21 +315,26 @@ class DepositExplainer:
         for item in evidence:
             by_type.setdefault(item.event.event_type, []).append(item)
 
-        payment = by_type.get("PAYMENT_VERIFIED", []) + by_type.get("DEPOSIT_AUTHORIZED", [])
+        payment = by_type.get("PAYMENT_VERIFIED", []) + by_type.get("PAYMENT_AUTHORIZED", [])
         allowed = by_type.get("GATEWAY_ACCESS_ALLOWED", [])
         violations = by_type.get("POLICY_VIOLATION", [])
         outcome = [
             item
             for item in evidence
             if item.event.event_type.startswith("DEPOSIT_")
-            and item.event.event_type not in ("DEPOSIT_INITIATED", "DEPOSIT_AUTHORIZED")
+            and item.event.event_type != "DEPOSIT_INITIATED"
         ]
         findings: list[ExplanationFinding] = []
 
         if payment:
+            held = payment[0].event.event_type == "PAYMENT_AUTHORIZED"
             findings.append(
                 ExplanationFinding(
-                    statement=f"The crawler's {_money(deposit)} deposit was verified with the payment provider.",
+                    statement=(
+                        f"The crawler's {_money(deposit)} deposit was "
+                        + ("placed on hold (authorized)" if held else "verified")
+                        + " with the payment provider."
+                    ),
                     evidence=[payment[0].evidence_id],
                 )
             )
@@ -359,7 +369,7 @@ class DepositExplainer:
                 "requests that the published refund policy treats as disqualifying, so the "
                 f"{_money(deposit)} deposit was not returned."
             )
-        elif state in (DepositState.REFUNDED, DepositState.REFUND_PENDING):
+        elif state in (DepositState.REFUNDED, DepositState.REFUND_PENDING, DepositState.RELEASED):
             if allowed:
                 findings.append(
                     ExplanationFinding(
@@ -374,10 +384,15 @@ class DepositExplainer:
                 headline = "Deposit returned: the session stayed within policy"
             else:
                 headline = "Deposit returned: no violation reached the disqualification threshold"
+            if state == DepositState.RELEASED:
+                ending = ": the payment hold was released, so no funds were ever captured."
+            elif state == DepositState.REFUND_PENDING:
+                ending = " (settlement pending with the payment provider)."
+            else:
+                ending = "."
             summary = (
                 f"Crawler {deposit.crawler_id} completed its session with no disqualifying "
-                f"violations, so the {_money(deposit)} deposit was returned"
-                + (" (settlement pending with the payment provider)." if state == DepositState.REFUND_PENDING else ".")
+                f"violations, so the {_money(deposit)} deposit was returned{ending}"
             )
         else:
             for item in violations[:3]:

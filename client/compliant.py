@@ -181,8 +181,20 @@ def run_compliant_crawler(
             print("\n[SUCCESS] Compliant crawler completed crawl and received full deposit refund.")
             return 0
 
+        if (
+            final_deposit["deposit_state"] == "RELEASED"
+            and final_deposit["policy_decision"] == "ELIGIBLE_FOR_REFUND"
+            and final_deposit["refund_status"] == "NOT_APPLICABLE_RELEASED"
+        ):
+            print(
+                "\n[SUCCESS] Compliant crawler completed crawl; the deposit hold was released "
+                "without capturing any funds."
+            )
+            return 0
+
         print(
-            f"\n[ERROR] Expected deposit_state=REFUNDED, got {final_deposit['deposit_state']}"
+            "\n[ERROR] Expected deposit_state=REFUNDED (or RELEASED in authorization mode), "
+            f"got {final_deposit['deposit_state']}"
         )
         return 1
 

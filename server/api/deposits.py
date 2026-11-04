@@ -63,7 +63,7 @@ async def _get_paypal_callback_deposit(
 
 def _paypal_callback_response(
     deposit: DepositRecord,
-    outcome: Literal["CAPTURED", "CANCELLED", "ALREADY_CAPTURED"],
+    outcome: Literal["CAPTURED", "AUTHORIZED", "CANCELLED", "ALREADY_CAPTURED", "ALREADY_AUTHORIZED"],
 ) -> PayPalApprovalCallbackResponse:
     return PayPalApprovalCallbackResponse(
         outcome=outcome,
@@ -72,6 +72,7 @@ def _paypal_callback_response(
         deposit_state=deposit.deposit_state,
         provider_order_id=deposit.provider_order_id or "",
         provider_capture_id=deposit.provider_capture_id,
+        provider_authorization_id=deposit.provider_authorization_id,
         captured_amount=deposit.captured_amount,
         currency=deposit.currency,
     )
@@ -187,15 +188,18 @@ async def paypal_approval_return(
             detail={"error": "payment_provider_error", "message": str(exc)},
         ) from exc
 
-    if updated.payment_status != PaymentStatus.CAPTURED:
+    if not updated.is_funded:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
                 "error": "capture_verification_failed",
-                "message": updated.failure_reason or "PayPal capture could not be verified.",
+                "message": updated.failure_reason or "PayPal payment could not be verified.",
             },
         )
-    return _paypal_callback_response(updated, "CAPTURED")
+    return _paypal_callback_response(
+        updated,
+        "AUTHORIZED" if updated.payment_status == PaymentStatus.AUTHORIZED else "CAPTURED",
+    )
 
 
 @router.get(
@@ -213,11 +217,12 @@ async def paypal_approval_cancel(
         order_id=token,
         container=container,
     )
-    outcome = (
-        "ALREADY_CAPTURED"
-        if deposit.payment_status == PaymentStatus.CAPTURED
-        else "CANCELLED"
-    )
+    if deposit.payment_status == PaymentStatus.CAPTURED:
+        outcome: Literal["CANCELLED", "ALREADY_CAPTURED", "ALREADY_AUTHORIZED"] = "ALREADY_CAPTURED"
+    elif deposit.payment_status == PaymentStatus.AUTHORIZED:
+        outcome = "ALREADY_AUTHORIZED"
+    else:
+        outcome = "CANCELLED"
     return _paypal_callback_response(deposit, outcome)
 
 
@@ -483,7 +488,7 @@ async def capture_deposit(
             detail={"error": "payment_provider_error", "message": str(exc)},
         ) from exc
 
-    if updated.payment_status != PaymentStatus.CAPTURED:
+    if not updated.is_funded and updated.payment_status != PaymentStatus.VOIDED:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={
@@ -550,7 +555,7 @@ async def verify_deposit(
             detail={"error": "payment_provider_error", "message": str(exc)},
         ) from exc
 
-    if updated.payment_status != PaymentStatus.CAPTURED:
+    if not updated.is_funded and updated.payment_status != PaymentStatus.VOIDED:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail={

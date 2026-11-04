@@ -267,7 +267,7 @@ class GatewayToolbox:
         }
 
     def _pay_deposit(self, _args: dict[str, Any]) -> dict[str, Any]:
-        if self.deposit is not None and self.deposit.get("payment_status") == "CAPTURED":
+        if self.deposit is not None and self.deposit.get("payment_status") in ("CAPTURED", "AUTHORIZED"):
             return {"status": "already_paid", **self._deposit_summary()}
         if self.challenge is None:
             return {"error": "No payment challenge yet. Request a page first to receive the 402 challenge."}
@@ -378,6 +378,7 @@ class GatewayToolbox:
             for key in (
                 "deposit_id",
                 "payment_mode",
+                "settlement_mode",
                 "simulated",
                 "required_amount",
                 "currency",
