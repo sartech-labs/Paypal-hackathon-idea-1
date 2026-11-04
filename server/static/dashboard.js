@@ -77,6 +77,12 @@
     return lower.charAt(0).toUpperCase() + lower.slice(1);
   }
 
+  function providerName(code) {
+    if (code === "claude" || code === "anthropic") return "Claude";
+    if (code === "openai") return "OpenAI";
+    return "AI";
+  }
+
   function formatTime(iso) {
     if (!iso) return "";
     const date = new Date(iso);
@@ -302,7 +308,7 @@
       badges.append(el("span", { className: "badge" }, [el("span", { className: "badge-dot", dataset: { tone } }), el("span", { text })]));
     add(data.payment_mode === "mock" ? "neutral" : "accent", data.payment_mode === "mock" ? "Mock payments (simulated)" : "PayPal Sandbox");
     add("accent", data.settlement_mode === "authorization" ? "Settlement: authorization hold" : "Settlement: capture + refund");
-    add(data.ai_available ? "good" : "neutral", data.ai_available ? `Claude AI: ${data.ai_model}` : "AI: rule-based explanations only");
+    add(data.ai_available ? "good" : "neutral", data.ai_available ? `AI: ${providerName(data.ai_provider)} (${data.ai_model})` : "AI: rule-based explanations only");
     add("neutral", data.access === "admin" ? "Admin view" : "Read-only public view");
     $("site-line").textContent = `${data.site_name} · policy ${data.policy_version}`;
   }
@@ -425,8 +431,8 @@
     const meta = el("div", { className: "explain-meta" }, [
       depositChip(x.deposit_state),
       el("span", { className: "badge" }, [
-        el("span", { className: "badge-dot", dataset: { tone: x.generated_by === "claude" ? "good" : "neutral" } }),
-        el("span", { text: x.generated_by === "claude" ? `Explained by Claude${x.model ? ` (${x.model})` : ""}` : "Rule-based explanation" }),
+        el("span", { className: "badge-dot", dataset: { tone: x.generated_by === "template" ? "neutral" : "good" } }),
+        el("span", { text: x.generated_by === "template" ? "Rule-based explanation" : `Explained by ${providerName(x.generated_by)}${x.model ? ` (${x.model})` : ""}` }),
       ]),
     ]);
 
@@ -481,9 +487,10 @@
     const button = $("draft-button");
     const hint = $("draft-hint");
     const ready = Boolean(state.token);
+    button.textContent = `Draft policy with ${providerName(state.data ? state.data.ai_provider : "")}`;
     button.disabled = !ready;
     hint.textContent = ready
-      ? (state.data && !state.data.ai_available ? "AI is not configured on the gateway; the request will report that." : "Uses Claude through the gateway (admin).")
+      ? (state.data && !state.data.ai_available ? "AI is not configured on the gateway; the request will report that." : `Uses ${providerName(state.data ? state.data.ai_provider : "")} through the gateway (admin).`)
       : "Requires the admin token.";
   }
 
@@ -501,7 +508,7 @@
       return;
     }
     $("draft-button").disabled = true;
-    output.append(el("p", { className: "notice", text: "Drafting with Claude..." }));
+    output.append(el("p", { className: "notice", text: `Drafting with ${providerName(state.data ? state.data.ai_provider : "")}...` }));
     try {
       const result = await getJson("/policies/draft", {
         method: "POST",

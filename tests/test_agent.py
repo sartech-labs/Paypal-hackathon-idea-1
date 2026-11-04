@@ -266,7 +266,7 @@ def test_html_to_text_keeps_hidden_text() -> None:
 
 
 def test_cli_requires_claude_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"):
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE", "OPENAI_API_KEY", "AI_PROVIDER"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))

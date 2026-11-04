@@ -329,7 +329,7 @@ async def explain_deposit(
     deposit_id: str,
     use_ai: bool = Query(
         default=True,
-        description="Use Claude when available; false returns the rule-based explanation.",
+        description="Use the configured AI model when available; false returns the rule-based explanation.",
     ),
     container: AppContainer = Depends(get_container),
     bearer_token: Optional[str] = Depends(extract_optional_bearer_token),

@@ -295,9 +295,10 @@ async def test_health_reports_ai_status(
     ai_client: httpx.AsyncClient, async_client: httpx.AsyncClient
 ) -> None:
     ai = (await ai_client.get("/health")).json()["ai"]
-    assert ai == {"enabled": False, "available": True, "model": "claude-test-model"}
+    assert ai == {"enabled": False, "available": True, "provider": "claude", "model": "claude-test-model"}
     default_ai = (await async_client.get("/health")).json()["ai"]
     assert default_ai["available"] is False
+    assert default_ai["provider"] == "claude"
     assert default_ai["model"] == "claude-opus-5-5"
 
 

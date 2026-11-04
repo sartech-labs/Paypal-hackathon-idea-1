@@ -59,8 +59,10 @@ def test_settings(tmp_path: Path) -> Settings:
         sessions_db_path=tmp_path / "sessions_db.json",
         admin_api_token="test-admin-secret-token-999",
         log_level="WARNING",
-        # Never call the live Claude API from tests; AI tests inject a fake generator.
+        # Never call a live AI API from tests; AI tests inject a fake generator. The
+        # provider is pinned so a developer's OPENAI_API_KEY cannot change auto-detection.
         ai_enabled=False,
+        ai_provider="anthropic",
     )
 
 

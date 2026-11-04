@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
@@ -56,10 +56,12 @@ class Settings(BaseModel):
     dashboard_public: bool = Field(default=False)
     log_level: str = Field(default="INFO")
 
-    # Publisher-side AI (Claude). Credentials come from the Anthropic SDK's
-    # standard resolution (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or a profile).
+    # Publisher-side AI. Provider "auto" uses Claude when Anthropic credentials resolve
+    # (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or a profile), otherwise OpenAI when
+    # OPENAI_API_KEY is set. AI_MODEL defaults per provider when left empty.
     ai_enabled: bool = Field(default=True)
-    ai_model: str = Field(default="claude-opus-5-5", min_length=1, max_length=128)
+    ai_provider: Literal["auto", "anthropic", "openai"] = Field(default="auto")
+    ai_model: Optional[str] = Field(default=None, max_length=128)
     ai_effort: Literal["low", "medium", "high", "xhigh", "max"] = Field(default="medium")
     ai_refusal_fallback: bool = Field(default=True)
     ai_timeout_seconds: float = Field(default=120.0, gt=0.0, le=600.0)
@@ -90,6 +92,14 @@ class Settings(BaseModel):
         if not cleaned.startswith("https://"):
             raise ValueError("paypal_base_url must use https://")
         return cleaned
+
+    @field_validator("ai_model", mode="before")
+    @classmethod
+    def normalize_ai_model(cls, value: object) -> Optional[str]:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
 
     @field_validator("app_public_url")
     @classmethod
@@ -168,7 +178,8 @@ def load_settings_from_env() -> Settings:
         dashboard_public=_env_bool("DASHBOARD_PUBLIC", False),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         ai_enabled=_env_bool("AI_ENABLED", True),
-        ai_model=os.getenv("AI_MODEL", "claude-opus-5-5"),
+        ai_provider=os.getenv("AI_PROVIDER", "auto").strip().lower() or "auto",  # type: ignore[arg-type]
+        ai_model=os.getenv("AI_MODEL"),
         ai_effort=os.getenv("AI_EFFORT", "medium"),  # type: ignore[arg-type]
         ai_refusal_fallback=_env_bool("AI_REFUSAL_FALLBACK", True),
         ai_timeout_seconds=float(os.getenv("AI_TIMEOUT_SECONDS", "120")),

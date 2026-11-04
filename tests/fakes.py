@@ -18,11 +18,17 @@ class FakeTextGenerator:
         *,
         model: str = "claude-test-model",
         available: bool = True,
+        provider: str = "claude",
     ) -> None:
         self.responses = list(responses or [])
         self.calls: list[dict[str, Any]] = []
         self._model = model
         self._available = available
+        self._provider = provider
+
+    @property
+    def provider(self) -> str:
+        return self._provider
 
     @property
     def model(self) -> str:
@@ -78,6 +84,55 @@ class FakeAsyncAnthropic:
         self.credentials = None
         self.custom_auth = None
         self.beta = SimpleNamespace(messages=_FakeAsyncMessages(response, error))
+
+
+class _FakeAsyncResponses:
+    def __init__(self, response: Any = None, error: Optional[Exception] = None) -> None:
+        self.response = response
+        self.error = error
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
+class FakeAsyncOpenAI:
+    """Minimal stand-in for openai.AsyncOpenAI exposing responses.create."""
+
+    def __init__(
+        self,
+        response: Any = None,
+        error: Optional[Exception] = None,
+        api_key: Optional[str] = "sk-test-openai",
+    ) -> None:
+        self.api_key = api_key
+        self.responses = _FakeAsyncResponses(response, error)
+
+
+def fake_openai_response(
+    text: str = "{}",
+    *,
+    status: str = "completed",
+    model: str = "gpt-5.5-2026-04-23",
+    refusal: Optional[str] = None,
+    incomplete_reason: Optional[str] = None,
+) -> SimpleNamespace:
+    """Build an object shaped like an OpenAI Responses API result."""
+    content = (
+        [SimpleNamespace(type="refusal", refusal=refusal)]
+        if refusal
+        else [SimpleNamespace(type="output_text", text=text)]
+    )
+    return SimpleNamespace(
+        status=status,
+        model=model,
+        output=[SimpleNamespace(type="reasoning", summary=[]), SimpleNamespace(type="message", content=content)],
+        output_text="" if refusal else text,
+        incomplete_details=SimpleNamespace(reason=incomplete_reason) if incomplete_reason else None,
+    )
 
 
 def fake_message(

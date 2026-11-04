@@ -28,7 +28,7 @@ async def get_policies(
 @router.post(
     "/policies/draft",
     response_model=PolicyDraftResponse,
-    summary="Draft a crawling policy from plain-English publisher terms with Claude (admin)",
+    summary="Draft a crawling policy from plain-English publisher terms with AI (admin)",
 )
 async def draft_policy(
     body: PolicyDraftRequest,
@@ -92,6 +92,7 @@ async def health_check(
         "ai": {
             "enabled": container.settings.ai_enabled,
             "available": container.ai_generator.is_available(),
+            "provider": container.ai_generator.provider,
             "model": container.ai_generator.model,
         },
     }

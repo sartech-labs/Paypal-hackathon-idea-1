@@ -127,6 +127,7 @@ async def dashboard_data(
         payment_mode=container.payment_provider.mode,
         settlement_mode=container.deposit_manager.settlement_mode,
         ai_available=container.ai_generator.is_available(),
+        ai_provider=container.ai_generator.provider,
         ai_model=container.ai_generator.model,
         access=access,  # type: ignore[arg-type]
         kpis=kpis,

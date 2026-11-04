@@ -11,7 +11,7 @@ from server.core.identity import IdentityService
 from server.core.security import constant_time_equals
 from server.core.sessions import SessionManager
 from server.schemas import PaymentMode, SessionRecord, SettlementMode
-from server.services.ai_client import ClaudeTextGenerator, TextGenerator
+from server.services.ai_client import TextGenerator, build_text_generator
 from server.services.audit_logger import AuditLogger
 from server.services.content_service import ContentService
 from server.services.deposit_manager import DepositManager
@@ -65,7 +65,7 @@ class AppContainer:
             sessions_db_path=settings.sessions_db_path,
             site_config=self.site_config,
         )
-        self.ai_generator: TextGenerator = ai_generator or ClaudeTextGenerator(settings)
+        self.ai_generator: TextGenerator = ai_generator or build_text_generator(settings)
         self.explainer = DepositExplainer(self.ai_generator, self.site_config)
         self.policy_assistant = PolicyAssistant(self.ai_generator, self.site_config)
 

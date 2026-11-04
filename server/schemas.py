@@ -506,7 +506,7 @@ class DepositExplanationResponse(BaseModel):
     crawler_id: str
     deposit_state: DepositState
     policy_decision: PolicyDecisionStatus
-    generated_by: Literal["claude", "template"]
+    generated_by: Literal["claude", "openai", "template"]
     model: Optional[str] = None
     headline: str
     summary: str
@@ -526,7 +526,7 @@ class PolicyDraftRequest(BaseModel):
 
 
 class PolicyDraftResponse(BaseModel):
-    generated_by: Literal["claude"] = "claude"
+    generated_by: Literal["claude", "openai"] = "claude"
     model: str
     valid: bool
     draft: dict[str, Any]
@@ -607,6 +607,7 @@ class DashboardDataResponse(BaseModel):
     payment_mode: PaymentMode
     settlement_mode: SettlementMode
     ai_available: bool
+    ai_provider: str
     ai_model: str
     access: Literal["admin", "public"]
     kpis: DashboardKpis

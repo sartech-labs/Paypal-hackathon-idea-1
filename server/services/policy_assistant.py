@@ -1,6 +1,7 @@
 """Policy assistant: turn a publisher's plain-English crawling terms into a policy draft.
 
-Claude produces a draft in CrawlerTrust's SiteConfig shape using structured outputs.
+An AI model (Claude or OpenAI) produces a draft in CrawlerTrust's SiteConfig shape using
+structured outputs.
 The draft is then validated in code; it is never applied automatically.
 """
 
@@ -225,7 +226,7 @@ def validate_policy_draft(raw: dict[str, Any], current: SiteConfig) -> tuple[dic
 
 
 class PolicyAssistant:
-    """Drafts SiteConfig policies from natural-language terms with Claude."""
+    """Drafts SiteConfig policies from natural-language terms with the configured AI model."""
 
     def __init__(self, generator: TextGenerator, site_config: SiteConfig) -> None:
         self._generator = generator
@@ -260,11 +261,12 @@ class PolicyAssistant:
         )
         raw = result.json()
         if not isinstance(raw, dict):
-            raise AIServiceError("Claude's policy draft was not a JSON object.")
+            raise AIServiceError("The AI policy draft was not a JSON object.")
         raw.update(overrides)
 
         draft, errors = validate_policy_draft(raw, self._site_config)
         return PolicyDraftResponse(
+            generated_by=self._generator.provider,  # type: ignore[arg-type]
             model=result.model,
             valid=not errors,
             draft=draft,
