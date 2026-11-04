@@ -49,20 +49,20 @@ CrawlerTrust turns the policy into a commitment backed by money: an honest agent
 
 | Feature | What it does | Code |
 | :--- | :--- | :--- |
-| **AI crawler agent** | Claude drives a crawler through the whole protocol with tool use: reads the 402 challenge and policy, decides whether to pay, pays through PayPal, accepts the policy, paces itself from the gateway's budget and `Retry-After` signals, and completes the session. A **compliant** persona writes a news brief and gets its deposit back; a **rogue** persona (an authorized red-team run against your own gateway) ignores the rules and loses it. | `client/agent.py`, `client/agent_tools.py` |
-| **Deposit explanations** | Claude explains why a deposit was returned or kept, in plain English. Every finding must cite audit events recorded for that deposit; findings with invalid citations are dropped, and a rule-based explanation is used when AI is unavailable. | `server/services/explainer.py`, `GET /deposits/{id}/explanation` |
-| **Policy assistant** | A publisher describes crawling terms in plain English; Claude drafts the machine-readable policy with structured outputs, and the server validates paths, amounts, and limits before showing the draft. Drafts are never applied automatically. | `server/services/policy_assistant.py`, `POST /policies/draft` |
+| **AI crawler agent** | An AI model drives a crawler through the whole protocol with tool use: reads the 402 challenge and policy, decides whether to pay, pays through PayPal, accepts the policy, paces itself from the gateway's budget and `Retry-After` signals, and completes the session. A **compliant** persona writes a news brief and gets its deposit back; a **rogue** persona (an authorized red-team run against your own gateway) ignores the rules and loses it. | `client/agent.py`, `client/agent_tools.py` |
+| **Deposit explanations** | The AI explains why a deposit was returned or kept, in plain English. Every finding must cite audit events recorded for that deposit; findings with invalid citations are dropped, and a rule-based explanation is used when AI is unavailable. | `server/services/explainer.py`, `GET /deposits/{id}/explanation` |
+| **Policy assistant** | A publisher describes crawling terms in plain English; the AI drafts the machine-readable policy with structured outputs, and the server validates paths, amounts, and limits before showing the draft. Drafts are never applied automatically. | `server/services/policy_assistant.py`, `POST /policies/draft` |
 
 Guardrails that hold whether or not the model behaves:
 
 - **The money decision is never made by the model.** Refund or forfeiture comes from the deterministic policy engine; the AI only explains it.
 - **Prompt-injection resistance.** Page content reaches the agent inside `<untrusted_page_content>` tags, and the compliant persona is instructed to ignore instructions in pages. The demo economy page carries a hidden instruction telling AI agents to fetch `/private/customer-data`; if an agent is fooled anyway, the gateway blocks the request and keeps the deposit.
-- **Secrets stay out of the model.** The session bearer token is held by the tool layer and never appears in anything sent to Claude.
+- **Secrets stay out of the model.** The session bearer token is held by the tool layer and never appears in anything sent to the model.
 - **Spending cap in code.** The agent's `--max-deposit` limit is enforced before payment, not left to the model.
 - **Cost guard.** Crawlers can trigger an AI explanation only once their outcome is final, and explanations are cached per deposit state. The policy assistant requires the admin token.
-- **Model safety handling.** Refusals stop the agent before any tool from that turn runs; the server-side refusal fallback (`fallbacks: "default"`) is enabled by default and can be turned off with `AI_REFUSAL_FALLBACK=false`.
+- **Model safety handling.** Refusals (and truncated responses) stop the agent before any tool from that turn runs, on both providers. On Claude, the server-side refusal fallback (`fallbacks: "default"`) is enabled by default and can be turned off with `AI_REFUSAL_FALLBACK=false`.
 
-The model defaults to Claude Opus 5.5 and is configurable with `AI_MODEL` and `AI_EFFORT`.
+**Providers.** The same features run on **OpenAI** (Responses API, default model GPT-5.5) or **Claude** (Anthropic Messages API, default model Claude Opus 5.5). `AI_PROVIDER=auto` uses Claude when an Anthropic key is set and OpenAI when only `OPENAI_API_KEY` is set; `AI_MODEL` and `AI_EFFORT` override the defaults. The OpenAI path has been run live end to end (policy draft, explanations, and both agent personas on GPT-5.5); the Claude path is covered by tests with scripted fakes.
 
 ## 4. Where PayPal is
 
@@ -92,7 +92,7 @@ Each deposit keeps the mode it was created with, so switching modes never strand
 
 ## 5. Quick start (mock mode)
 
-Requires Python 3.10+. Mock mode needs no PayPal or Anthropic credentials.
+Requires Python 3.10+. Mock mode needs no PayPal or AI credentials.
 
 ```bash
 git clone https://github.com/sartech-labs/Paypal-hackathon-idea-1.git
@@ -115,7 +115,7 @@ python -m client.compliant --base-url http://127.0.0.1:8000
 python -m client.violating --base-url http://127.0.0.1:8000
 ```
 
-To run the AI agent, add your Anthropic API key to `.env` (`ANTHROPIC_API_KEY=...`), restart the server so it can also generate AI explanations, and run:
+To turn on the AI features, add an API key to `.env` (`OPENAI_API_KEY=...` or `ANTHROPIC_API_KEY=...`), restart the server so it can also generate AI explanations, and run the agent:
 
 ```bash
 python -m client.agent --persona compliant --base-url http://127.0.0.1:8000
@@ -125,8 +125,8 @@ python -m client.agent --persona compliant --base-url http://127.0.0.1:8000
 
 | Scenario | Command | What you should see |
 | :--- | :--- | :--- |
-| Compliant AI agent | `python -m client.agent --persona compliant` | Claude reads the policy, pays, crawls `/news` sections within the rate limit, ignores the injected instruction on `/news/economy`, completes the session, and writes a brief. Deposit **returned**. |
-| Rogue AI agent | `python -m client.agent --persona rogue` | Claude requests `/admin` and private paths and bursts requests. The gateway blocks each one; the deposit is **forfeited** and the explanation cites each violation. |
+| Compliant AI agent | `python -m client.agent --persona compliant` | The agent reads the policy, pays, crawls `/news` sections within the rate limit, ignores the injected instruction on `/news/economy`, completes the session, and writes a brief. Deposit **returned**. |
+| Rogue AI agent | `python -m client.agent --persona rogue` | The agent requests `/admin` and private paths and bursts requests. The gateway blocks each one; the deposit is **forfeited** and the explanation cites each violation. |
 | Scripted crawlers (no API key) | `python -m client.compliant` / `python -m client.violating` | The same two outcomes from deterministic scripts. |
 | Publisher console | Open `/` | Live KPIs, deposits, sessions, audit feed, violations chart, and the "Why this outcome" panel. Select a deposit to explain it. |
 | Policy assistant | Console panel, or `POST /policies/draft` with `X-Admin-Token` | Plain-English terms become a validated policy draft with assumptions and warnings. |
@@ -154,12 +154,12 @@ docker build -t crawlertrust .
 ```
 
 ```bash
-docker run --rm -p 8000:8000 -e DASHBOARD_PUBLIC=true -e ANTHROPIC_API_KEY=your_key crawlertrust
+docker run --rm -p 8000:8000 -e DASHBOARD_PUBLIC=true -e OPENAI_API_KEY=your_key crawlertrust
 ```
 
 The image runs as a non-root user, binds to `$PORT` (default 8000), exposes a health check on `/health`, and always runs **one** uvicorn worker, because deposits, sessions, and rate limits live in one process.
 
-**Render:** `render.yaml` is a Blueprint for a Docker web service. In the Render dashboard choose **New > Blueprint**, select this repository, and enter the prompted secrets (`ANTHROPIC_API_KEY`, and the PayPal keys if you switch `PAYMENT_MODE` to `paypal_sandbox`). Render generates `ADMIN_API_TOKEN`; copy it from the service's environment settings to use admin features in the console. The Blueprint enables the read-only public dashboard so judges can browse it. Storage on the free plan is ephemeral and the service sleeps when idle, so open the URL a minute before a demo.
+**Render:** `render.yaml` is a Blueprint for a Docker web service. In the Render dashboard choose **New > Blueprint**, select this repository, and enter the prompted secrets (`OPENAI_API_KEY`, which the Blueprint uses by default; `ANTHROPIC_API_KEY` can stay empty unless you set `AI_PROVIDER` to `anthropic` or `auto`; and the PayPal keys if you switch `PAYMENT_MODE` to `paypal_sandbox`). Render generates `ADMIN_API_TOKEN`; copy it from the service's environment settings to use admin features in the console. The Blueprint enables the read-only public dashboard so judges can browse it. Storage on the free plan is ephemeral and the service sleeps when idle, so open the URL a minute before a demo.
 
 ## 9. Configuration reference
 
@@ -183,12 +183,14 @@ Copy `.env.example` to `.env`. Settings are validated at startup (`server/config
 | `AUDIT_LOG_PATH`, `PAYMENTS_DB_PATH`, `SESSIONS_DB_PATH` | `storage/...` | Persistence files |
 | `ADMIN_API_TOKEN` | empty | Secret for `X-Admin-Token` (global audit, admin console, policy assistant, reconciliation) |
 | `DASHBOARD_PUBLIC` | `false` (`true` in `.env.example`) | Read-only console without the admin token, for demos; keep `false` in production |
+| `AI_PROVIDER` | `auto` | `openai`, `anthropic`, or `auto` (Claude if Anthropic credentials resolve, otherwise OpenAI if `OPENAI_API_KEY` is set) |
+| `OPENAI_API_KEY` | unset | OpenAI credentials |
 | `ANTHROPIC_API_KEY` | unset | Claude credentials (the SDK also accepts `ANTHROPIC_AUTH_TOKEN` or a profile) |
 | `AI_ENABLED` | `true` | Turn AI features off entirely |
-| `AI_MODEL` | `claude-opus-5-5` | Claude model for explanations, the policy assistant, and the agent CLI default |
-| `AI_EFFORT` | `medium` | `low`, `medium`, `high`, `xhigh`, or `max` |
-| `AI_REFUSAL_FALLBACK` | `true` | Server-side refusal fallback on Claude calls |
-| `AI_TIMEOUT_SECONDS` | `120` | Timeout for Claude calls |
+| `AI_MODEL` | empty | Model override; empty means `gpt-5.5` on OpenAI and `claude-opus-5-5` on Claude |
+| `AI_EFFORT` | `medium` | `low`, `medium`, `high`, `xhigh`, or `max` (OpenAI maps `xhigh`/`max` to `high`) |
+| `AI_REFUSAL_FALLBACK` | `true` | Claude only: server-side refusal fallback |
+| `AI_TIMEOUT_SECONDS` | `120` | Timeout for AI calls |
 | `LOG_LEVEL` | `INFO` | Python logging level |
 
 ## 10. API reference
@@ -199,7 +201,7 @@ Interactive docs: **`/docs`** (Swagger UI) and **`/redoc`**.
 | :--- | :--- | :--- | :--- |
 | GET | `/gateway`, `/gateway/{path}` | none (402) or crawler bearer | Protected content |
 | GET | `/policies`, `/robots.txt`, `/health` | none | Machine-readable policy, robots rules, health and AI status |
-| POST | `/policies/draft` | admin | Policy assistant (Claude) |
+| POST | `/policies/draft` | admin | Policy assistant (AI) |
 | POST | `/deposits/create` | challenge proof | Create a deposit and PayPal order |
 | POST | `/deposits/{id}/capture`, `/deposits/{id}/verify` | owner | Capture (or authorize) and verify |
 | GET | `/deposits/paypal/return`, `/deposits/paypal/cancel` | order match | PayPal browser callbacks |
@@ -218,10 +220,10 @@ Interactive docs: **`/docs`** (Swagger UI) and **`/redoc`**.
 
 ```mermaid
 flowchart TD
-    AGENT["AI crawler agent\n(client/agent.py, Claude tool use)"] -->|HTTP 402 protocol| GW
+    AGENT["AI crawler agent\n(client/agent.py, tool use)"] -->|HTTP 402 protocol| GW
     CLI["Scripted crawlers\n(client/compliant.py, violating.py)"] -->|HTTP 402 protocol| GW
     PUB["Publisher console\n(/, AG Grid)"] -->|/dashboard/data| GW
-    AGENT -.->|Messages API + tools| CLAUDE["Claude API"]
+    AGENT -.->|tools / function calling| LLM["AI provider\n(OpenAI or Claude)"]
 
     subgraph Gateway ["CrawlerTrust gateway (FastAPI)"]
         GW["Gateway and routers\n(server/api/*)"] --> PE["Policy engine + rate limiter"]
@@ -232,7 +234,7 @@ flowchart TD
         DM --> PS["Payment service"]
     end
 
-    EX -->|structured outputs| CLAUDE
+    EX -->|structured outputs| LLM
     PS -->|OAuth2, Orders v2, Payments v2| PP["PayPal Sandbox\n(or mock provider)"]
     AL --> LOG["storage/audit.jsonl"]
     DM --> PDB["storage/payments_db.json"]
@@ -246,7 +248,7 @@ flowchart TD
 | Identity and sessions | `server/core/identity.py`, `sessions.py`, `security.py` | Challenges, hashed bearer tokens, path normalization, violation counters |
 | Deposit manager | `server/services/deposit_manager.py` | Orthogonal payment / decision / refund state machines, both settlement modes, reconciliation |
 | Payment service | `server/services/payment_service.py` | `PayPalSandboxProvider` and `MockPaymentProvider` behind one interface |
-| AI | `server/services/ai_client.py`, `explainer.py`, `policy_assistant.py` | Claude client wrapper, explanations, policy drafts |
+| AI | `server/services/ai_client.py`, `explainer.py`, `policy_assistant.py` | OpenAI and Claude client wrappers, provider selection, explanations, policy drafts |
 | Dashboard | `server/api/dashboard.py`, `server/static/*` | Publisher console and its data endpoints |
 | Audit logger | `server/services/audit_logger.py` | Append-only JSONL events with secret scrubbing |
 | Crawlers | `client/agent.py`, `agent_tools.py`, `compliant.py`, `violating.py`, `common.py` | AI agent and scripted demo clients |
@@ -321,7 +323,7 @@ Longer (more specific) rules beat broader ones, with `disallowed_paths` winning 
 pytest -q
 ```
 
-The suite (170 tests) needs no network access or credentials; PayPal and Claude are replaced by mocked transports and scripted fakes.
+The suite (191 tests) needs no network access or credentials; PayPal, OpenAI, and Claude are replaced by mocked transports and scripted fakes.
 
 | File | Covers |
 | :--- | :--- |
@@ -331,7 +333,8 @@ The suite (170 tests) needs no network access or credentials; PayPal and Claude 
 | `test_payments.py` | PayPal Sandbox provider: OAuth, orders, callbacks, refunds, reconciliation, recovery |
 | `test_authorization_settlement.py` | Authorization holds: release, forfeiture, retries, and the PayPal authorize/void/capture paths |
 | `test_ai_features.py` | Explainer citations and fallbacks, cost guard, policy assistant validation, Claude request shape and error mapping |
-| `test_agent.py` | AI agent against the real gateway with a scripted model: refund, forfeiture, spending cap, refusal, token never sent to the model |
+| `test_openai_provider.py` | OpenAI request shape, refusal and truncation handling, error mapping, provider selection and model defaults |
+| `test_agent.py`, `test_agent_openai.py` | AI agent on both providers against the real gateway with scripted models: refund, forfeiture, spending cap, refusal, token never sent to the model |
 | `test_dashboard.py`, `test_compliant_cli.py` | Console data, access rules, KPIs; CLI output |
 
 ## 16. Persistence and troubleshooting
@@ -344,9 +347,10 @@ The suite (170 tests) needs no network access or credentials; PayPal and Claude 
 | `409 payer_approval_required` on capture | Sandbox buyer has not approved the order | Open the `approval_url`, approve with the Sandbox buyer account, retry |
 | `502` on `/deposits/create` | Sandbox mode without valid PayPal credentials | Set `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`, or use `PAYMENT_MODE=mock` |
 | Console shows "Enter the admin token" | `DASHBOARD_PUBLIC` is off | Enter `ADMIN_API_TOKEN` in the console, or set `DASHBOARD_PUBLIC=true` for a demo |
-| Explanations say "rule-based" | No Claude credentials on the server | Set `ANTHROPIC_API_KEY` and restart |
-| `/policies/draft` returns 503 | Same as above | Set `ANTHROPIC_API_KEY` |
-| Agent exits with "No Claude credentials found" | No key in the agent's environment | Export `ANTHROPIC_API_KEY` |
+| Explanations say "rule-based" | No AI credentials on the server | Set `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) and restart |
+| `/policies/draft` returns 503 | Same as above | Same as above |
+| Agent exits with "No AI credentials found" | No key in the agent's environment or `.env` | Set `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) |
+| OpenAI calls fail with a model error | `AI_MODEL` names a model your account cannot use | Leave `AI_MODEL` empty or pick a model listed for your key |
 | `PersistenceCorruptionError` on startup | A file in `storage/` was edited into invalid JSON | Fix or delete it and restart |
 
 ## 17. Limitations and roadmap
@@ -357,7 +361,7 @@ The suite (170 tests) needs no network access or credentials; PayPal and Claude 
 - JSON persistence and in-memory rate limits support a single process only.
 - In PayPal Sandbox mode a person approves each deposit in the browser; there is no saved payment method for the agent yet.
 - Authorization settlement is covered by mocked-transport tests built from PayPal's published API specifications, but has not yet been exercised against the live Sandbox.
-- AI agent behaviour depends on the model; the scripted crawlers give deterministic results for rehearsals.
+- AI agent behaviour depends on the model; the scripted crawlers give deterministic results for rehearsals. The Claude path has not been run against the live API.
 
 **Roadmap**
 

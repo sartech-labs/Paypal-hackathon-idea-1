@@ -31,7 +31,10 @@ services:
         sync: false
       - key: AI_ENABLED
         value: "true"
-      - key: AI_MODEL
-        value: claude-opus-5-5
+      # openai uses OPENAI_API_KEY (default model gpt-5.5); set anthropic or auto to use Claude.
+      - key: AI_PROVIDER
+        value: openai
+      - key: OPENAI_API_KEY
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false

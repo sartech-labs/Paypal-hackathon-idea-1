@@ -21,16 +21,16 @@ CrawlerTrust is an HTTP `402 Payment Required` gateway in front of a website.
 - An AI crawler that wants protected pages gets a 402 challenge. It pays a small refundable deposit through PayPal and explicitly accepts the site's machine-readable crawling policy.
 - Every request is checked against the policy: allowed and disallowed paths, encoded path traversal, a sliding-window rate limit, and a per-session request budget.
 - When the session ends, the gateway decides from its own records. A compliant crawler gets its deposit back; one that broke the rules forfeits it.
-- **Claude as the crawler:** our AI agent reads the challenge and policy, decides whether to pay, pays with PayPal, paces itself from the gateway's rate-limit signals, ignores a prompt injection hidden in a page, and completes its session. A rogue persona shows what happens to an agent that ignores the rules.
-- **Claude as the explainer:** every refund or forfeiture comes with a plain-English explanation in which each statement cites the audit event behind it.
-- **Claude as the policy assistant:** publishers describe their terms in plain English and get a validated, machine-readable policy draft.
+- **AI as the crawler:** our AI agent reads the challenge and policy, decides whether to pay, pays with PayPal, paces itself from the gateway's rate-limit signals, ignores a prompt injection hidden in a page, and completes its session. A rogue persona shows what happens to an agent that ignores the rules.
+- **AI as the explainer:** every refund or forfeiture comes with a plain-English explanation in which each statement cites the audit event behind it.
+- **AI as the policy assistant:** publishers describe their terms in plain English and get a validated, machine-readable policy draft.
 - A publisher console shows live sessions, deposits, violations, and explanations.
 
 ## How we built it
 
 - **Gateway:** Python, FastAPI, and HTTPX, with a pure policy engine, a sliding-window rate limiter, hashed bearer tokens, and an append-only audit log.
 - **PayPal:** REST APIs directly: OAuth 2.0; Orders v2 to create, capture, authorize, and look up deposit orders; Payments v2 for refunds, refund and capture lookups, and authorization void and capture. Two settlement modes: capture-then-refund, and an authorization hold that is voided for compliant crawlers so no money moves at all. Every call uses idempotent `PayPal-Request-Id`s, and ambiguous outcomes are reconciled against PayPal's records before any retry.
-- **AI:** the Anthropic Python SDK. The agent is a manual tool-use loop over strict tool schemas; explanations and policy drafts use structured outputs and are validated in code. Refusals are handled, with the server-side refusal fallback enabled.
+- **AI:** the OpenAI Python SDK (Responses API, GPT-5.5) and the Anthropic Python SDK (Claude), selectable with one setting. The agent is a manual tool-use loop over strict tool schemas; explanations and policy drafts use structured outputs and are validated in code. Refusals are handled, with the server-side refusal fallback enabled.
 - **Console:** static HTML and JavaScript with AG Grid Community, served by the gateway.
 - **Deployment:** Docker and a Render Blueprint.
 - **Tests:** 170 automated tests with mocked PayPal transports and scripted model fakes.
@@ -47,6 +47,7 @@ CrawlerTrust is an HTTP `402 Payment Required` gateway in front of a website.
 - A complete, working loop from HTTP 402 to PayPal deposit to policy enforcement to automatic refund or forfeiture.
 - An AI agent that pays for access with PayPal and behaves well because the incentives are right, not because it is trusted.
 - Explanations that can be checked: every AI statement links to the audit event it relies on.
+- Verified live with GPT-5.5: the compliant agent paid, stayed within the rate limit, spotted and ignored a prompt injection planted in a page, and got its deposit back; the rogue agent was blocked on every forbidden path and lost its deposit; every explanation cited real audit events.
 - [TODO: add live Sandbox results, for example "Verified end to end against the PayPal Sandbox in both settlement modes", once done.]
 
 ## What we learned
@@ -64,7 +65,7 @@ CrawlerTrust is an HTTP `402 Payment Required` gateway in front of a website.
 
 ## Built with
 
-python, fastapi, httpx, pydantic, paypal-rest-api, paypal-orders-v2, paypal-payments-v2, anthropic, claude, ag-grid, docker, render
+python, fastapi, httpx, pydantic, paypal-rest-api, paypal-orders-v2, paypal-payments-v2, openai, gpt-5.5, anthropic, claude, ag-grid, docker, render
 
 ## Links
 
