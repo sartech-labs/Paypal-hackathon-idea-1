@@ -157,27 +157,22 @@ sequenceDiagram
 
     C->>G: 1. GET /gateway/news (No Bearer Token)
     G->>A: Log CHALLENGE_ISSUED
-    G-->>C: HTTP 402 Payment Required (challenge_id, deposit=$1.00, policy_url)
+    G-->>C: HTTP 402 Payment Required (challenge_id, deposit=$0.01, policy_url)
 
     C->>G: 2. GET /policies & GET /robots.txt
     G-->>C: 200 OK (Allowed paths, Disallowed paths, Rate limits)
 
     C->>G: 3. POST /deposits/create (challenge_id, crawler_id)
-    G->>P: Create Order ($1.00 USD, PayPal-Request-Id)
+    G->>P: Create Order ($0.01 USD, PayPal-Request-Id)
     P-->>G: Order ID + Approval URL
     G->>A: Log DEPOSIT_INITIATED
     G-->>C: 201 Created (deposit_id, provider_order_id, approval_url)
 
     Note over C,P: In PayPal Sandbox mode, buyer approves order at approval_url
     P-->>C: Redirect browser to configured return_url with token (order ID)
-    C->>G: GET /deposits/paypal/return?deposit_id=...&token=...
+    C->>G: 4. GET /deposits/paypal/return?deposit_id=...&token=...
     G->>G: Match token against persisted deposit order ID
-    G->>P: Capture with stable PayPal-Request-Id; verify completed status, amount, currency, capture ID
-    P-->>G: Capture response
-    G-->>C: CAPTURED only after backend verification
-
-    C->>G: 4. Browser return invokes GET /deposits/paypal/return
-    G->>P: Capture and verify via Orders API (COMPLETED, $1.00, USD, capture_id)
+    G->>P: Capture with stable PayPal-Request-Id; verify COMPLETED status, $0.01, USD, capture_id
     P-->>G: Capture result
     G->>A: Log PAYMENT_VERIFIED only after backend validation
     G-->>C: 200 OK (payment_status=CAPTURED)
@@ -347,7 +342,7 @@ Copy `.env.example` to `.env`. All variables are validated at startup via `serve
 | `PAYPAL_CLIENT_SECRET` | *(empty)* | PayPal Sandbox OAuth2 Client Secret |
 | `PAYPAL_CURRENCY` | `USD` | 3-letter ISO currency code |
 | `PAYPAL_TIMEOUT_SECONDS` | `15.0` | Timeout in seconds for outbound PayPal HTTPX requests |
-| `DEPOSIT_AMOUNT` | `1.00` | Required refundable deposit amount (positive `Decimal`) |
+| `DEPOSIT_AMOUNT` | `0.01` | Required refundable deposit amount (positive `Decimal`) |
 | `SESSION_TTL_SECONDS` | `1800` | Session bearer token lifetime in seconds |
 | `CHALLENGE_TTL_SECONDS` | `600` | 402 challenge expiration window in seconds |
 | `MAX_REQUESTS_PER_SESSION` | `10` | Maximum allowed content requests per session |
@@ -366,7 +361,7 @@ Copy `.env.example` to `.env`. All variables are validated at startup via `serve
 ### Windows PowerShell
 
 ```powershell
-cd c:\Users\vinee\Documents\paypal-idea1\Paypal-hackathon-idea-1
+cd path\to\Paypal-hackathon-idea-1
 Copy-Item .env.example .env
 ```
 
@@ -464,7 +459,7 @@ PayPal's standard Orders API v2 creates checkout orders in `CREATED` status that
    - Open the `approval_url` in your browser.
    - Log in with your PayPal Sandbox Personal (Buyer) account and click **Complete Purchase / Approve**.
    - Return to **Terminal 2** and press **Enter**.
-5. PayPal redirects the browser to the configured return callback, which matches the returned order ID to the persisted deposit and runs the existing capture and verification flow. The backend verifies the exact `1.00 USD` capture before access is granted. The CLI's existing capture/verify requests remain idempotent if also used. The compliant crawl can then complete and execute a Sandbox refund via `POST /v2/payments/captures/{capture_id}/refund`.
+5. PayPal redirects the browser to the configured return callback, which matches the returned order ID to the persisted deposit and runs the existing capture and verification flow. The backend verifies the exact configured deposit (default `0.01 USD`) before access is granted. The CLI's existing capture/verify requests remain idempotent if also used. The compliant crawl can then complete and execute a Sandbox refund via `POST /v2/payments/captures/{capture_id}/refund`.
 
 ---
 
@@ -488,7 +483,7 @@ X-Crawler-Id: crawler-demo-01
   "site_id": "demo-news-site",
   "policy_version": "1.0",
   "deposit": {
-    "amount": "1.00",
+    "amount": "0.01",
     "currency": "USD",
     "refundable": true
   },
@@ -657,7 +652,7 @@ python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
 python -m client.compliant --base-url http://127.0.0.1:8000
 ```
 **Expected Output Highlights:**
-- Receives `HTTP 402` challenge (`$1.00 USD`).
+- Receives `HTTP 402` challenge (`$0.01 USD`).
 - Reads `/policies` and `/robots.txt`.
 - Completes deposit creation, capture, verification, and policy acceptance.
 - Crawls `/gateway/`, `/gateway/news`, and `/gateway/news/technology` with `HTTP 200`.

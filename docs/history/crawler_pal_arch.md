@@ -1,3 +1,7 @@
+> **Archived — superseded.** This document describes the original "CrawlerPal" L402 concept
+> (single-file server, Faker-generated news, `client/main.py`). It does not describe the current
+> code. See the repository [README](../../README.md) for the CrawlerTrust implementation.
+
 **Generated with GLM-5.3-flash**
 
 # Architecture Overview: CrawlerPal News Demo (L402 Paywall)
