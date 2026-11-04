@@ -1,480 +1,376 @@
-# CrawlerTrust — Deposit-Based Accountability for AI Crawlers
+# CrawlerTrust — refundable PayPal deposits that keep AI crawlers accountable
 
-## 1. Project Title and Overview
+CrawlerTrust is an HTTP `402 Payment Required` gateway that sits in front of a website. Before an AI crawler or agent can read protected pages, it posts a small **refundable deposit through PayPal** and explicitly accepts the site's machine-readable crawling policy. Crawlers that follow the policy get the deposit back. Crawlers that request forbidden paths, attempt path traversal, or flood the site lose it.
 
-**CrawlerTrust** is a lightweight, programmable trust and accountability gateway for websites interacting with AI crawlers and autonomous agents. Built with **FastAPI**, **HTTPX**, and the **PayPal Sandbox REST APIs v2** (Orders API v2 and Payments Refunds API v2), CrawlerTrust enforces website crawling policies by requiring AI crawlers to post a **refundable micro-deposit** before accessing protected content.
+**Positioning in one line:** HTTP 402 schemes such as Cloudflare Pay Per Crawl and the x402 protocol charge crawlers for *access*. CrawlerTrust prices *misbehaviour*: well-behaved AI agents crawl at no net cost, and agents that ignore the rules pay for it.
 
-- **Compliant crawlers** that accept the website's policy, access only allowed paths, and respect rate limits and request budgets receive a **full automatic refund** upon completing their crawl session.
-- **Violating crawlers** that ignore `robots.txt` rules, attempt to access disallowed paths (such as `/admin` or `/private/customer-data`), attempt URL-encoded path traversal, or flood the server beyond configured rate limits **forfeit their deposit** under the published policy.
+> **Prototype notice.** Built for the PayPal AI Hackathon 2026. Payments run in mock mode or against the PayPal **Sandbox** with test funds; no real money moves.
 
-> **Disclaimer**: This repository is a functional hackathon prototype. PayPal Sandbox transactions use simulated test funds and do **not** move real money. Mock payment mode (`PAYMENT_MODE=mock`) is also provided for deterministic offline development and automated testing.
+## Contents
 
----
-
-## 2. Problem Statement and Hackathon Objective
-
-Traditionally, websites publish a `robots.txt` file to express crawling rules (allowed paths, disallowed paths, and crawl delays). However:
-1. `robots.txt` is purely advisory—nothing prevents an uncooperative scraper or autonomous AI agent from ignoring it.
-2. Blanket IP blocking or aggressive CAPTCHAs block legitimate, well-behaved AI agents alongside abusive bots.
-3. Website operators have no financial recourse when a crawler ignores rate limits or scrapes restricted routes.
-
-**Hackathon Objective**: Demonstrate a working HTTP `402 Payment Required` trust layer where crawlers establish a verifiable session backed by a refundable PayPal deposit, explicitly agree to machine-readable crawling policies, and have their refund eligibility determined authoritatively from server-side audit history.
-
----
-
-## 3. Why AI Crawler Accountability Matters
-
-As autonomous agents and LLM data pipelines increasingly traverse the web programmatically, publishers face rising infrastructure costs and unauthorized scraping of restricted endpoints. Economic alignment via **refundable deposits** shifts enforcement from passive honor-system rules (`robots.txt`) to **stake-backed accountability**:
-- Honest crawlers incur **$0 net cost** for compliant crawling because their deposit is refunded at session completion.
-- Abusive crawlers incur a real financial penalty per violating session, making large-scale policy violations economically unattractive.
-
----
-
-## 4. Solution Overview
-
-CrawlerTrust sits in front of protected website content (`/gateway/{path}`) and enforces a six-stage lifecycle:
-1. **Challenge (`HTTP 402 Payment Required`)**: Unauthenticated crawler requests receive a unique, single-use `challenge_id`, deposit requirements, and a link to `/policies`.
-2. **Deposit & Payment Capture**: The crawler initiates a deposit (`/deposits/create`), approves the PayPal Sandbox order in a browser, and returns through `/deposits/paypal/return`; the backend then captures and verifies the payment. Mock mode and the existing explicit capture/verify endpoints remain available.
-3. **Explicit Policy Acceptance**: The crawler explicitly records agreement to the current `policy_version` (`/sessions/accept-policy`).
-4. **Cryptographic Session Issuance**: The server issues a high-entropy bearer token (`secrets.token_urlsafe(32)`) once and stores only its **SHA-256 hash** (`sessions_db.json`).
-5. **Real-Time Policy & Rate-Limit Enforcement**: Every `/gateway/{path}` request is evaluated against session validity, path normalization, allowed/disallowed rules, session request budget, and a monotonic sliding-window rate limiter.
-6. **Accountability & Refund Decision**: Upon `/sessions/complete`, the Deposit Manager inspects the authoritative session history. Compliant sessions trigger an idempotent PayPal refund (`REFUNDED`); sessions with disqualifying violations are marked `FORFEITED` (`FORFEITED_BY_POLICY`).
+1. [Why this matters](#1-why-this-matters)
+2. [How it works](#2-how-it-works)
+3. [Where the AI is](#3-where-the-ai-is)
+4. [Where PayPal is](#4-where-paypal-is)
+5. [Quick start (mock mode)](#5-quick-start-mock-mode)
+6. [Demo scenarios](#6-demo-scenarios)
+7. [PayPal Sandbox mode](#7-paypal-sandbox-mode)
+8. [Deploy (Docker and Render)](#8-deploy-docker-and-render)
+9. [Configuration reference](#9-configuration-reference)
+10. [API reference](#10-api-reference)
+11. [Architecture](#11-architecture)
+12. [Deposit and session state machines](#12-deposit-and-session-state-machines)
+13. [Policy enforcement logic](#13-policy-enforcement-logic)
+14. [Security and AI safety](#14-security-and-ai-safety)
+15. [Testing](#15-testing)
+16. [Persistence and troubleshooting](#16-persistence-and-troubleshooting)
+17. [Limitations and roadmap](#17-limitations-and-roadmap)
+18. [Example API responses](#18-example-api-responses)
 
 ---
 
-## 5. Architecture Diagram
+## 1. Why this matters
+
+- `robots.txt` is advisory: nothing stops an AI crawler or agent from ignoring it.
+- Blanket IP blocks and CAPTCHAs also block legitimate, well-behaved agents.
+- Publishers carry the infrastructure cost of scraping and have no recourse when a crawler takes restricted pages or ignores rate limits.
+
+CrawlerTrust turns the policy into a commitment backed by money: an honest agent's deposit is returned, so compliance costs it nothing, while a violation forfeits the stake.
+
+## 2. How it works
+
+1. **Challenge.** A crawler without a session gets `HTTP 402` with a single-use `challenge_id`, the deposit amount, and a rules summary.
+2. **Deposit.** The crawler pays through PayPal. The server sets the amount and verifies the payment itself; clients cannot self-certify.
+3. **Policy acceptance.** The crawler accepts the exact `policy_version` and receives a bearer token (stored only as a SHA-256 hash).
+4. **Enforced crawling.** Every `/gateway/{path}` request is checked for session validity, encoded path traversal, disallowed paths, a sliding-window rate limit, and a per-session request budget.
+5. **Outcome.** On completion the gateway decides from its own records: no disqualifying violations returns the deposit; otherwise it is kept. An AI explanation, citing audit-log evidence, tells both sides why.
+
+## 3. Where the AI is
+
+| Feature | What it does | Code |
+| :--- | :--- | :--- |
+| **AI crawler agent** | Claude drives a crawler through the whole protocol with tool use: reads the 402 challenge and policy, decides whether to pay, pays through PayPal, accepts the policy, paces itself from the gateway's budget and `Retry-After` signals, and completes the session. A **compliant** persona writes a news brief and gets its deposit back; a **rogue** persona (an authorized red-team run against your own gateway) ignores the rules and loses it. | `client/agent.py`, `client/agent_tools.py` |
+| **Deposit explanations** | Claude explains why a deposit was returned or kept, in plain English. Every finding must cite audit events recorded for that deposit; findings with invalid citations are dropped, and a rule-based explanation is used when AI is unavailable. | `server/services/explainer.py`, `GET /deposits/{id}/explanation` |
+| **Policy assistant** | A publisher describes crawling terms in plain English; Claude drafts the machine-readable policy with structured outputs, and the server validates paths, amounts, and limits before showing the draft. Drafts are never applied automatically. | `server/services/policy_assistant.py`, `POST /policies/draft` |
+
+Guardrails that hold whether or not the model behaves:
+
+- **The money decision is never made by the model.** Refund or forfeiture comes from the deterministic policy engine; the AI only explains it.
+- **Prompt-injection resistance.** Page content reaches the agent inside `<untrusted_page_content>` tags, and the compliant persona is instructed to ignore instructions in pages. The demo economy page carries a hidden instruction telling AI agents to fetch `/private/customer-data`; if an agent is fooled anyway, the gateway blocks the request and keeps the deposit.
+- **Secrets stay out of the model.** The session bearer token is held by the tool layer and never appears in anything sent to Claude.
+- **Spending cap in code.** The agent's `--max-deposit` limit is enforced before payment, not left to the model.
+- **Cost guard.** Crawlers can trigger an AI explanation only once their outcome is final, and explanations are cached per deposit state. The policy assistant requires the admin token.
+- **Model safety handling.** Refusals stop the agent before any tool from that turn runs; the server-side refusal fallback (`fallbacks: "default"`) is enabled by default and can be turned off with `AI_REFUSAL_FALLBACK=false`.
+
+The model defaults to Claude Opus 5.5 and is configurable with `AI_MODEL` and `AI_EFFORT`.
+
+## 4. Where PayPal is
+
+PayPal REST APIs called by `PayPalSandboxProvider` (`server/services/payment_service.py`):
+
+| API | Endpoint | Used for |
+| :--- | :--- | :--- |
+| OAuth 2.0 | `POST /v1/oauth2/token` | Client-credentials token, cached until 60 s before expiry |
+| Orders v2 | `POST /v2/checkout/orders` | Create the deposit order (`intent` `CAPTURE` or `AUTHORIZE`), with return/cancel URLs and an idempotent `PayPal-Request-Id` |
+| Orders v2 | `POST /v2/checkout/orders/{id}/capture` | Capture the deposit (refund settlement) |
+| Orders v2 | `POST /v2/checkout/orders/{id}/authorize` | Place a hold on the deposit (authorization settlement) |
+| Orders v2 | `GET /v2/checkout/orders/{id}` | Authoritative verification of status, amount, currency, and IDs |
+| Payments v2 | `POST /v2/payments/captures/{id}/refund` | Refund a compliant crawler |
+| Payments v2 | `GET /v2/payments/captures/{id}`, `GET /v2/payments/refunds/{id}` | Refund preflight and reconciliation, so timeouts never cause a double refund |
+| Payments v2 | `POST /v2/payments/authorizations/{id}/void` | Release a compliant crawler's hold (no funds move) |
+| Payments v2 | `POST /v2/payments/authorizations/{id}/capture` | Capture a forfeited hold |
+| Payments v2 | `GET /v2/payments/authorizations/{id}` | Reconcile an ambiguous void |
+
+Two settlement modes, selected with `DEPOSIT_SETTLEMENT`:
+
+| Mode | Compliant crawler | Violating crawler | Notes |
+| :--- | :--- | :--- | :--- |
+| `refund` (default) | Order captured, then refunded | Captured funds kept | Mature path with refund reconciliation and recovery |
+| `authorization` | Hold voided: no funds are ever captured, nothing to refund | Hold captured | Closer to a real deposit. PayPal documents a 29-day authorization window with a 3-day honor period; sessions last at most 24 hours |
+
+Each deposit keeps the mode it was created with, so switching modes never strands existing deposits.
+
+## 5. Quick start (mock mode)
+
+Requires Python 3.10+. Mock mode needs no PayPal or Anthropic credentials.
+
+```bash
+git clone https://github.com/sartech-labs/Paypal-hackathon-idea-1.git
+cd Paypal-hackathon-idea-1
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
+```
+
+On Windows PowerShell use `python -m venv .venv`, `.\.venv\Scripts\Activate.ps1`, and `Copy-Item .env.example .env`.
+
+Then open **http://127.0.0.1:8000/** for the publisher console (the example `.env` enables the read-only public view), and in a second terminal run a crawler:
+
+```bash
+python -m client.compliant --base-url http://127.0.0.1:8000
+```
+
+```bash
+python -m client.violating --base-url http://127.0.0.1:8000
+```
+
+To run the AI agent, add your Anthropic API key to `.env` (`ANTHROPIC_API_KEY=...`), restart the server so it can also generate AI explanations, and run:
+
+```bash
+python -m client.agent --persona compliant --base-url http://127.0.0.1:8000
+```
+
+## 6. Demo scenarios
+
+| Scenario | Command | What you should see |
+| :--- | :--- | :--- |
+| Compliant AI agent | `python -m client.agent --persona compliant` | Claude reads the policy, pays, crawls `/news` sections within the rate limit, ignores the injected instruction on `/news/economy`, completes the session, and writes a brief. Deposit **returned**. |
+| Rogue AI agent | `python -m client.agent --persona rogue` | Claude requests `/admin` and private paths and bursts requests. The gateway blocks each one; the deposit is **forfeited** and the explanation cites each violation. |
+| Scripted crawlers (no API key) | `python -m client.compliant` / `python -m client.violating` | The same two outcomes from deterministic scripts. |
+| Publisher console | Open `/` | Live KPIs, deposits, sessions, audit feed, violations chart, and the "Why this outcome" panel. Select a deposit to explain it. |
+| Policy assistant | Console panel, or `POST /policies/draft` with `X-Admin-Token` | Plain-English terms become a validated policy draft with assumptions and warnings. |
+
+Useful agent flags: `--max-deposit 1.00` (spending limit), `--effort medium`, `--model ...`, `--max-turns 25`, `--non-interactive`. A video storyboard is in [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md).
+
+## 7. PayPal Sandbox mode
+
+1. Sign in to the [PayPal Developer Dashboard](https://developer.paypal.com/), open **Apps & Credentials** with **Sandbox** selected, and create a **Merchant** app.
+2. Put its client ID and secret in `.env` as `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`, and set `PAYMENT_MODE=paypal_sandbox`.
+3. Set `APP_PUBLIC_URL` to a URL the buyer's browser can reach (PayPal redirects there after approval). On Render it defaults to `RENDER_EXTERNAL_URL`.
+4. Optional: set `DEPOSIT_SETTLEMENT=authorization` to use holds instead of capture-and-refund.
+5. Under **Testing Tools > Sandbox Accounts**, note the **Personal (Buyer)** account used to approve the checkout.
+
+When a crawler creates a deposit, the response includes the PayPal `approval_url`. The CLIs and the agent print it and pause; approve it in the browser with the Sandbox buyer account and continue. PayPal also redirects the browser to `GET /deposits/paypal/return`, which checks that the returned order ID matches the deposit before capturing or authorizing; the redirect itself is never treated as proof of payment.
+
+If a refund completed at PayPal but CrawlerTrust conservatively left it pending, an administrator can call `POST /deposits/{id}/reconcile-refund` with `X-Admin-Token`. It only reads `GET /v2/payments/refunds/{refund_id}` and never submits another refund.
+
+## 8. Deploy (Docker and Render)
+
+**Docker:**
+
+```bash
+docker build -t crawlertrust .
+```
+
+```bash
+docker run --rm -p 8000:8000 -e DASHBOARD_PUBLIC=true -e ANTHROPIC_API_KEY=your_key crawlertrust
+```
+
+The image runs as a non-root user, binds to `$PORT` (default 8000), exposes a health check on `/health`, and always runs **one** uvicorn worker, because deposits, sessions, and rate limits live in one process.
+
+**Render:** `render.yaml` is a Blueprint for a Docker web service. In the Render dashboard choose **New > Blueprint**, select this repository, and enter the prompted secrets (`ANTHROPIC_API_KEY`, and the PayPal keys if you switch `PAYMENT_MODE` to `paypal_sandbox`). Render generates `ADMIN_API_TOKEN`; copy it from the service's environment settings to use admin features in the console. The Blueprint enables the read-only public dashboard so judges can browse it. Storage on the free plan is ephemeral and the service sleeps when idle, so open the URL a minute before a demo.
+
+## 9. Configuration reference
+
+Copy `.env.example` to `.env`. Settings are validated at startup (`server/config.py`).
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `APP_ENV` | `development` | `development`, `test`, or `production` (production requires `ADMIN_API_TOKEN`) |
+| `APP_HOST` / `APP_PORT` | `127.0.0.1` / `8000` | Bind address for local runs |
+| `APP_PUBLIC_URL` | `http://127.0.0.1:8000` | Public base URL for PayPal return/cancel callbacks; falls back to `RENDER_EXTERNAL_URL` |
+| `PAYMENT_MODE` | `mock` | `mock` (simulated) or `paypal_sandbox` |
+| `DEPOSIT_SETTLEMENT` | `refund` | `refund` (capture, then refund compliant sessions) or `authorization` (hold, then void or capture) |
+| `PAYPAL_BASE_URL` | `https://api-m.sandbox.paypal.com` | PayPal REST base URL |
+| `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | empty | Sandbox app credentials |
+| `PAYPAL_CURRENCY` | `USD` | 3-letter ISO currency |
+| `PAYPAL_TIMEOUT_SECONDS` | `15.0` | Timeout for PayPal calls |
+| `DEPOSIT_AMOUNT` | `0.01` | Deposit amount (positive decimal) |
+| `SESSION_TTL_SECONDS` / `CHALLENGE_TTL_SECONDS` | `1800` / `600` | Session and challenge lifetimes |
+| `MAX_REQUESTS_PER_SESSION` | `10` | Allowed content requests per session |
+| `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS` | `3` / `10` | Sliding-window rate limit |
+| `AUDIT_LOG_PATH`, `PAYMENTS_DB_PATH`, `SESSIONS_DB_PATH` | `storage/...` | Persistence files |
+| `ADMIN_API_TOKEN` | empty | Secret for `X-Admin-Token` (global audit, admin console, policy assistant, reconciliation) |
+| `DASHBOARD_PUBLIC` | `false` (`true` in `.env.example`) | Read-only console without the admin token, for demos; keep `false` in production |
+| `ANTHROPIC_API_KEY` | unset | Claude credentials (the SDK also accepts `ANTHROPIC_AUTH_TOKEN` or a profile) |
+| `AI_ENABLED` | `true` | Turn AI features off entirely |
+| `AI_MODEL` | `claude-opus-5-5` | Claude model for explanations, the policy assistant, and the agent CLI default |
+| `AI_EFFORT` | `medium` | `low`, `medium`, `high`, `xhigh`, or `max` |
+| `AI_REFUSAL_FALLBACK` | `true` | Server-side refusal fallback on Claude calls |
+| `AI_TIMEOUT_SECONDS` | `120` | Timeout for Claude calls |
+| `LOG_LEVEL` | `INFO` | Python logging level |
+
+## 10. API reference
+
+Interactive docs: **`/docs`** (Swagger UI) and **`/redoc`**.
+
+| Method | Path | Auth | Purpose |
+| :--- | :--- | :--- | :--- |
+| GET | `/gateway`, `/gateway/{path}` | none (402) or crawler bearer | Protected content |
+| GET | `/policies`, `/robots.txt`, `/health` | none | Machine-readable policy, robots rules, health and AI status |
+| POST | `/policies/draft` | admin | Policy assistant (Claude) |
+| POST | `/deposits/create` | challenge proof | Create a deposit and PayPal order |
+| POST | `/deposits/{id}/capture`, `/deposits/{id}/verify` | owner | Capture (or authorize) and verify |
+| GET | `/deposits/paypal/return`, `/deposits/paypal/cancel` | order match | PayPal browser callbacks |
+| GET | `/deposits/{id}` | owner or admin | Deposit status |
+| GET | `/deposits/{id}/explanation` | owner or admin | Evidence-cited explanation (`?use_ai=false` for rule-based) |
+| POST | `/deposits/{id}/refund` | owner or admin | Evaluate and settle |
+| POST | `/deposits/{id}/reconcile-refund` | admin | Reconcile a pending PayPal refund |
+| POST | `/sessions/accept-policy` | deposit proof | Accept the policy and get a bearer token |
+| GET | `/sessions/me` | crawler bearer | Session counters and violations |
+| POST | `/sessions/complete`, `/sessions/revoke` | crawler bearer (revoke: admin too) | End the session and settle |
+| GET | `/audit/events`, `/audit/summary` | crawler bearer (own session) or admin | Audit log |
+| GET | `/`, `/dashboard` | none | Publisher console |
+| GET | `/dashboard/data`, `/dashboard/deposits/{id}/explanation` | admin, or public when `DASHBOARD_PUBLIC=true` | Console data |
+
+## 11. Architecture
 
 ```mermaid
 flowchart TD
-    CA["Compliant Crawler\n(client/compliant.py)"] -->|HTTP + Bearer Token| GW["CrawlerTrust FastAPI Gateway\n(server/main.py :8000)"]
-    CB["Violating Crawler\n(client/violating.py)"] -->|HTTP + Bearer Token| GW
+    AGENT["AI crawler agent\n(client/agent.py, Claude tool use)"] -->|HTTP 402 protocol| GW
+    CLI["Scripted crawlers\n(client/compliant.py, violating.py)"] -->|HTTP 402 protocol| GW
+    PUB["Publisher console\n(/, AG Grid)"] -->|/dashboard/data| GW
+    AGENT -.->|Messages API + tools| CLAUDE["Claude API"]
 
-    subgraph Backend ["CrawlerTrust Backend Services"]
-        GW --> ID["Identity & Session Manager\n(server/core/identity.py, sessions.py)"]
-        GW --> PE["Policy Engine & Rate Limiter\n(server/services/policy_engine.py, rate_limiter.py)"]
-        GW --> DM["Deposit Manager\n(server/services/deposit_manager.py)"]
-        GW --> CS["Content Service\n(server/services/content_service.py)"]
-        DM --> PS["Payment Service\n(server/services/payment_service.py)"]
-        GW --> AL["Audit Logger\n(server/services/audit_logger.py)"]
+    subgraph Gateway ["CrawlerTrust gateway (FastAPI)"]
+        GW["Gateway and routers\n(server/api/*)"] --> PE["Policy engine + rate limiter"]
+        GW --> SM["Sessions and identity"]
+        GW --> DM["Deposit manager\n(refund or authorization settlement)"]
+        GW --> EX["Explainer + policy assistant"]
+        GW --> AL["Audit logger"]
+        DM --> PS["Payment service"]
     end
 
-    PS -->|OAuth2 / Orders v2 / Refunds v2| PP["PayPal Sandbox API\n(or Deterministic Mock Provider)"]
-    CS -->|Reads Allowed Content Only| DATA["Local Website Data\n(data/*.json)"]
-    AL -->|Append-Only JSONL| LOGS["storage/audit.jsonl"]
-    DM -->|Atomic Temp-Swap JSON| PDB["storage/payments_db.json"]
-    ID -->|Atomic Temp-Swap JSON| SDB["storage/sessions_db.json"]
+    EX -->|structured outputs| CLAUDE
+    PS -->|OAuth2, Orders v2, Payments v2| PP["PayPal Sandbox\n(or mock provider)"]
+    AL --> LOG["storage/audit.jsonl"]
+    DM --> PDB["storage/payments_db.json"]
+    SM --> SDB["storage/sessions_db.json"]
 ```
 
----
-
-## 6. Component Descriptions
-
-| Component | File(s) | Responsibility |
+| Component | Files | Responsibility |
 | :--- | :--- | :--- |
-| **Gateway API** | `server/api/gateway.py` | Single enforcement point for `/gateway` and `/gateway/{path:path}`. Issues HTTP 402 challenges and serves content only when `PolicyEngine` authorizes the request. |
-| **Identity & Security** | `server/core/identity.py`, `server/core/security.py` | Generates unpredictable `challenge_id` values, validates crawler IDs, normalizes paths (blocking traversal/encoding attacks), hashes bearer tokens with SHA-256, and performs constant-time comparisons. |
-| **Session Manager** | `server/core/sessions.py` | Manages session lifecycle (`ACTIVE`, `COMPLETED`, `REVOKED`, `EXPIRED`), tracks per-session violation counts, and persists snapshots atomically to `storage/sessions_db.json`. |
-| **Policy Engine** | `server/services/policy_engine.py` | Pure, PayPal-independent policy evaluator returning structured `PolicyDecision` objects (`allowed`, `http_status`, `reason_code`, `violation`, `disqualifying`). |
-| **Rate Limiter** | `server/services/rate_limiter.py` | Monotonic sliding-window rate limiter (`time.monotonic`) enforcing `rate_limit_requests` per `rate_limit_window_seconds` per session. |
-| **Deposit Manager** | `server/services/deposit_manager.py` | Tracks orthogonal `payment_status`, `policy_decision`, and `refund_status` state machines, enforces ownership and single-use challenges, and evaluates refund eligibility. |
-| **Payment Service** | `server/services/payment_service.py` | Provides `PayPalSandboxProvider` (OAuth 2.0, Orders API v2, Captures Refund API v2) and `MockPaymentProvider` behind a unified `PaymentProvider` interface. |
-| **Content Service** | `server/services/content_service.py` | Loads `site_config.json`, `robots.json`, `allowed_pages.json`, and `disallowed_pages.json`. Refuses to serve content unless `PolicyDecision.allowed` is `True`. |
-| **Audit Logger** | `server/services/audit_logger.py` | Writes sanitized, append-only UTC JSONL events to `storage/audit.jsonl` and computes session-scoped or global summaries. |
-| **Crawler Clients** | `client/compliant.py`, `client/violating.py`, `client/common.py` | Standalone CLI scripts demonstrating compliant crawling (refunded) and policy-violating crawling (forfeited). |
+| Gateway | `server/api/gateway.py` | Issues 402 challenges and serves content only when the policy engine allows it |
+| Policy engine | `server/services/policy_engine.py`, `rate_limiter.py` | Pure, payment-independent checks returning structured decisions |
+| Identity and sessions | `server/core/identity.py`, `sessions.py`, `security.py` | Challenges, hashed bearer tokens, path normalization, violation counters |
+| Deposit manager | `server/services/deposit_manager.py` | Orthogonal payment / decision / refund state machines, both settlement modes, reconciliation |
+| Payment service | `server/services/payment_service.py` | `PayPalSandboxProvider` and `MockPaymentProvider` behind one interface |
+| AI | `server/services/ai_client.py`, `explainer.py`, `policy_assistant.py` | Claude client wrapper, explanations, policy drafts |
+| Dashboard | `server/api/dashboard.py`, `server/static/*` | Publisher console and its data endpoints |
+| Audit logger | `server/services/audit_logger.py` | Append-only JSONL events with secret scrubbing |
+| Crawlers | `client/agent.py`, `agent_tools.py`, `compliant.py`, `violating.py`, `common.py` | AI agent and scripted demo clients |
 
----
+The end-to-end request sequence is also available as an exportable diagram in [`docs/lifecycle_diagram.html`](docs/lifecycle_diagram.html).
 
-## 7. Complete Directory Structure
+## 12. Deposit and session state machines
 
-```text
-.
-├── client/
-│   ├── __init__.py
-│   ├── common.py
-│   ├── compliant.py
-│   └── violating.py
-├── server/
-│   ├── __init__.py
-│   ├── main.py
-│   ├── config.py
-│   ├── schemas.py
-│   ├── dependencies.py
-│   ├── core/
-│   │   ├── __init__.py
-│   │   ├── identity.py
-│   │   ├── sessions.py
-│   │   └── security.py
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── policy_engine.py
-│   │   ├── rate_limiter.py
-│   │   ├── deposit_manager.py
-│   │   ├── payment_service.py
-│   │   ├── audit_logger.py
-│   │   └── content_service.py
-│   └── api/
-│       ├── __init__.py
-│       ├── gateway.py
-│       ├── deposits.py
-│       ├── sessions.py
-│       ├── policies.py
-│       └── audit.py
-├── data/
-│   ├── site_config.json
-│   ├── robots.json
-│   ├── allowed_pages.json
-│   └── disallowed_pages.json
-├── storage/
-│   ├── .gitkeep
-│   └── README.md
-├── tests/
-│   ├── __init__.py
-│   ├── conftest.py
-│   ├── test_gateway.py
-│   ├── test_policy_engine.py
-│   ├── test_rate_limiter.py
-│   ├── test_deposits.py
-│   ├── test_payments.py
-│   └── test_audit.py
-├── .env.example
-├── .gitignore
-├── requirements.txt
-├── pyproject.toml
-├── LICENSE
-└── README.md
-```
+CrawlerTrust keeps **payment status**, **policy decision**, and **refund status** separate, so a policy violation is never confused with a money movement and a failed provider call never overwrites a confirmed payment.
 
----
-
-## 8. Request Lifecycle from HTTP 402 to Refund
-
-```mermaid
-sequenceDiagram
-    participant C as Crawler Client
-    participant G as FastAPI Gateway
-    participant P as PayPal Sandbox / Mock Provider
-    participant A as Audit Log (audit.jsonl)
-
-    C->>G: 1. GET /gateway/news (No Bearer Token)
-    G->>A: Log CHALLENGE_ISSUED
-    G-->>C: HTTP 402 Payment Required (challenge_id, deposit=$0.01, policy_url)
-
-    C->>G: 2. GET /policies & GET /robots.txt
-    G-->>C: 200 OK (Allowed paths, Disallowed paths, Rate limits)
-
-    C->>G: 3. POST /deposits/create (challenge_id, crawler_id)
-    G->>P: Create Order ($0.01 USD, PayPal-Request-Id)
-    P-->>G: Order ID + Approval URL
-    G->>A: Log DEPOSIT_INITIATED
-    G-->>C: 201 Created (deposit_id, provider_order_id, approval_url)
-
-    Note over C,P: In PayPal Sandbox mode, buyer approves order at approval_url
-    P-->>C: Redirect browser to configured return_url with token (order ID)
-    C->>G: 4. GET /deposits/paypal/return?deposit_id=...&token=...
-    G->>G: Match token against persisted deposit order ID
-    G->>P: Capture with stable PayPal-Request-Id; verify COMPLETED status, $0.01, USD, capture_id
-    P-->>G: Capture result
-    G->>A: Log PAYMENT_VERIFIED only after backend validation
-    G-->>C: 200 OK (payment_status=CAPTURED)
-
-    C->>G: 5. POST /sessions/accept-policy (agree_to_terms=true, policy_version="1.0")
-    G->>A: Log POLICY_ACCEPTED & SESSION_ISSUED (token hash only)
-    G-->>C: 201 Created (One-time raw access_token)
-
-    C->>G: 6. GET /gateway/news (Authorization: Bearer <token>)
-    G->>A: Log GATEWAY_ACCESS_ALLOWED (or POLICY_VIOLATION)
-    G-->>C: 200 OK HTML (or 403/429 JSON error)
-
-    C->>G: 7. POST /sessions/complete (Authorization: Bearer <token>)
-    G->>G: Evaluate session history for disqualifying violations
-    alt Compliant Session (0 disqualifying violations)
-        G->>P: POST /v2/payments/captures/{capture_id}/refund
-        P-->>G: Refund COMPLETED (provider_refund_id)
-        G->>A: Log DEPOSIT_REFUNDED
-        G-->>C: 200 OK (deposit_state=REFUNDED, refund_status=REFUNDED)
-    else Violating Session (Disqualified)
-        G->>A: Log DEPOSIT_FORFEITED
-        G-->>C: 200 OK (deposit_state=FORFEITED, policy_decision=FORFEITED_BY_POLICY)
-    end
-```
-
----
-
-## 9. Deposit and Session State Machines
-
-CrawlerTrust separates **inbound payment status**, **server-side policy decision**, and **outbound refund transaction status** so a policy violation is never conflated with a financial transfer and a failed refund never overwrites a captured payment record.
-
-### A. Orthogonal Deposit Status Fields
-
-1. **`payment_status`** (Inbound Deposit Payment):
-   - `PENDING` → `APPROVED` → `CAPTURED`
-   - `PENDING` / `APPROVED` → `FAILED` (if order creation, capture, or amount/currency verification fails)
-   - Once `CAPTURED`, `payment_status` remains `CAPTURED` permanently.
-2. **`policy_decision`** (Accountability Evaluation):
-   - `UNDECIDED` → `ELIGIBLE_FOR_REFUND` (session completed with no disqualifying violations)
-   - `UNDECIDED` → `FORFEITED_BY_POLICY` (session incurred disqualifying violations)
-3. **`refund_status`** (Outbound Refund Operation):
-   - `NOT_REQUESTED` → `REFUND_IN_PROGRESS` → `REFUNDED` (refund confirmed `COMPLETED` by provider)
-   - `REFUND_IN_PROGRESS` → `REFUND_PENDING` (provider returned `PENDING`)
-   - `REFUND_IN_PROGRESS` → `REFUND_FAILED` (upstream refund call failed; `payment_status=CAPTURED` and `provider_capture_id` are preserved for safe retry)
-   - `NOT_REQUESTED` → `NOT_APPLICABLE_FORFEITED` (when `policy_decision == FORFEITED_BY_POLICY`)
-4. **`deposit_state`** (Composite Summary State):
-   - `PENDING` | `APPROVED` | `CAPTURED` | `REFUND_PENDING` | `REFUNDED` | `FORFEITED` | `FAILED`
+- **`payment_status`:** `PENDING` → `APPROVED` → `CAPTURED` (refund mode) or `AUTHORIZED` → `VOIDED` / `CAPTURED` (authorization mode); `FAILED` on order, capture, or verification errors.
+- **`policy_decision`:** `UNDECIDED` → `ELIGIBLE_FOR_REFUND` or `FORFEITED_BY_POLICY`. The decision is recorded before any provider call and never changes afterwards.
+- **`refund_status`:** `NOT_REQUESTED` → `REFUND_IN_PROGRESS` → `REFUNDED` / `REFUND_PENDING` / `REFUND_FAILED`, or `NOT_APPLICABLE_FORFEITED` / `NOT_APPLICABLE_RELEASED`.
+- **`deposit_state` (summary):** `PENDING`, `APPROVED`, `AUTHORIZED`, `CAPTURED`, `REFUND_PENDING`, `REFUNDED`, `RELEASED`, `FORFEITED`, `FAILED`.
 
 ```mermaid
 stateDiagram-v2
     [*] --> PENDING: POST /deposits/create
-    PENDING --> APPROVED: Order Approved
-    PENDING --> CAPTURED: Order Captured & Verified
-    APPROVED --> CAPTURED: POST /deposits/{id}/capture
-    PENDING --> FAILED: Provider Error / Mismatch
-    APPROVED --> FAILED: Capture Error / Mismatch
-    CAPTURED --> REFUND_PENDING: Compliant Completion (Refund Initiated)
-    REFUND_PENDING --> REFUNDED: Provider Refund COMPLETED
-    REFUND_PENDING --> CAPTURED: Provider Refund FAILED (Preserves Capture)
-    CAPTURED --> FORFEITED: Disqualifying Policy Violation
+    PENDING --> APPROVED: Order approved
+    APPROVED --> CAPTURED: Capture verified (refund mode)
+    APPROVED --> AUTHORIZED: Hold verified (authorization mode)
+    PENDING --> FAILED: Provider error or mismatch
+    CAPTURED --> REFUND_PENDING: Compliant completion
+    REFUND_PENDING --> REFUNDED: PayPal refund COMPLETED
+    CAPTURED --> FORFEITED: Disqualifying violation
+    AUTHORIZED --> RELEASED: Compliant completion (hold voided)
+    AUTHORIZED --> FORFEITED: Disqualifying violation (hold captured)
 ```
-
-### B. Session State Machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> ACTIVE: POST /sessions/accept-policy (Verified Deposit)
+    [*] --> ACTIVE: POST /sessions/accept-policy (funded deposit)
     ACTIVE --> COMPLETED: POST /sessions/complete
     ACTIVE --> REVOKED: POST /sessions/revoke
-    ACTIVE --> EXPIRED: TTL Elapsed (session_ttl_seconds)
+    ACTIVE --> EXPIRED: TTL elapsed
 ```
 
----
+Ambiguous provider outcomes (timeouts, 5xx, 409, unreadable responses) are kept pending and reconciled against PayPal's own records before anything is retried, so a refund, void, or capture is never issued twice.
 
-## 10. Policy Enforcement Logic
+## 13. Policy enforcement logic
 
-Every authenticated request to `/gateway/{path}` is evaluated by `PolicyEngine.evaluate_request()` in strict priority order:
+Every authenticated request to `/gateway/{path}` is evaluated in this order:
 
-| Check Order | Condition | Reason Code | HTTP Status | Violation? | Disqualifying? |
+| # | Condition | Reason code | HTTP | Violation | Disqualifying |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | Missing or unknown bearer token | `INVALID_SESSION` | `401` | No | No |
-| **2** | Session was explicitly revoked | `SESSION_REVOKED` | `401` | No | No |
-| **3** | Session TTL has expired | `SESSION_EXPIRED` | `401` | No | No |
-| **4** | Request made after `/sessions/complete` | `SESSION_ALREADY_COMPLETED` | `403` | Yes | No |
-| **5** | Deposit not `CAPTURED` or already forfeited | `DEPOSIT_NOT_ACTIVE` | `402` | No | No |
-| **6** | Session policy version != site policy version | `POLICY_VERSION_MISMATCH` | `403` | No | No |
-| **7** | Path traversal (`..`, `%2e%2e`, `%2f`, `\`, null byte) | `INVALID_PATH` | `403` | Yes | **Yes** |
-| **8** | Path matches `disallowed_paths` (specificity-aware) | `DISALLOWED_PATH` | `403` | Yes | **Yes** |
-| **9** | Sliding window (`3 req / 10s`) exceeded | `RATE_LIMIT_EXCEEDED` | `429` | Yes | **Yes** (at `>= 2` violations) |
-| **10** | Session budget (`10 allowed requests`) exceeded | `MAX_REQUESTS_EXCEEDED` | `429` | Yes | **Yes** (at `>= 1` violation) |
-| **11** | Path not in `allowed_pages.json` | `UNKNOWN_PATH` | `404` | No | No |
-| **12** | Path is in `allowed_paths` and within all limits | `ALLOWED` | `200` | No | No |
+| 1 | Missing or unknown bearer token | `INVALID_SESSION` | 401 | No | No |
+| 2 | Session revoked | `SESSION_REVOKED` | 401 | No | No |
+| 3 | Session expired | `SESSION_EXPIRED` | 401 | No | No |
+| 4 | Request after `/sessions/complete` | `SESSION_ALREADY_COMPLETED` | 403 | Yes | No |
+| 5 | Deposit not funded (captured or authorized) or already forfeited | `DEPOSIT_NOT_ACTIVE` | 402 | No | No |
+| 6 | Session policy version differs from the site's | `POLICY_VERSION_MISMATCH` | 403 | No | No |
+| 7 | Path traversal (`..`, `%2e%2e`, `%2f`, `\`, null byte) | `INVALID_PATH` | 403 | Yes | Yes |
+| 8 | Path matches `disallowed_paths` (most specific rule wins) | `DISALLOWED_PATH` | 403 | Yes | Yes |
+| 9 | Sliding window exceeded (default 3 requests / 10 s) | `RATE_LIMIT_EXCEEDED` | 429 | Yes | Yes, from the 2nd violation |
+| 10 | Session budget exceeded (default 10 allowed requests) | `MAX_REQUESTS_EXCEEDED` | 429 | Yes | Yes |
+| 11 | Path not a known page | `UNKNOWN_PATH` | 404 | No | No |
+| 12 | Allowed path within all limits | `ALLOWED` | 200 | No | No |
 
-**Specificity Precedence**: When evaluating `allowed_paths` vs. `disallowed_paths`, longer (more specific) path rules always take precedence over broader rules, with `disallowed_paths` winning ties. The root path `"/"` matches only exact `"/"` and never acts as a wildcard prefix for unlisted paths.
+Longer (more specific) rules beat broader ones, with `disallowed_paths` winning ties; `/` matches only the home page. Rejected requests are logged with the path exactly as the crawler sent it (for example `/%2e%2e/admin`).
 
----
+## 14. Security and AI safety
 
-## 11. Compliant Crawler Behavior (`client/compliant.py`)
+- Bearer tokens come from `secrets.token_urlsafe(32)`, are stored only as SHA-256 hashes, and are compared in constant time.
+- Deposit amounts are set by the server and verified with PayPal; clients cannot self-certify payment.
+- The gateway inspects the raw ASGI path, so encoded and double-encoded traversal is caught before any content lookup; disallowed page bodies are never loaded into the serving map.
+- Audit logs scrub tokens and secrets; the dashboard feed omits event details because they can contain PayPal checkout URLs; all dashboard text from crawlers is rendered as text, never HTML.
+- AI-specific safeguards are listed in [section 3](#3-where-the-ai-is): the model never decides money movements, page content is marked untrusted, the bearer token is never sent to the model, spending is capped in code, and AI cost is bounded.
 
-`client/compliant.py` demonstrates a responsible AI crawler:
-1. Sends `GET /gateway/news` without a token and receives the `402 Payment Required` challenge.
-2. Fetches `GET /policies` and `GET /robots.txt` to inspect the site's allowed paths (`["/", "/news", "/news/technology", "/news/economy"]`), disallowed paths, and rate limits (`3 requests / 10s`).
-3. Creates a deposit (`POST /deposits/create`), captures (`POST /deposits/{id}/capture`), and verifies it (`POST /deposits/{id}/verify`).
-4. Accepts the policy (`POST /sessions/accept-policy`) and receives a bearer token.
-5. Requests allowed paths while pacing its requests so it never exceeds `rate_limit_requests` per window or `max_requests_per_session`.
-6. Calls `POST /sessions/complete` to finish the session and trigger refund evaluation.
-7. Displays the final `REFUNDED` deposit state (`policy_decision=ELIGIBLE_FOR_REFUND`, `refund_status=REFUNDED`) and session audit summary.
+## 15. Testing
 
----
+```bash
+pytest -q
+```
 
-## 12. Violating Crawler Behavior (`client/violating.py`)
+The suite (170 tests) needs no network access or credentials; PayPal and Claude are replaced by mocked transports and scripted fakes.
 
-`client/violating.py` demonstrates an abusive or misconfigured crawler:
-1. Completes the same `402` challenge, deposit payment verification, and policy acceptance flow to obtain a valid session token.
-2. Accesses an allowed path (`GET /gateway/news` -> `200 OK`).
-3. Deliberately attempts to access restricted paths (`GET /gateway/admin`, `GET /gateway/private/customer-data`) and an encoded path traversal vector (`GET /gateway/%2e%2e/admin`), receiving `403 Forbidden` (`DISALLOWED_PATH` and `INVALID_PATH`).
-4. Rapid-fires a burst of requests to `/gateway/news/technology` without pacing, triggering `429 Too Many Requests` (`RATE_LIMIT_EXCEEDED`).
-5. Calls `POST /sessions/complete` and `POST /deposits/{id}/refund` to demand its deposit back.
-6. The backend inspects the session's recorded violations, denies the refund, and marks the deposit `FORFEITED` (`policy_decision=FORFEITED_BY_POLICY`, `refund_status=NOT_APPLICABLE_FORFEITED`, while preserving `payment_status=CAPTURED`).
-7. Attempts to reuse the completed session token on `GET /gateway/news` and is rejected with `403 Forbidden` (`SESSION_ALREADY_COMPLETED`).
+| File | Covers |
+| :--- | :--- |
+| `test_gateway.py`, `test_policy_engine.py`, `test_rate_limiter.py` | 402 challenges, path rules, traversal vectors, rate limits, budgets |
+| `test_violation_reporting.py` | Attempted paths in violation records; no duplicate disqualification reasons |
+| `test_deposits.py`, `test_audit.py` | Challenge reuse, ownership, idempotent completion, audit scoping and scrubbing |
+| `test_payments.py` | PayPal Sandbox provider: OAuth, orders, callbacks, refunds, reconciliation, recovery |
+| `test_authorization_settlement.py` | Authorization holds: release, forfeiture, retries, and the PayPal authorize/void/capture paths |
+| `test_ai_features.py` | Explainer citations and fallbacks, cost guard, policy assistant validation, Claude request shape and error mapping |
+| `test_agent.py` | AI agent against the real gateway with a scripted model: refund, forfeiture, spending cap, refusal, token never sent to the model |
+| `test_dashboard.py`, `test_compliant_cli.py` | Console data, access rules, KPIs; CLI output |
 
----
+## 16. Persistence and troubleshooting
 
-## 13. PayPal Sandbox Integration Architecture
+- State is kept in `storage/payments_db.json` and `storage/sessions_db.json` (written atomically with `fsync` and `os.replace`) and `storage/audit.jsonl` (append-only). Expired sessions are marked on startup; corrupted files stop startup with `PersistenceCorruptionError` rather than silently resetting.
+- Run a **single** server process: state and rate limits are held in that process.
 
-`PayPalSandboxProvider` (`server/services/payment_service.py`) integrates directly with the official PayPal REST APIs over `httpx.AsyncClient`:
-1. **OAuth 2.0 Client Credentials**: `POST /v1/oauth2/token` using HTTP Basic Auth (`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`). Tokens are cached in memory until 60 seconds before expiry.
-2. **Order Creation**: `POST /v2/checkout/orders` with `intent: "CAPTURE"`, exact server-configured `Decimal` deposit amount and currency, a deterministic `PayPal-Request-Id` header (`ord_req_<deposit_id>`), and `payment_source.paypal.experience_context.return_url` / `cancel_url`. These callback URLs use the configured `APP_PUBLIC_URL` and include the existing `deposit_id`; PayPal supplies the order ID as `token` when returning. Extracts the HATEOAS `approve` URL for payer approval.
-3. **Order Capture**: `POST /v2/checkout/orders/{order_id}/capture` with `PayPal-Request-Id: cap_req_<deposit_id>`. Detects `ORDER_NOT_APPROVED` (returning HTTP `409 Conflict` with `approval_url`) and `ORDER_ALREADY_CAPTURED` (reconciling via order lookup).
-4. **Authoritative Server-Side Verification**: `GET /v2/checkout/orders/{order_id}` verifies:
-   - Order status is `COMPLETED` and capture status is `COMPLETED`.
-   - Captured amount (`Decimal`) exactly matches `deposit.required_amount`.
-   - Captured currency matches `deposit.currency`.
-   - `capture_id` is present.
-5. **Idempotent Capture Refund**: `POST /v2/payments/captures/{capture_id}/refund` with `PayPal-Request-Id: ref_req_<deposit_id>`. Before issuing or retrying a refund, the provider reconciles against `GET /v2/checkout/orders/{order_id}` to verify whether a refund was already created before a timeout or crash.
-
-The browser return callback checks that PayPal's `token` matches the order ID persisted for that deposit, then invokes the existing backend capture path. It does not treat the redirect itself as payment proof. Buyer cancellation leaves the deposit uncaptured. Configure `APP_PUBLIC_URL` as the base URL reachable by the buyer's browser and PayPal; the local default is for same-machine development only.
-
-For a refund that PayPal completed but CrawlerTrust conservatively left pending (for example, because the initial refund response omitted verifiable details), an administrator can call `POST /deposits/{deposit_id}/reconcile-refund` with the configured `X-Admin-Token`. This performs only `GET /v2/payments/refunds/{refund_id}` for the already-persisted provider refund ID. It never submits or retries a refund; local state changes to `REFUNDED` only after the returned ID, explicit `COMPLETED` status, exact amount, and currency all validate.
-
----
-
-## 14. PayPal Developer Account and Sandbox Setup Instructions
-
-To run CrawlerTrust in `PAYMENT_MODE=paypal_sandbox`:
-1. Sign in to the [PayPal Developer Dashboard](https://developer.paypal.com/).
-2. Navigate to **Apps & Credentials** (ensure the **Sandbox** toggle is active).
-3. Click **Create App**, give it a name (e.g., `CrawlerTrust-Demo`), and select **Merchant**.
-4. Copy the **Client ID** and **Secret** into your `.env` file as `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`.
-5. Navigate to **Testing Tools > Sandbox Accounts** and note your **Personal (Buyer)** Sandbox account email and password (used to approve the checkout link in your browser during the Sandbox demo).
-
----
-
-## 15. Environment Variable Reference
-
-Copy `.env.example` to `.env`. All variables are validated at startup via `server/config.py`:
-
-| Variable | Default | Description |
+| Symptom | Cause | Fix |
 | :--- | :--- | :--- |
-| `APP_ENV` | `development` | `development`, `test`, or `production` |
-| `APP_HOST` | `127.0.0.1` | Bind host for Uvicorn |
-| `APP_PORT` | `8000` | Bind port for Uvicorn |
-| `APP_PUBLIC_URL` | `http://127.0.0.1:8000` | Canonical externally reachable app URL used to construct PayPal return/cancel callback URLs |
-| `PAYMENT_MODE` | `mock` | `mock` (simulated) or `paypal_sandbox` (live PayPal Sandbox APIs) |
-| `PAYPAL_BASE_URL` | `https://api-m.sandbox.paypal.com` | PayPal Sandbox REST API base URL |
-| `PAYPAL_CLIENT_ID` | *(empty)* | PayPal Sandbox OAuth2 Client ID |
-| `PAYPAL_CLIENT_SECRET` | *(empty)* | PayPal Sandbox OAuth2 Client Secret |
-| `PAYPAL_CURRENCY` | `USD` | 3-letter ISO currency code |
-| `PAYPAL_TIMEOUT_SECONDS` | `15.0` | Timeout in seconds for outbound PayPal HTTPX requests |
-| `DEPOSIT_AMOUNT` | `0.01` | Required refundable deposit amount (positive `Decimal`) |
-| `SESSION_TTL_SECONDS` | `1800` | Session bearer token lifetime in seconds |
-| `CHALLENGE_TTL_SECONDS` | `600` | 402 challenge expiration window in seconds |
-| `MAX_REQUESTS_PER_SESSION` | `10` | Maximum allowed content requests per session |
-| `RATE_LIMIT_REQUESTS` | `3` | Maximum requests allowed per sliding window |
-| `RATE_LIMIT_WINDOW_SECONDS` | `10` | Sliding window duration in seconds |
-| `AUDIT_LOG_PATH` | `storage/audit.jsonl` | Path to append-only JSONL audit event file |
-| `PAYMENTS_DB_PATH` | `storage/payments_db.json` | Path to atomic deposit/challenge snapshot file |
-| `SESSIONS_DB_PATH` | `storage/sessions_db.json` | Path to atomic session snapshot file |
-| `ADMIN_API_TOKEN` | *(empty)* | Optional secret token for global `/audit/*` and admin revocation via `X-Admin-Token` (required when `APP_ENV=production`) |
-| `LOG_LEVEL` | `INFO` | Python operational logging level |
+| `409 payer_approval_required` on capture | Sandbox buyer has not approved the order | Open the `approval_url`, approve with the Sandbox buyer account, retry |
+| `502` on `/deposits/create` | Sandbox mode without valid PayPal credentials | Set `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`, or use `PAYMENT_MODE=mock` |
+| Console shows "Enter the admin token" | `DASHBOARD_PUBLIC` is off | Enter `ADMIN_API_TOKEN` in the console, or set `DASHBOARD_PUBLIC=true` for a demo |
+| Explanations say "rule-based" | No Claude credentials on the server | Set `ANTHROPIC_API_KEY` and restart |
+| `/policies/draft` returns 503 | Same as above | Set `ANTHROPIC_API_KEY` |
+| Agent exits with "No Claude credentials found" | No key in the agent's environment | Export `ANTHROPIC_API_KEY` |
+| `PersistenceCorruptionError` on startup | A file in `storage/` was edited into invalid JSON | Fix or delete it and restart |
 
----
+## 17. Limitations and roadmap
 
-## 16. Local Installation Instructions (Windows PowerShell & Linux/macOS)
+**Known limitations**
 
-### Windows PowerShell
+- A bearer token proves continuity of a paid session, not the real-world identity of an agent.
+- JSON persistence and in-memory rate limits support a single process only.
+- In PayPal Sandbox mode a person approves each deposit in the browser; there is no saved payment method for the agent yet.
+- Authorization settlement is covered by mocked-transport tests built from PayPal's published API specifications, but has not yet been exercised against the live Sandbox.
+- AI agent behaviour depends on the model; the scripted crawlers give deterministic results for rehearsals.
 
-```powershell
-cd path\to\Paypal-hackathon-idea-1
-Copy-Item .env.example .env
-```
+**Roadmap**
 
-### Linux / macOS
+1. One-time buyer consent with a saved PayPal payment method and a spending cap, so agents pay autonomously.
+2. Reputation-based deposits: a compliance history lowers an agent's future deposit.
+3. Optional pay-per-page fee captured from the hold, so publishers also earn from good crawlers.
+4. PostgreSQL and Redis for multi-instance deployments; PayPal webhooks for settlement events.
+5. Cryptographic agent identity (HTTP Message Signatures, RFC 9421) bound to deposit sessions.
 
-```bash
-cd /path/to/Paypal-hackathon-idea-1
-cp .env.example .env
-```
+## 18. Example API responses
 
----
+**402 challenge** (`GET /gateway/news` without a token):
 
-## 17. Virtual Environment Creation and Dependency Installation
-
-### Windows PowerShell
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-### Linux / macOS
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
----
-
-## 18. Server Startup Command
-
-Run the FastAPI gateway in **Terminal 1** from the repository root:
-
-```powershell
-python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
-```
-
-Verify the server is healthy:
-
-```powershell
-curl http://127.0.0.1:8000/health
-```
-
----
-
-## 19. Instructions for Running Each Crawler in Separate Terminals
-
-With the FastAPI server running in **Terminal 1**, open **Terminal 2** in the repository root (with `.venv` activated):
-
-### Run Client A (Compliant Crawler)
-
-```powershell
-python -m client.compliant --base-url http://127.0.0.1:8000
-```
-
-### Run Client B (Violating Crawler)
-
-```powershell
-python -m client.violating --base-url http://127.0.0.1:8000
-```
-
-Optional CLI flags supported by both scripts:
-- `--crawler-id crawler-custom-01`: Specify an explicit crawler identifier.
-- `--max-requests 4`: Override the number of content requests issued.
-- `--payment-mode mock` (or `paypal_sandbox`): Assert that the server is running in the expected payment mode.
-- `--non-interactive`: Skip the interactive browser approval prompt in Sandbox mode.
-
----
-
-## 20. Mock-Payment Demonstration
-
-By default, `.env.example` sets `PAYMENT_MODE=mock`. In mock mode:
-- Every deposit response and audit record explicitly sets `"payment_mode": "mock"` and `"simulated": true`.
-- Mock mode never claims to be a real PayPal transaction, while exercising the exact same state machines, challenge binding, SHA-256 token hashing, policy engine, sliding-window rate limiter, and refund/forfeiture rules as Sandbox mode.
-
----
-
-## 21. Real PayPal Sandbox Checkout and Refund Demonstration
-
-PayPal's standard Orders API v2 creates checkout orders in `CREATED` status that require **payer approval** before capture (unless the merchant has a pre-negotiated enterprise reference transaction / vaulted payment agreement). CrawlerTrust implements the standard Sandbox flow transparently:
-
-1. In `.env`, set:
-   ```dotenv
-   PAYMENT_MODE=paypal_sandbox
-   APP_PUBLIC_URL=https://your-public-crawlertrust-host.example
-   PAYPAL_CLIENT_ID=your_sandbox_client_id
-   PAYPAL_CLIENT_SECRET=your_sandbox_client_secret
-   ```
-2. Restart the FastAPI server in **Terminal 1**.
-3. Run `python -m client.compliant --base-url http://127.0.0.1:8000` in **Terminal 2**.
-4. When `/deposits/create` returns the PayPal Sandbox `approval_url` (`https://www.sandbox.paypal.com/checkoutnow?token=...`), the CLI prints the URL and pauses:
-   - Open the `approval_url` in your browser.
-   - Log in with your PayPal Sandbox Personal (Buyer) account and click **Complete Purchase / Approve**.
-   - Return to **Terminal 2** and press **Enter**.
-5. PayPal redirects the browser to the configured return callback, which matches the returned order ID to the persisted deposit and runs the existing capture and verification flow. The backend verifies the exact configured deposit (default `0.01 USD`) before access is granted. The CLI's existing capture/verify requests remain idempotent if also used. The compliant crawl can then complete and execute a Sandbox refund via `POST /v2/payments/captures/{capture_id}/refund`.
-
----
-
-## 22. Example API Requests and Responses
-
-### A. Initial Unauthenticated Request (`GET /gateway/news` → `HTTP 402`)
-
-**Request:**
-```http
-GET /gateway/news HTTP/1.1
-Host: 127.0.0.1:8000
-X-Crawler-Id: crawler-demo-01
-```
-
-**Response (`402 Payment Required`):**
 ```json
 {
   "error": "payment_required",
@@ -482,11 +378,7 @@ X-Crawler-Id: crawler-demo-01
   "crawler_id": "crawler-demo-01",
   "site_id": "demo-news-site",
   "policy_version": "1.0",
-  "deposit": {
-    "amount": "0.01",
-    "currency": "USD",
-    "refundable": true
-  },
+  "deposit": { "amount": "0.01", "currency": "USD", "refundable": true },
   "rules_summary": {
     "allowed_paths": ["/", "/news", "/news/technology", "/news/economy"],
     "disallowed_paths": ["/admin", "/private/customer-data", "/internal/reports"],
@@ -504,7 +396,7 @@ X-Crawler-Id: crawler-demo-01
 }
 ```
 
-### B. Disallowed Path Rejection (`GET /gateway/admin` → `HTTP 403`)
+**Disallowed path** (`GET /gateway/admin`, HTTP 403):
 
 ```json
 {
@@ -523,7 +415,7 @@ X-Crawler-Id: crawler-demo-01
 }
 ```
 
-### C. Rate Limit Rejection (`HTTP 429 Too Many Requests`)
+**Rate limit** (HTTP 429, with a `Retry-After` header):
 
 ```json
 {
@@ -544,127 +436,4 @@ X-Crawler-Id: crawler-demo-01
 
 ---
 
-## 23. Swagger UI Usage
-
-When the FastAPI server is running, interactive OpenAPI documentation is available at:
-- **Swagger UI**: `http://127.0.0.1:8000/docs`
-- **ReDoc**: `http://127.0.0.1:8000/redoc`
-
-All endpoints, request bodies, response schemas, and status codes (`200`, `201`, `400`, `401`, `402`, `403`, `404`, `409`, `429`, `502`, `504`) are documented.
-
----
-
-## 24. Automated Testing Commands
-
-Run the full automated test suite (requires no live network access or PayPal credentials):
-
-```powershell
-pytest -v
-```
-
-The test suite (`tests/`) verifies:
-- `test_gateway.py`: 402 challenges, allowed/disallowed/unknown paths, URL-encoded path traversal (`%2e%2e`, `%252e`, `%2f`, `%5c`), rate limiting, and session revocation.
-- `test_policy_engine.py`: Rule specificity precedence, session budgets, and policy version checks.
-- `test_rate_limiter.py`: Monotonic sliding window calculation and recovery with a deterministic `FakeClock`.
-- `test_deposits.py`: Single-use challenges, challenge expiration, cross-crawler ownership isolation, concurrent completion idempotency, and separated `payment_status` / `policy_decision` / `refund_status` outcomes.
-- `test_payments.py`: Mocked `PayPalSandboxProvider` OAuth2, checkout return/cancel URLs and callbacks, callback order/deposit matching, capture verification and repeat handling, amount/currency mismatch rejection (`402`), upstream timeouts (`504`), and refund recovery.
-- `test_audit.py`: Append-only JSONL logging, token/secret scrubbing, session-scoped vs. admin-scoped authorization, server restart recovery, and corrupted JSON detection.
-
----
-
-## 25. Audit Log Inspection
-
-Audit events are written as one JSON object per line to `storage/audit.jsonl`.
-
-Inspect the log via PowerShell:
-```powershell
-Get-Content storage/audit.jsonl | Select-Object -Last 10
-```
-
-Or query via the API:
-- **Session-scoped** (using a crawler's own `Authorization: Bearer <token>`):
-  ```powershell
-  curl -H "Authorization: Bearer <crawler_token>" http://127.0.0.1:8000/audit/summary
-  ```
-- **Global Admin scope** (when `ADMIN_API_TOKEN` is set in `.env`):
-  ```powershell
-  curl -H "X-Admin-Token: <your_admin_api_token>" http://127.0.0.1:8000/audit/events
-  ```
-
----
-
-## 26. Persistence Behavior and Restart Considerations
-
-- **Atomic Snapshots**: `storage/payments_db.json` and `storage/sessions_db.json` are written to temporary `.tmp` files, flushed with `os.fsync()`, and atomically swapped via `os.replace()`.
-- **Startup Recovery**: On server startup, CrawlerTrust loads `audit.jsonl`, `payments_db.json`, and `sessions_db.json`. Any `ACTIVE` session whose `expires_at` timestamp has passed is automatically transitioned to `EXPIRED`. Revoked and completed sessions remain revoked/completed and are never resurrected.
-- **Corruption Detection**: If any persistence file contains malformed JSON or invalid schema records, startup raises `PersistenceCorruptionError` immediately rather than silently resetting security state.
-
----
-
-## 27. Troubleshooting Common Errors
-
-| Symptom / HTTP Status | Cause | Resolution |
-| :--- | :--- | :--- |
-| `409 Conflict: payer_approval_required` on `/capture` | In `paypal_sandbox` mode, the buyer has not yet approved the order in the browser. | Open the `approval_url` returned by `/deposits/create` in a browser, log in with a PayPal Sandbox buyer account, approve the payment, and retry `/capture`. |
-| `502 Bad Gateway` on `/deposits/create` | `PAYMENT_MODE=paypal_sandbox` is set without valid `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`. | Add valid PayPal Sandbox credentials to `.env` or set `PAYMENT_MODE=mock`. |
-| `401 Unauthorized` on `/audit/summary` | Missing `Authorization: Bearer <token>` or `X-Admin-Token`. | Supply the crawler's session Bearer token or configure `ADMIN_API_TOKEN` in `.env` and pass `X-Admin-Token`. |
-| `PersistenceCorruptionError` on startup | A file in `storage/` was manually edited into invalid JSON. | Fix or delete the corrupted `.json`/`.jsonl` file in `storage/` and restart. |
-
----
-
-## 28. Security Considerations and Limitations
-
-### Security Practices Implemented
-- **Zero Plaintext Token Storage**: Session bearer tokens are generated with `secrets.token_urlsafe(32)` and stored exclusively as SHA-256 hex digests; authentication uses `hmac.compare_digest`.
-- **Sanitized Audit Logs**: Raw bearer tokens, PayPal client secrets, and admin tokens are scrubbed before writing to `audit.jsonl`.
-- **Server-Controlled Amounts & Authoritative Verification**: Clients cannot supply deposit amounts or self-certify payment status.
-- **Strict Path Normalization**: Raw ASGI `raw_path` inspection blocks percent-encoded dots (`%2e%2e`), double encoding (`%252e`), encoded slashes (`%2f`), backslashes (`\`, `%5c`), and dot-segments before touching `ContentService`.
-- **Isolated Disallowed Content**: `ContentService` does not load disallowed page bodies into the gateway serving map and refuses to serve content unless `PolicyDecision.allowed` is `True`.
-
-### Prototype Limitations
-1. **Bearer Token vs. Cryptographic Agent Identity**: A bearer token proves continuity of a deposit session, not real-world cryptographic identity of an AI agent (such as Web Bot Auth / HTTP Message Signatures / mTLS).
-2. **Single-Process JSON Persistence**: `asyncio.Lock` and atomic file replacement protect state within a **single Uvicorn worker process**. Running multiple workers (`--workers > 1`) against local JSON files is not supported.
-3. **Local Append-Only File**: `storage/audit.jsonl` is append-only at the application layer but is not cryptographically tamper-proof against a privileged OS user.
-
----
-
-## 29. Production-Readiness Roadmap
-
-To evolve CrawlerTrust from a hackathon prototype into production infrastructure:
-1. **Transactional Database**: Replace `payments_db.json` and `sessions_db.json` with PostgreSQL using serializable/row-locked transactions (`SELECT ... FOR UPDATE`).
-2. **Distributed Rate Limiting**: Replace in-memory deques with Redis Lua token-bucket / sliding-window counters shared across gateway nodes.
-3. **Cryptographic Crawler Identity**: Combine deposit sessions with RFC 9421 HTTP Message Signatures or mutual TLS (mTLS) so credentials cannot be shared across unrelated hosts.
-4. **Asynchronous Webhook & Job Reconciliation**: Process PayPal Webhooks (`PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.REFUNDED`) with signature verification and a durable background worker queue.
-5. **Tamper-Evident Audit Log**: Anchor hash-chained audit events to an immutable log store or SIEM.
-6. **Legal & Dispute Framework**: Establish clear Terms of Service governing deposit forfeiture conditions and automated dispute resolution.
-
----
-
-## 30. Hackathon Demonstration Script
-
-### Step 1 — Start the Gateway (Terminal 1)
-```powershell
-python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
-```
-
-### Step 2 — Run Compliant Crawler (Terminal 2)
-```powershell
-python -m client.compliant --base-url http://127.0.0.1:8000
-```
-**Expected Output Highlights:**
-- Receives `HTTP 402` challenge (`$0.01 USD`).
-- Reads `/policies` and `/robots.txt`.
-- Completes deposit creation, capture, verification, and policy acceptance.
-- Crawls `/gateway/`, `/gateway/news`, and `/gateway/news/technology` with `HTTP 200`.
-- Completes session and receives `deposit_state: REFUNDED` (`policy_decision: ELIGIBLE_FOR_REFUND`, `refund_status: REFUNDED`).
-
-### Step 3 — Run Violating Crawler (Terminal 2)
-```powershell
-python -m client.violating --base-url http://127.0.0.1:8000
-```
-**Expected Output Highlights:**
-- Completes onboarding and accesses `/gateway/news` (`HTTP 200`).
-- Attempts `/gateway/admin`, `/gateway/private/customer-data`, and `/gateway/%2e%2e/admin` → all blocked with `HTTP 403` (`DISALLOWED_PATH` / `INVALID_PATH`, `disqualifying=True`).
-- Sends rapid burst to `/gateway/news/technology` → blocked with `HTTP 429` (`RATE_LIMIT_EXCEEDED`).
-- Requests completion and refund → backend denies refund and records `deposit_state: FORFEITED` (`payment_status: CAPTURED`, `policy_decision: FORFEITED_BY_POLICY`, `refund_status: NOT_APPLICABLE_FORFEITED`).
-- Post-completion reuse attempt on `/gateway/news` → blocked with `HTTP 403` (`SESSION_ALREADY_COMPLETED`).
+Licensed under the MIT License. The original CrawlerPal concept document is archived in [`docs/history/`](docs/history/crawler_pal_arch.md).
