@@ -360,17 +360,32 @@ async def explain_deposit(
         claimed_challenge_id=None,
     )
 
-    # Crawlers can only trigger an AI explanation once the outcome is final, so they
-    # cannot run up model usage by interleaving requests and explanation calls.
-    ai_allowed = use_ai and (is_admin or deposit.deposit_state in FINAL_DEPOSIT_STATES)
+    return await build_deposit_explanation(
+        container, deposit, use_ai=use_ai, privileged=is_admin
+    )
+
+
+async def build_deposit_explanation(
+    container: AppContainer,
+    deposit: DepositRecord,
+    *,
+    use_ai: bool,
+    privileged: bool,
+) -> DepositExplanationResponse:
+    """
+    Explain a deposit from its audit evidence. Unprivileged callers can only trigger an
+    AI explanation once the outcome is final, so they cannot run up model usage by
+    interleaving requests and explanation calls; results are cached per deposit state.
+    """
+    ai_allowed = use_ai and (privileged or deposit.deposit_state in FINAL_DEPOSIT_STATES)
     skip_reason: Optional[str] = None
     if use_ai and not ai_allowed:
         skip_reason = (
             "AI explanations are generated once the deposit outcome is final; "
             "showing a rule-based explanation."
         )
-    session = await container.session_manager.get_session_by_deposit(deposit_id)
-    events = await container.audit_logger.get_events(deposit_id=deposit_id, limit=0)
+    session = await container.session_manager.get_session_by_deposit(deposit.deposit_id)
+    events = await container.audit_logger.get_events(deposit_id=deposit.deposit_id, limit=0)
     return await container.explainer.explain(
         deposit=deposit,
         session=session,

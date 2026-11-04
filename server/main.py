@@ -9,8 +9,9 @@ from typing import AsyncIterator, Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-from server.api import audit, deposits, gateway, policies, sessions
+from server.api import audit, dashboard, deposits, gateway, policies, sessions
 from server.config import Settings, load_settings_from_env
 from server.dependencies import AppContainer
 from server.services.ai_client import TextGenerator
@@ -120,6 +121,8 @@ def create_app(
     app.include_router(sessions.router)
     app.include_router(policies.router)
     app.include_router(audit.router)
+    app.include_router(dashboard.router)
+    app.mount("/static", StaticFiles(directory=dashboard.STATIC_DIR), name="static")
 
     return app
 

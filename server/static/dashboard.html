@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CrawlerTrust Console</title>
+  <meta name="description" content="Publisher console for CrawlerTrust: AI crawler sessions, refundable PayPal deposits, policy violations, and AI explanations.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%232a78d6'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
+          integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
+          crossorigin="anonymous" defer></script>
+  <script src="/static/dashboard.js" defer></script>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <h1>CrawlerTrust publisher console</h1>
+      <p id="site-line">Refundable PayPal deposits that keep AI crawlers accountable</p>
+      <div class="badges" id="badges" aria-label="Gateway configuration"></div>
+    </div>
+    <div class="controls">
+      <form class="token-form" id="token-form" autocomplete="off">
+        <input type="password" id="admin-token" placeholder="Admin token" aria-label="Admin token">
+        <button type="submit">Use token</button>
+      </form>
+      <button type="button" id="theme-toggle" aria-label="Switch color theme">Theme: system</button>
+    </div>
+  </header>
+
+  <section class="banner" id="banner" role="status" hidden></section>
+
+  <div class="filter-row">
+    <input type="search" id="quick-filter" placeholder="Filter tables by crawler, path, state..." aria-label="Filter all tables">
+    <label class="toggle"><input type="checkbox" id="auto-refresh" checked> Live refresh</label>
+    <span class="updated" id="updated">Waiting for data...</span>
+  </div>
+
+  <section class="kpis" id="kpis" aria-label="Key metrics"></section>
+
+  <div class="layout">
+    <div class="col-main">
+      <section class="card" aria-labelledby="deposits-title">
+        <div class="card-head">
+          <div>
+            <h2 id="deposits-title">Deposits</h2>
+            <p class="card-sub">Each AI crawler session is backed by a refundable PayPal deposit. Select a row to see why it was returned or kept.</p>
+          </div>
+        </div>
+        <div id="grid-deposits" class="grid grid-deposits"></div>
+      </section>
+
+      <section class="card" aria-labelledby="sessions-title">
+        <div class="card-head">
+          <div>
+            <h2 id="sessions-title">Crawler sessions</h2>
+            <p class="card-sub">Requests and violations counted by the gateway for every paid session.</p>
+          </div>
+        </div>
+        <div id="grid-sessions" class="grid grid-sessions"></div>
+      </section>
+
+      <section class="card" aria-labelledby="events-title">
+        <div class="card-head">
+          <div>
+            <h2 id="events-title">Live audit feed</h2>
+            <p class="card-sub">Append-only gateway, payment, and settlement events, newest first.</p>
+          </div>
+        </div>
+        <div id="grid-events" class="grid grid-events"></div>
+      </section>
+    </div>
+
+    <aside class="col-side">
+      <section class="card" aria-labelledby="chart-title">
+        <div class="card-head">
+          <div>
+            <h2 id="chart-title">Policy violations by reason</h2>
+            <p class="card-sub">Blocked requests that counted as violations, all sessions.</p>
+          </div>
+          <button type="button" class="link" id="chart-view-toggle" aria-pressed="false">Show as table</button>
+        </div>
+        <div id="violations-chart"></div>
+      </section>
+
+      <section class="card" aria-labelledby="explain-title" id="explain-card">
+        <div class="card-head">
+          <div>
+            <h2 id="explain-title">Why this outcome</h2>
+            <p class="card-sub" id="explain-sub">Select a deposit to explain its refund or forfeiture.</p>
+          </div>
+        </div>
+        <div id="explanation"><p class="empty">No deposit selected.</p></div>
+      </section>
+
+      <section class="card assistant" aria-labelledby="assistant-title">
+        <div class="card-head">
+          <div>
+            <h2 id="assistant-title">Policy assistant</h2>
+            <p class="card-sub">Describe your crawling terms in plain English; Claude drafts the machine-readable policy. Drafts are validated and never applied automatically.</p>
+          </div>
+        </div>
+        <label for="terms" class="hint">Publisher terms</label>
+        <textarea id="terms">AI crawlers may read our home page and the news sections. The admin area, member profiles, and internal reports are off limits. Allow at most 5 requests every 10 seconds and 20 requests per visit. Ask for a 25 cent refundable deposit.</textarea>
+        <div class="assistant-actions">
+          <button type="button" class="primary" id="draft-button">Draft policy with Claude</button>
+          <span class="hint" id="draft-hint">Requires the admin token.</span>
+        </div>
+        <div class="assistant-result" id="draft-result"></div>
+      </section>
+    </aside>
+  </div>
+
+  <footer>
+    CrawlerTrust gateway ·
+    <a href="/docs">API docs</a> ·
+    <a href="/policies">Policy JSON</a> ·
+    <a href="/robots.txt">robots.txt</a> ·
+    <a href="/health">Health</a>
+  </footer>
+</div>
+<div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+</body>
+</html>

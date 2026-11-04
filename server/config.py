@@ -52,6 +52,8 @@ class Settings(BaseModel):
     sessions_db_path: Path = Field(default=Path("storage/sessions_db.json"))
 
     admin_api_token: str = Field(default="")
+    # Read-only publisher dashboard without the admin token (for demo deployments only).
+    dashboard_public: bool = Field(default=False)
     log_level: str = Field(default="INFO")
 
     # Publisher-side AI (Claude). Credentials come from the Anthropic SDK's
@@ -163,6 +165,7 @@ def load_settings_from_env() -> Settings:
         payments_db_path=Path(os.getenv("PAYMENTS_DB_PATH", "storage/payments_db.json")),
         sessions_db_path=Path(os.getenv("SESSIONS_DB_PATH", "storage/sessions_db.json")),
         admin_api_token=os.getenv("ADMIN_API_TOKEN", ""),
+        dashboard_public=_env_bool("DASHBOARD_PUBLIC", False),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         ai_enabled=_env_bool("AI_ENABLED", True),
         ai_model=os.getenv("AI_MODEL", "claude-opus-5-5"),

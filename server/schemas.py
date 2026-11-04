@@ -539,6 +539,83 @@ class PolicyDraftResponse(BaseModel):
     )
 
 
+class DashboardKpis(BaseModel):
+    sessions_total: int
+    sessions_active: int
+    deposits_total: int
+    deposits_held: int
+    deposits_returned: int
+    deposits_forfeited: int
+    deposits_needing_attention: int
+    amount_returned: str
+    amount_forfeited: str
+    currency: str
+    gateway_requests_allowed: int
+    gateway_requests_rejected: int
+    policy_violations: int
+    violations_by_reason: dict[str, int]
+
+
+class DashboardDepositRow(BaseModel):
+    deposit_id: str
+    crawler_id: str
+    session_id: Optional[str] = None
+    amount: str
+    currency: str
+    payment_mode: PaymentMode
+    settlement_mode: SettlementMode
+    deposit_state: DepositState
+    payment_status: PaymentStatus
+    policy_decision: PolicyDecisionStatus
+    refund_status: RefundTransactionStatus
+    created_at: str
+    updated_at: str
+
+
+class DashboardSessionRow(BaseModel):
+    session_id: str
+    crawler_id: str
+    deposit_id: str
+    status: SessionStatus
+    total_requests: int
+    allowed_requests: int
+    rejected_requests: int
+    total_violations: int
+    disqualified: bool
+    created_at: str
+    completed_at: Optional[str] = None
+
+
+class DashboardEventRow(BaseModel):
+    """Audit event without its details payload (details can hold checkout URLs)."""
+
+    event_id: str
+    timestamp: str
+    event_type: str
+    crawler_id: Optional[str] = None
+    session_id: Optional[str] = None
+    deposit_id: Optional[str] = None
+    path: Optional[str] = None
+    reason_code: Optional[str] = None
+    allowed: Optional[bool] = None
+
+
+class DashboardDataResponse(BaseModel):
+    site_id: str
+    site_name: str
+    policy_version: str
+    payment_mode: PaymentMode
+    settlement_mode: SettlementMode
+    ai_available: bool
+    ai_model: str
+    access: Literal["admin", "public"]
+    kpis: DashboardKpis
+    deposits: list[DashboardDepositRow]
+    sessions: list[DashboardSessionRow]
+    events: list[DashboardEventRow]
+    generated_at: str
+
+
 class AuditSummaryResponse(BaseModel):
     scope: Literal["global", "session"]
     scoped_session_id: Optional[str] = None
