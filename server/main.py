@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from server.api import audit, deposits, gateway, policies, sessions
 from server.config import Settings, load_settings_from_env
 from server.dependencies import AppContainer
+from server.services.ai_client import TextGenerator
 from server.services.payment_service import PaymentProvider
 from server.services.rate_limiter import SlidingWindowRateLimiter
 
@@ -23,6 +24,7 @@ def create_app(
     settings: Optional[Settings] = None,
     payment_provider: Optional[PaymentProvider] = None,
     rate_limiter: Optional[SlidingWindowRateLimiter] = None,
+    ai_generator: Optional[TextGenerator] = None,
 ) -> FastAPI:
     """Create and configure the CrawlerTrust FastAPI application."""
     resolved_settings = settings or load_settings_from_env()
@@ -35,6 +37,7 @@ def create_app(
         settings=resolved_settings,
         payment_provider=payment_provider,
         rate_limiter=rate_limiter,
+        ai_generator=ai_generator,
     )
     container.load_persisted_state()
 

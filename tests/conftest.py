@@ -59,6 +59,8 @@ def test_settings(tmp_path: Path) -> Settings:
         sessions_db_path=tmp_path / "sessions_db.json",
         admin_api_token="test-admin-secret-token-999",
         log_level="WARNING",
+        # Never call the live Claude API from tests; AI tests inject a fake generator.
+        ai_enabled=False,
     )
 
 

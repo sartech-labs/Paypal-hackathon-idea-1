@@ -11,14 +11,17 @@ from server.core.identity import IdentityService
 from server.core.security import constant_time_equals
 from server.core.sessions import SessionManager
 from server.schemas import PaymentMode, SessionRecord
+from server.services.ai_client import ClaudeTextGenerator, TextGenerator
 from server.services.audit_logger import AuditLogger
 from server.services.content_service import ContentService
 from server.services.deposit_manager import DepositManager
+from server.services.explainer import DepositExplainer
 from server.services.payment_service import (
     MockPaymentProvider,
     PaymentProvider,
     PayPalSandboxProvider,
 )
+from server.services.policy_assistant import PolicyAssistant
 from server.services.policy_engine import PolicyEngine
 from server.services.rate_limiter import SlidingWindowRateLimiter
 
@@ -31,6 +34,7 @@ class AppContainer:
         settings: Settings,
         payment_provider: Optional[PaymentProvider] = None,
         rate_limiter: Optional[SlidingWindowRateLimiter] = None,
+        ai_generator: Optional[TextGenerator] = None,
     ) -> None:
         self.settings = settings
         self.content_service = ContentService(settings)
@@ -60,6 +64,9 @@ class AppContainer:
             sessions_db_path=settings.sessions_db_path,
             site_config=self.site_config,
         )
+        self.ai_generator: TextGenerator = ai_generator or ClaudeTextGenerator(settings)
+        self.explainer = DepositExplainer(self.ai_generator, self.site_config)
+        self.policy_assistant = PolicyAssistant(self.ai_generator, self.site_config)
 
     def load_persisted_state(self) -> None:
         """Load audit log, payment/challenge records, and session snapshots from disk."""

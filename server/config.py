@@ -31,6 +31,10 @@ class Settings(BaseModel):
     paypal_timeout_seconds: float = Field(default=15.0, gt=0.0, le=120.0)
 
     deposit_amount: Decimal = Field(default=Decimal("0.01"))
+    # How a deposit is settled: "refund" captures up front and refunds compliant
+    # sessions; "authorization" places a hold that is voided for compliant
+    # sessions and captured only on forfeiture.
+    deposit_settlement: Literal["refund", "authorization"] = Field(default="refund")
     session_ttl_seconds: int = Field(default=1800, ge=1, le=86400)
     challenge_ttl_seconds: int = Field(default=600, ge=1, le=86400)
 
@@ -49,6 +53,14 @@ class Settings(BaseModel):
 
     admin_api_token: str = Field(default="")
     log_level: str = Field(default="INFO")
+
+    # Publisher-side AI (Claude). Credentials come from the Anthropic SDK's
+    # standard resolution (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or a profile).
+    ai_enabled: bool = Field(default=True)
+    ai_model: str = Field(default="claude-opus-5-5", min_length=1, max_length=128)
+    ai_effort: Literal["low", "medium", "high", "xhigh", "max"] = Field(default="medium")
+    ai_refusal_fallback: bool = Field(default=True)
+    ai_timeout_seconds: float = Field(default=120.0, gt=0.0, le=600.0)
 
     @field_validator("deposit_amount", mode="before")
     @classmethod
@@ -102,13 +114,32 @@ class Settings(BaseModel):
         return self
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """Parse a boolean environment variable, rejecting ambiguous values."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    value = raw.strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"{name} must be true or false, got {raw!r}")
+
+
 def load_settings_from_env() -> Settings:
     """Construct Settings from current environment variables."""
     return Settings(
         app_env=os.getenv("APP_ENV", "development"),  # type: ignore[arg-type]
         app_host=os.getenv("APP_HOST", "127.0.0.1"),
         app_port=int(os.getenv("APP_PORT", "8000")),
-        app_public_url=os.getenv("APP_PUBLIC_URL", "http://127.0.0.1:8000"),
+        # Render injects RENDER_EXTERNAL_URL for web services; use it when no
+        # explicit public URL is configured so PayPal callbacks reach the app.
+        app_public_url=(
+            os.getenv("APP_PUBLIC_URL")
+            or os.getenv("RENDER_EXTERNAL_URL")
+            or "http://127.0.0.1:8000"
+        ),
         payment_mode=os.getenv("PAYMENT_MODE", "mock"),  # type: ignore[arg-type]
         paypal_base_url=os.getenv("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com"),
         paypal_client_id=os.getenv("PAYPAL_CLIENT_ID", ""),
@@ -116,6 +147,7 @@ def load_settings_from_env() -> Settings:
         paypal_currency=os.getenv("PAYPAL_CURRENCY", "USD"),
         paypal_timeout_seconds=float(os.getenv("PAYPAL_TIMEOUT_SECONDS", "15.0")),
         deposit_amount=Decimal(os.getenv("DEPOSIT_AMOUNT", "0.01")),
+        deposit_settlement=os.getenv("DEPOSIT_SETTLEMENT", "refund"),  # type: ignore[arg-type]
         session_ttl_seconds=int(os.getenv("SESSION_TTL_SECONDS", "1800")),
         challenge_ttl_seconds=int(os.getenv("CHALLENGE_TTL_SECONDS", "600")),
         max_requests_per_session=int(os.getenv("MAX_REQUESTS_PER_SESSION", "10")),
@@ -132,4 +164,9 @@ def load_settings_from_env() -> Settings:
         sessions_db_path=Path(os.getenv("SESSIONS_DB_PATH", "storage/sessions_db.json")),
         admin_api_token=os.getenv("ADMIN_API_TOKEN", ""),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
+        ai_enabled=_env_bool("AI_ENABLED", True),
+        ai_model=os.getenv("AI_MODEL", "claude-opus-5-5"),
+        ai_effort=os.getenv("AI_EFFORT", "medium"),  # type: ignore[arg-type]
+        ai_refusal_fallback=_env_bool("AI_REFUSAL_FALLBACK", True),
+        ai_timeout_seconds=float(os.getenv("AI_TIMEOUT_SECONDS", "120")),
     )

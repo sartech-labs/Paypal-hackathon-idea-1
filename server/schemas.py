@@ -434,6 +434,60 @@ class AuditEvent(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class ExplanationFinding(BaseModel):
+    statement: str
+    evidence: list[str]
+
+
+class EvidenceItem(BaseModel):
+    evidence_id: str
+    event_id: str
+    timestamp: str
+    event_type: str
+    path: Optional[str] = None
+    reason_code: Optional[str] = None
+    allowed: Optional[bool] = None
+
+
+class DepositExplanationResponse(BaseModel):
+    deposit_id: str
+    session_id: Optional[str] = None
+    crawler_id: str
+    deposit_state: DepositState
+    policy_decision: PolicyDecisionStatus
+    generated_by: Literal["claude", "template"]
+    model: Optional[str] = None
+    headline: str
+    summary: str
+    findings: list[ExplanationFinding]
+    evidence: list[EvidenceItem]
+    omitted_events: int = 0
+    notice: Optional[str] = None
+    generated_at: str
+
+
+class PolicyDraftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    terms: str = Field(..., min_length=20, max_length=8000)
+    site_id: Optional[str] = Field(default=None, max_length=64)
+    site_name: Optional[str] = Field(default=None, max_length=128)
+
+
+class PolicyDraftResponse(BaseModel):
+    generated_by: Literal["claude"] = "claude"
+    model: str
+    valid: bool
+    draft: dict[str, Any]
+    validation_errors: list[str]
+    assumptions: list[str]
+    warnings: list[str]
+    notice: str = (
+        "Draft only. Review it, then save it to data/site_config.json and restart the "
+        "gateway to apply. Bump policy_version when rules change."
+    )
+
+
 class AuditSummaryResponse(BaseModel):
     scope: Literal["global", "session"]
     scoped_session_id: Optional[str] = None

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
 
 from server.core.security import StateTransitionError
 from server.dependencies import (
@@ -16,12 +16,14 @@ from server.dependencies import (
 from server.schemas import (
     DepositActionRequest,
     DepositCreateRequest,
+    DepositExplanationResponse,
     DepositRecord,
     DepositResponse,
     PaymentMode,
     PaymentStatus,
     PayPalApprovalCallbackResponse,
 )
+from server.services.explainer import FINAL_DEPOSIT_STATES
 from server.services.payment_service import (
     PaymentApprovalRequiredError,
     PaymentProviderError,
@@ -311,6 +313,66 @@ async def get_deposit(
         claimed_challenge_id=x_challenge_id,
     )
     return container.deposit_manager.to_response(deposit)
+
+
+@router.get(
+    "/{deposit_id}/explanation",
+    response_model=DepositExplanationResponse,
+    summary="Explain a deposit's refund or forfeiture decision, citing audit-log evidence",
+)
+async def explain_deposit(
+    deposit_id: str,
+    use_ai: bool = Query(
+        default=True,
+        description="Use Claude when available; false returns the rule-based explanation.",
+    ),
+    container: AppContainer = Depends(get_container),
+    bearer_token: Optional[str] = Depends(extract_optional_bearer_token),
+    x_admin_token: Optional[str] = Header(default=None),
+) -> DepositExplanationResponse:
+    deposit = await container.deposit_manager.get_deposit(deposit_id)
+    if deposit is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "deposit_not_found", "message": f"Unknown deposit_id: {deposit_id}"},
+        )
+
+    is_admin = is_valid_admin_token(container, x_admin_token)
+    if bearer_token is None and not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "missing_authorization",
+                "message": "Provide the crawler's Authorization: Bearer <token>, or X-Admin-Token.",
+            },
+        )
+    await _authorize_deposit_access(
+        deposit=deposit,
+        container=container,
+        bearer_token=None if is_admin else bearer_token,
+        x_admin_token=x_admin_token,
+        claimed_crawler_id=None,
+        claimed_challenge_id=None,
+    )
+
+    # Crawlers can only trigger an AI explanation once the outcome is final, so they
+    # cannot run up model usage by interleaving requests and explanation calls.
+    ai_allowed = use_ai and (is_admin or deposit.deposit_state in FINAL_DEPOSIT_STATES)
+    skip_reason: Optional[str] = None
+    if use_ai and not ai_allowed:
+        skip_reason = (
+            "AI explanations are generated once the deposit outcome is final; "
+            "showing a rule-based explanation."
+        )
+    session = await container.session_manager.get_session_by_deposit(deposit_id)
+    events = await container.audit_logger.get_events(deposit_id=deposit_id, limit=0)
+    return await container.explainer.explain(
+        deposit=deposit,
+        session=session,
+        events=events,
+        use_ai=ai_allowed,
+        skip_reason=skip_reason,
+    )
 
 
 @router.post(
