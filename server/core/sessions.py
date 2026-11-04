@@ -259,9 +259,11 @@ class SessionManager:
                         >= refund_policy.max_rate_limit_violations_before_disqualification
                     ):
                         is_disqualifying = True
+                        # Stable wording so repeat violations do not add duplicate reasons;
+                        # the running count is tracked in rate_limit_violations.
                         msg = (
-                            f"Rate limit violations ({record.rate_limit_violations}) reached "
-                            f"disqualification threshold ({refund_policy.max_rate_limit_violations_before_disqualification})"
+                            "Rate limit exceeded repeatedly (disqualification threshold: "
+                            f"{refund_policy.max_rate_limit_violations_before_disqualification} violations)"
                         )
                         if msg not in record.disqualification_reasons:
                             record.disqualification_reasons.append(msg)
@@ -273,8 +275,8 @@ class SessionManager:
                     ):
                         is_disqualifying = True
                         msg = (
-                            f"Session budget violations ({record.budget_violations}) reached "
-                            f"disqualification threshold ({refund_policy.max_budget_violations_before_disqualification})"
+                            "Session request budget exceeded (disqualification threshold: "
+                            f"{refund_policy.max_budget_violations_before_disqualification} violations)"
                         )
                         if msg not in record.disqualification_reasons:
                             record.disqualification_reasons.append(msg)

@@ -142,6 +142,27 @@ def normalize_and_validate_gateway_path(
     return normalized, True, None
 
 
+def sanitize_path_for_display(raw_path: str | None, max_length: int = 200) -> str:
+    """
+    Return a log-safe representation of a client-supplied request path.
+
+    Used for audit records and violation reasons so a rejected path is shown as the
+    crawler actually sent it (for example ``/%2e%2e/admin``) instead of a placeholder.
+    Non-printable and non-ASCII characters are escaped and the result is truncated.
+    """
+    if not raw_path:
+        return "/"
+    escaped = "".join(
+        ch if 32 <= ord(ch) < 127 else f"\\x{ord(ch):02x}" if ord(ch) < 256 else f"\\u{ord(ch):04x}"
+        for ch in raw_path
+    )
+    if not escaped.startswith("/"):
+        escaped = "/" + escaped
+    if len(escaped) > max_length:
+        escaped = escaped[: max_length - 3] + "..."
+    return escaped
+
+
 def sanitize_dict_for_logging(data: dict[str, Any]) -> dict[str, Any]:
     """Recursively scrub sensitive keys from a dictionary before logging."""
     sanitized: dict[str, Any] = {}

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from server.core.security import is_timestamp_expired, normalize_and_validate_gateway_path
+from server.core.security import (
+    is_timestamp_expired,
+    normalize_and_validate_gateway_path,
+    sanitize_path_for_display,
+)
 from server.schemas import (
     DepositRecord,
     DepositState,
@@ -231,6 +235,9 @@ class PolicyEngine:
                 normalized_path=normalized_path,
                 remaining_session_budget=remaining_budget,
                 remaining_window_requests=remaining_window,
+                requested_path=sanitize_path_for_display(
+                    raw_request_path if raw_request_path is not None else path_param
+                ),
             )
 
         # 8. Disallowed path check (evaluated before serving or reading any content)

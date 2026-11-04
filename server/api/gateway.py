@@ -135,12 +135,16 @@ async def _handle_gateway_request(
         deposit=deposit,
     )
 
+    # Path shown in session history, audit events, and error responses: the
+    # crawler's original request when the normalized form cannot represent it.
+    display_path = decision.requested_path or decision.normalized_path or raw_subpath
+
     # 4. Record evaluation against session history when session is active or completed
     updated_session = session
     if session.status in (SessionStatus.ACTIVE, SessionStatus.COMPLETED):
         updated_session = await container.session_manager.record_gateway_evaluation(
             session_id=session.session_id,
-            path=decision.normalized_path if decision.normalized_path else raw_subpath,
+            path=display_path,
             method=request.method,
             allowed=decision.allowed,
             reason_code=decision.reason_code,
@@ -164,7 +168,7 @@ async def _handle_gateway_request(
         challenge_id=session.challenge_id,
         session_id=session.session_id,
         deposit_id=session.deposit_id,
-        path=decision.normalized_path if decision.normalized_path else raw_subpath,
+        path=display_path,
         method=request.method,
         allowed=decision.allowed,
         reason_code=decision.reason_code,
@@ -197,7 +201,7 @@ async def _handle_gateway_request(
                 "disqualifying": decision.disqualifying,
                 "session_disqualified": updated_session.disqualified,
                 "policy_version": decision.policy_version,
-                "path": decision.normalized_path,
+                "path": display_path,
                 "remaining_session_budget": decision.remaining_session_budget,
                 "remaining_window_requests": decision.remaining_window_requests,
                 "retry_after_seconds": decision.retry_after_seconds,

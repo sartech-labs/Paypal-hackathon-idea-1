@@ -412,6 +412,9 @@ class PolicyDecision(BaseModel):
     remaining_session_budget: int
     remaining_window_requests: int
     retry_after_seconds: float = 0.0
+    # Log-safe form of the path the crawler sent; set when normalized_path cannot
+    # represent it (for example, rejected traversal attempts).
+    requested_path: Optional[str] = None
 
 
 class AuditEvent(BaseModel):
