@@ -1,0 +1,37 @@
+# Render Blueprint for a public CrawlerTrust demo (https://render.com/docs/blueprint-spec).
+# Render prompts for the `sync: false` secrets when the Blueprint is first created.
+# APP_PUBLIC_URL is not needed: the app falls back to Render's RENDER_EXTERNAL_URL.
+services:
+  - type: web
+    name: crawlertrust
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: APP_ENV
+        value: production
+      - key: ADMIN_API_TOKEN
+        generateValue: true
+      # Read-only dashboard for judges; admin actions still need ADMIN_API_TOKEN.
+      - key: DASHBOARD_PUBLIC
+        value: "true"
+      # Switch to paypal_sandbox (and set the PayPal secrets) for the Sandbox demo.
+      - key: PAYMENT_MODE
+        value: mock
+      - key: DEPOSIT_SETTLEMENT
+        value: refund
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: AI_ENABLED
+        value: "true"
+      - key: AI_MODEL
+        value: claude-opus-5-5
+      - key: ANTHROPIC_API_KEY
+        sync: false
