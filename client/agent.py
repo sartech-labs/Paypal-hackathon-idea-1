@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional
 
 import anthropic
 import httpx
+from dotenv import load_dotenv
 
 from client.agent_tools import TOOL_DEFINITIONS, GatewayToolbox
 from client.common import print_banner, print_step, resolve_crawler_id
@@ -320,6 +321,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    # Read ANTHROPIC_API_KEY / AI_MODEL from .env like the server does (shell values win).
+    load_dotenv()
     args = _build_parser().parse_args(argv)
     persona = PERSONAS[args.persona]
     try:

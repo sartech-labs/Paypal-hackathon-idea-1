@@ -270,4 +270,6 @@ def test_cli_requires_claude_credentials(monkeypatch: pytest.MonkeyPatch, tmp_pa
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # Ignore any developer .env so the test stays hermetic.
+    monkeypatch.setattr(agent_cli, "load_dotenv", lambda *args, **kwargs: False)
     assert agent_cli.main(["--persona", "compliant"]) == 2
