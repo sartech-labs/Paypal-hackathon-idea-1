@@ -6,6 +6,8 @@ CrawlerTrust is an HTTP `402 Payment Required` gateway that sits in front of a w
 
 > **Prototype notice.** Built for the PayPal AI Hackathon 2026. Payments run in mock mode or against the PayPal **Sandbox** with test funds; no real money moves.
 
+**See it in the browser.** Start the server and open `/`: the **live demo** lets you pick a compliant or rogue crawler, run it with an AI model or a scripted driver, and watch every step: the 402 challenge, the PayPal deposit, each request the gateway allows or blocks, the refund or forfeiture, and the evidence-cited explanation. The **PayPal assistant** then checks the deposit against PayPal's own records through **PayPal's MCP server**. The publisher console is at `/console`.
+
 ## Contents
 
 1. [Why this matters](#1-why-this-matters)
@@ -44,6 +46,9 @@ CrawlerTrust turns the policy into a commitment backed by money: an honest agent
 3. **Policy acceptance.** The crawler accepts the exact `policy_version` and receives a bearer token (stored only as a SHA-256 hash).
 4. **Enforced crawling.** Every `/gateway/{path}` request is checked for session validity, encoded path traversal, disallowed paths, a sliding-window rate limit, and a per-session request budget.
 5. **Outcome.** On completion the gateway decides from its own records: no disqualifying violations returns the deposit; otherwise it is kept. An AI explanation, citing audit-log evidence, tells both sides why.
+6. **Verification.** The publisher's PayPal assistant reads the PayPal order and refund through PayPal's MCP server and confirms, field by field, that PayPal's records match the gateway's.
+
+The live demo page (`/`) runs this whole loop from the browser. A run uses the same tools and HTTP calls as the command-line agent, executed by the server against its own gateway, and the page polls the run's event log. Public demo deployments cap runs per hour and allow one run at a time.
 
 ## 3. Where the AI is
 
@@ -52,6 +57,7 @@ CrawlerTrust turns the policy into a commitment backed by money: an honest agent
 | **AI crawler agent** | An AI model drives a crawler through the whole protocol with tool use: reads the 402 challenge and policy, decides whether to pay, pays through PayPal, accepts the policy, paces itself from the gateway's budget and `Retry-After` signals, and completes the session. A **compliant** persona writes a news brief and gets its deposit back; a **rogue** persona (an authorized red-team run against your own gateway) ignores the rules and loses it. | `client/agent.py`, `client/agent_tools.py` |
 | **Deposit explanations** | The AI explains why a deposit was returned or kept, in plain English. Every finding must cite audit events recorded for that deposit; findings with invalid citations are dropped, and a rule-based explanation is used when AI is unavailable. | `server/services/explainer.py`, `GET /deposits/{id}/explanation` |
 | **Policy assistant** | A publisher describes crawling terms in plain English; the AI drafts the machine-readable policy with structured outputs, and the server validates paths, amounts, and limits before showing the draft. Drafts are never applied automatically. | `server/services/policy_assistant.py`, `POST /policies/draft` |
+| **PayPal assistant** | The publisher asks questions such as "check the last three deposits against PayPal" or "any open disputes?". The AI answers with read-only tools: the gateway's deposit list plus PayPal's MCP server tools (`get_order`, `get_refund`, `list_transactions`, `list_disputes`, `get_dispute`). Every tool call and PayPal's raw result are shown under the answer. | `server/services/paypal_assistant.py`, `POST /paypal/assistant/ask` |
 
 Guardrails that hold whether or not the model behaves:
 
@@ -81,6 +87,8 @@ PayPal REST APIs called by `PayPalSandboxProvider` (`server/services/payment_ser
 | Payments v2 | `POST /v2/payments/authorizations/{id}/capture` | Capture a forfeited hold |
 | Payments v2 | `GET /v2/payments/authorizations/{id}` | Reconcile an ambiguous void |
 
+**Sandbox test-card payments.** With `PAYPAL_SANDBOX_AUTOPAY=true` (Sandbox only; settings validation rejects it for the live API), the deposit order is created with PayPal's published Sandbox test card as its payment source. PayPal completes the capture or authorization in the create call, the later capture or authorize step reconciles through PayPal's `ORDER_ALREADY_CAPTURED` / `ORDER_ALREADY_AUTHORIZED` answers, and refunds, voids, and captures run unchanged. This lets AI agents and demo visitors complete real Sandbox payments without a buyer login. Without it, each deposit uses the normal PayPal checkout approval.
+
 Two settlement modes, selected with `DEPOSIT_SETTLEMENT`:
 
 | Mode | Compliant crawler | Violating crawler | Notes |
@@ -88,7 +96,26 @@ Two settlement modes, selected with `DEPOSIT_SETTLEMENT`:
 | `refund` (default) | Order captured, then refunded | Captured funds kept | Mature path with refund reconciliation and recovery |
 | `authorization` | Hold voided: no funds are ever captured, nothing to refund | Hold captured | Closer to a real deposit. PayPal documents a 29-day authorization window with a 3-day honor period; sessions last at most 24 hours |
 
-Each deposit keeps the mode it was created with, so switching modes never strands existing deposits.
+Each deposit keeps the mode it was created with, so switching modes never strands existing deposits. Both modes have been run end to end against the live PayPal Sandbox (test-card payments): refund mode refunded the compliant crawler's capture and kept the violator's; authorization mode voided the compliant crawler's hold and captured the violator's.
+
+### PayPal MCP server (PayPal assistant)
+
+The PayPal assistant reads PayPal through **PayPal's own MCP server** instead of hand-written REST calls (`server/services/paypal_mcp.py`):
+
+| | Local (default) | Hosted |
+| :--- | :--- | :--- |
+| Server | PayPal's `@paypal/mcp` package (1.8.1, pinned in `deploy/paypal-mcp/`), run over stdio | PayPal's remote server, `https://mcp.sandbox.paypal.com/sse` |
+| Needs | Node.js 18+ (included in the Docker image) | Nothing extra |
+| Tools | Started with only the read tools enabled: `--tools=orders.get,payments.getRefunds,transactions.list,disputes.list,disputes.get` | All tools are listed; the allowlist below is the only guard |
+| Auth | The app's OAuth access token, passed to the server process | The same token as a bearer header |
+| Status (tested 2026-11-05) | Working against the Sandbox | Lists tools, but tool calls returned `PAYPAL_API_SETUP_ERROR` ("Unsupported cache mode: default"); kept as an option |
+
+Two features use it:
+
+- **Verify with PayPal** (no AI): reads the deposit's order (and refund) and compares order ID, `custom_id` (the deposit ID), amount, capture or authorization status, and refund status with the gateway's record. A refunded deposit should show the capture `REFUNDED`; a released hold, the authorization `VOIDED`; a forfeited hold, the authorization `CAPTURED`.
+- **Ask the PayPal assistant** (AI, OpenAI or Claude): a tool loop over the read tools plus `list_crawlertrust_deposits`.
+
+Why MCP is used only on the publisher side: the deposit flow needs deterministic, idempotent calls, and the MCP tools have no authorization, void, or authorization-capture operations; and the MCP server acts as the merchant, so giving it to the crawler would let the crawler refund itself.
 
 ## 5. Quick start (mock mode)
 
@@ -105,7 +132,7 @@ python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
 
 On Windows PowerShell use `python -m venv .venv`, `.\.venv\Scripts\Activate.ps1`, and `Copy-Item .env.example .env`.
 
-Then open **http://127.0.0.1:8000/** for the publisher console (the example `.env` enables the read-only public view), and in a second terminal run a crawler:
+Then open **http://127.0.0.1:8000/** for the live demo (the example `.env` sets `DEMO_PUBLIC=true`, so you can start runs without the admin token), pick a crawler, and press **Start run**. The publisher console is at **http://127.0.0.1:8000/console**. You can also run the crawlers from a second terminal:
 
 ```bash
 python -m client.compliant --base-url http://127.0.0.1:8000
@@ -115,7 +142,7 @@ python -m client.compliant --base-url http://127.0.0.1:8000
 python -m client.violating --base-url http://127.0.0.1:8000
 ```
 
-To turn on the AI features, add an API key to `.env` (`OPENAI_API_KEY=...` or `ANTHROPIC_API_KEY=...`), restart the server so it can also generate AI explanations, and run the agent:
+To turn on the AI features, add an API key to `.env` (`OPENAI_API_KEY=...` or `ANTHROPIC_API_KEY=...`) and restart the server: the demo page then offers the **AI agent** driver, explanations come from the model, and the PayPal assistant can answer questions. The agent also runs from the terminal:
 
 ```bash
 python -m client.agent --persona compliant --base-url http://127.0.0.1:8000
@@ -125,10 +152,11 @@ python -m client.agent --persona compliant --base-url http://127.0.0.1:8000
 
 | Scenario | Command | What you should see |
 | :--- | :--- | :--- |
+| Live demo (browser) | Open `/`, pick a crawler and a driver, **Start run** | The step rail and live timeline fill in as the crawler works; the deposit card shows PayPal order, capture, authorization, and refund IDs; the explanation appears when the session ends. Press **Verify with PayPal (MCP)** on a Sandbox deposit. |
 | Compliant AI agent | `python -m client.agent --persona compliant` | The agent reads the policy, pays, crawls `/news` sections within the rate limit, ignores the injected instruction on `/news/economy`, completes the session, and writes a brief. Deposit **returned**. |
 | Rogue AI agent | `python -m client.agent --persona rogue` | The agent requests `/admin` and private paths and bursts requests. The gateway blocks each one; the deposit is **forfeited** and the explanation cites each violation. |
 | Scripted crawlers (no API key) | `python -m client.compliant` / `python -m client.violating` | The same two outcomes from deterministic scripts. |
-| Publisher console | Open `/` | Live KPIs, deposits, sessions, audit feed, violations chart, and the "Why this outcome" panel. Select a deposit to explain it. |
+| Publisher console | Open `/console` | Live KPIs, deposits, sessions, audit feed, violations chart, the "Why this outcome" panel, and the PayPal assistant. Select a deposit to explain or verify it. |
 | Policy assistant | Console panel, or `POST /policies/draft` with `X-Admin-Token` | Plain-English terms become a validated policy draft with assumptions and warnings. |
 
 Useful agent flags: `--max-deposit 1.00` (spending limit), `--effort medium`, `--model ...`, `--max-turns 25`, `--non-interactive`. A video storyboard is in [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md).
@@ -137,11 +165,12 @@ Useful agent flags: `--max-deposit 1.00` (spending limit), `--effort medium`, `-
 
 1. Sign in to the [PayPal Developer Dashboard](https://developer.paypal.com/), open **Apps & Credentials** with **Sandbox** selected, and create a **Merchant** app.
 2. Put its client ID and secret in `.env` as `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`, and set `PAYMENT_MODE=paypal_sandbox`.
-3. Set `APP_PUBLIC_URL` to a URL the buyer's browser can reach (PayPal redirects there after approval). On Render it defaults to `RENDER_EXTERNAL_URL`.
-4. Optional: set `DEPOSIT_SETTLEMENT=authorization` to use holds instead of capture-and-refund.
-5. Under **Testing Tools > Sandbox Accounts**, note the **Personal (Buyer)** account used to approve the checkout.
+3. For demos, set `PAYPAL_SANDBOX_AUTOPAY=true` so deposits are paid with PayPal's Sandbox test card and nobody needs to sign in. Card payments must be enabled for the Sandbox app (they were enabled for the app used in testing).
+4. Otherwise, set `APP_PUBLIC_URL` to a URL the buyer's browser can reach (PayPal redirects there after approval; on Render it defaults to `RENDER_EXTERNAL_URL`), and note the **Personal (Buyer)** account under **Testing Tools > Sandbox Accounts**.
+5. Optional: set `DEPOSIT_SETTLEMENT=authorization` to use holds instead of capture-and-refund.
+6. For the PayPal assistant's `list_transactions` tool, enable **Transaction search** for the app in the Developer Dashboard; without it PayPal answers HTTP 403 (the other tools work).
 
-When a crawler creates a deposit, the response includes the PayPal `approval_url`. The CLIs and the agent print it and pause; approve it in the browser with the Sandbox buyer account and continue. PayPal also redirects the browser to `GET /deposits/paypal/return`, which checks that the returned order ID matches the deposit before capturing or authorizing; the redirect itself is never treated as proof of payment.
+Without autopay, a new deposit's response includes the PayPal `approval_url`. The demo page shows an **Open PayPal checkout** button and continues once the payment is approved; the CLIs and the agent print the URL and pause. PayPal redirects the browser to `GET /deposits/paypal/return`, which checks that the returned order ID matches the deposit before capturing or authorizing (the redirect itself is never treated as proof of payment) and shows a short confirmation page.
 
 If a refund completed at PayPal but CrawlerTrust conservatively left it pending, an administrator can call `POST /deposits/{id}/reconcile-refund` with `X-Admin-Token`. It only reads `GET /v2/payments/refunds/{refund_id}` and never submits another refund.
 
@@ -154,12 +183,12 @@ docker build -t crawlertrust .
 ```
 
 ```bash
-docker run --rm -p 8000:8000 -e DASHBOARD_PUBLIC=true -e OPENAI_API_KEY=your_key crawlertrust
+docker run --rm -p 8000:8000 --env-file .env crawlertrust
 ```
 
-The image runs as a non-root user, binds to `$PORT` (default 8000), exposes a health check on `/health`, and always runs **one** uvicorn worker, because deposits, sessions, and rate limits live in one process.
+The image runs as a non-root user, binds to `$PORT` (default 8000), exposes a health check on `/health`, and always runs **one** uvicorn worker, because deposits, sessions, rate limits, and demo runs live in one process. It also contains Node.js 22 and PayPal's MCP server (`@paypal/mcp`, installed from the lockfile in `deploy/paypal-mcp/`) for the PayPal assistant.
 
-**Render:** `render.yaml` is a Blueprint for a Docker web service. In the Render dashboard choose **New > Blueprint**, select this repository, and enter the prompted secrets (`OPENAI_API_KEY`, which the Blueprint uses by default; `ANTHROPIC_API_KEY` can stay empty unless you set `AI_PROVIDER` to `anthropic` or `auto`; and the PayPal keys if you switch `PAYMENT_MODE` to `paypal_sandbox`). Render generates `ADMIN_API_TOKEN`; copy it from the service's environment settings to use admin features in the console. The Blueprint enables the read-only public dashboard so judges can browse it. Storage on the free plan is ephemeral and the service sleeps when idle, so open the URL a minute before a demo.
+**Render:** `render.yaml` is a Blueprint for a Docker web service. In the Render dashboard choose **New > Blueprint**, select this repository, and enter the prompted secrets: `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` (the Blueprint runs real Sandbox payments with test-card autopay; set `PAYMENT_MODE=mock` if you have no PayPal app), `OPENAI_API_KEY` (the Blueprint's AI provider), and optionally `ANTHROPIC_API_KEY`. Render generates `ADMIN_API_TOKEN`; copy it from the service's environment settings for admin features. The Blueprint sets `DEMO_PUBLIC=true` and `DASHBOARD_PUBLIC=true` so judges can run the demo and browse the console, with hourly caps on runs and assistant questions. Storage on the free plan is ephemeral and the service sleeps when idle, so open the URL a minute before a demo.
 
 ## 9. Configuration reference
 
@@ -176,6 +205,12 @@ Copy `.env.example` to `.env`. Settings are validated at startup (`server/config
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | empty | Sandbox app credentials |
 | `PAYPAL_CURRENCY` | `USD` | 3-letter ISO currency |
 | `PAYPAL_TIMEOUT_SECONDS` | `15.0` | Timeout for PayPal calls |
+| `PAYPAL_SANDBOX_AUTOPAY` | `false` | Sandbox only: pay deposits with PayPal's Sandbox test card (no buyer approval) |
+| `PAYPAL_MCP_ENABLED` | `true` | PayPal assistant through PayPal's MCP server (uses the PayPal credentials) |
+| `PAYPAL_MCP_TRANSPORT` | `local` | `local` (`@paypal/mcp` over stdio, Node.js 18+) or `hosted` (PayPal's remote server over SSE) |
+| `PAYPAL_MCP_COMMAND` | `npx -y @paypal/mcp@1.8.1` | Command that starts the local server; the Docker image sets it to the bundled copy. Read-only `--tools` are always appended |
+| `PAYPAL_MCP_URL` | `https://mcp.sandbox.paypal.com/sse` | Hosted server URL |
+| `PAYPAL_MCP_TIMEOUT_SECONDS` | `60` | Timeout per MCP operation |
 | `DEPOSIT_AMOUNT` | `0.01` | Deposit amount (positive decimal) |
 | `SESSION_TTL_SECONDS` / `CHALLENGE_TTL_SECONDS` | `1800` / `600` | Session and challenge lifetimes |
 | `MAX_REQUESTS_PER_SESSION` | `10` | Allowed content requests per session |
@@ -183,6 +218,8 @@ Copy `.env.example` to `.env`. Settings are validated at startup (`server/config
 | `AUDIT_LOG_PATH`, `PAYMENTS_DB_PATH`, `SESSIONS_DB_PATH` | `storage/...` | Persistence files |
 | `ADMIN_API_TOKEN` | empty | Secret for `X-Admin-Token` (global audit, admin console, policy assistant, reconciliation) |
 | `DASHBOARD_PUBLIC` | `false` (`true` in `.env.example`) | Read-only console without the admin token, for demos; keep `false` in production |
+| `DEMO_PUBLIC` | `false` (`true` in `.env.example`) | Anyone may start demo runs and ask the read-only PayPal assistant, within the hourly caps |
+| `DEMO_MAX_RUNS_PER_HOUR` / `DEMO_MAX_QUESTIONS_PER_HOUR` | `20` / `30` | Caps for demo runs (all callers) and public PayPal assistant requests |
 | `AI_PROVIDER` | `auto` | `openai`, `anthropic`, or `auto` (Claude if Anthropic credentials resolve, otherwise OpenAI if `OPENAI_API_KEY` is set) |
 | `OPENAI_API_KEY` | unset | OpenAI credentials |
 | `ANTHROPIC_API_KEY` | unset | Claude credentials (the SDK also accepts `ANTHROPIC_AUTH_TOKEN` or a profile) |
@@ -213,17 +250,30 @@ Interactive docs: **`/docs`** (Swagger UI) and **`/redoc`**.
 | GET | `/sessions/me` | crawler bearer | Session counters and violations |
 | POST | `/sessions/complete`, `/sessions/revoke` | crawler bearer (revoke: admin too) | End the session and settle |
 | GET | `/audit/events`, `/audit/summary` | crawler bearer (own session) or admin | Audit log |
-| GET | `/`, `/dashboard` | none | Publisher console |
+| GET | `/`, `/demo` | none | Live demo page |
+| GET | `/demo/config` | none (details need admin or a public demo) | Demo capabilities, run quota, active and recent runs |
+| POST | `/demo/runs` | admin, or public when `DEMO_PUBLIC=true` | Start a crawler run (`driver`: `ai` or `scripted`; `persona`: `compliant` or `rogue`) |
+| GET | `/demo/runs/{id}?after=N` | admin, or public demo or dashboard | Run status, deposit, explanation, and events from sequence `N` |
+| POST | `/demo/runs/{id}/approval`, `/demo/runs/{id}/cancel` | admin, or public demo | Continue after PayPal approval; stop a run |
+| GET | `/paypal/assistant/status` | admin, or public demo | MCP and AI configuration |
+| POST | `/paypal/deposits/{id}/verify` | admin, or public demo | Compare a deposit with PayPal's records through the MCP server |
+| POST | `/paypal/assistant/ask` | admin, or public demo (capped) | AI PayPal assistant over read-only MCP tools |
+| GET | `/console`, `/dashboard` | none | Publisher console |
 | GET | `/dashboard/data`, `/dashboard/deposits/{id}/explanation` | admin, or public when `DASHBOARD_PUBLIC=true` | Console data |
 
 ## 11. Architecture
 
 ```mermaid
 flowchart TD
+    DEMO["Live demo page\n(/)"] -->|/demo/runs| RUN
     AGENT["AI crawler agent\n(client/agent.py, tool use)"] -->|HTTP 402 protocol| GW
     CLI["Scripted crawlers\n(client/compliant.py, violating.py)"] -->|HTTP 402 protocol| GW
-    PUB["Publisher console\n(/, AG Grid)"] -->|/dashboard/data| GW
+    PUB["Publisher console\n(/console, AG Grid)"] -->|/dashboard/data| GW
     AGENT -.->|tools / function calling| LLM["AI provider\n(OpenAI or Claude)"]
+    RUN["Demo runner\n(AI or scripted driver, same tools)"] -->|HTTP 402 protocol, loopback| GW
+    RUN -.-> LLM
+    DEMO -->|/paypal/*| PA
+    PUB -->|/paypal/*| PA
 
     subgraph Gateway ["CrawlerTrust gateway (FastAPI)"]
         GW["Gateway and routers\n(server/api/*)"] --> PE["Policy engine + rate limiter"]
@@ -236,6 +286,9 @@ flowchart TD
 
     EX -->|structured outputs| LLM
     PS -->|OAuth2, Orders v2, Payments v2| PP["PayPal Sandbox\n(or mock provider)"]
+    PA["PayPal assistant\n(verify + ask)"] -->|read-only tools| MCP["PayPal MCP server\n(@paypal/mcp)"]
+    PA -.->|tool loop| LLM
+    MCP -->|PayPal APIs| PP
     AL --> LOG["storage/audit.jsonl"]
     DM --> PDB["storage/payments_db.json"]
     SM --> SDB["storage/sessions_db.json"]
@@ -249,7 +302,9 @@ flowchart TD
 | Deposit manager | `server/services/deposit_manager.py` | Orthogonal payment / decision / refund state machines, both settlement modes, reconciliation |
 | Payment service | `server/services/payment_service.py` | `PayPalSandboxProvider` and `MockPaymentProvider` behind one interface |
 | AI | `server/services/ai_client.py`, `explainer.py`, `policy_assistant.py` | OpenAI and Claude client wrappers, provider selection, explanations, policy drafts |
-| Dashboard | `server/api/dashboard.py`, `server/static/*` | Publisher console and its data endpoints |
+| Dashboard | `server/api/dashboard.py`, `server/static/dashboard.*` | Publisher console and its data endpoints |
+| Live demo | `server/api/demo.py`, `server/services/demo_runner.py`, `client/scripted_agent.py`, `server/static/demo.*` | Browser demo: starts AI or scripted crawler runs in a background thread and records their events |
+| PayPal assistant | `server/api/paypal.py`, `server/services/paypal_mcp.py`, `paypal_assistant.py`, `server/static/paypal_panel.js` | MCP client limited to read tools, deposit verification, AI questions |
 | Audit logger | `server/services/audit_logger.py` | Append-only JSONL events with secret scrubbing |
 | Crawlers | `client/agent.py`, `agent_tools.py`, `compliant.py`, `violating.py`, `common.py` | AI agent and scripted demo clients |
 
@@ -316,6 +371,8 @@ Longer (more specific) rules beat broader ones, with `disallowed_paths` winning 
 - The gateway inspects the raw ASGI path, so encoded and double-encoded traversal is caught before any content lookup; disallowed page bodies are never loaded into the serving map.
 - Audit logs scrub tokens and secrets; the dashboard feed omits event details because they can contain PayPal checkout URLs; all dashboard text from crawlers is rendered as text, never HTML.
 - AI-specific safeguards are listed in [section 3](#3-where-the-ai-is): the model never decides money movements, page content is marked untrusted, the bearer token is never sent to the model, spending is capped in code, and AI cost is bounded.
+- PayPal MCP: only five read tools can be called (the local server is started with only those enabled, and the client rejects any other name); the OAuth token goes to the MCP server process, never to the model; the server process gets a minimal environment without AI keys; PayPal results are redacted of email addresses before they are shown or sent to a model, and reach the model inside `<paypal_mcp_result>` tags as data.
+- Public demos: one run at a time, hourly caps on runs and assistant requests, a 25-turn limit, a 1.00 spending limit per run, and runs that stop waiting for PayPal approval after 10 minutes.
 
 ## 15. Testing
 
@@ -323,7 +380,7 @@ Longer (more specific) rules beat broader ones, with `disallowed_paths` winning 
 pytest -q
 ```
 
-The suite (191 tests) needs no network access or credentials; PayPal, OpenAI, and Claude are replaced by mocked transports and scripted fakes.
+The suite (222 tests) needs no network access or credentials; PayPal, OpenAI, Claude, and the PayPal MCP server are replaced by mocked transports and scripted fakes.
 
 | File | Covers |
 | :--- | :--- |
@@ -336,6 +393,8 @@ The suite (191 tests) needs no network access or credentials; PayPal, OpenAI, an
 | `test_openai_provider.py` | OpenAI request shape, refusal and truncation handling, error mapping, provider selection and model defaults |
 | `test_agent.py`, `test_agent_openai.py` | AI agent on both providers against the real gateway with scripted models: refund, forfeiture, spending cap, refusal, token never sent to the model |
 | `test_dashboard.py`, `test_compliant_cli.py` | Console data, access rules, KPIs; CLI output |
+| `test_demo.py` | Demo page and assets; scripted and AI runs through the runner (refund and forfeiture); access, hourly cap, cancellation |
+| `test_paypal_assistant.py` | MCP read-only allowlist, server command and environment, error handling, email redaction, deposit verification (refund, hold, mismatch), AI tool loops on both providers, API access and quotas |
 
 ## 16. Persistence and troubleshooting
 
@@ -352,6 +411,9 @@ The suite (191 tests) needs no network access or credentials; PayPal, OpenAI, an
 | Agent exits with "No AI credentials found" | No key in the agent's environment or `.env` | Set `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) |
 | OpenAI calls fail with a model error | `AI_MODEL` names a model your account cannot use | Leave `AI_MODEL` empty or pick a model listed for your key |
 | `PersistenceCorruptionError` on startup | A file in `storage/` was edited into invalid JSON | Fix or delete it and restart |
+| PayPal assistant: "Node.js was not found" | Local MCP transport without Node.js | Install Node.js 18+, use the Docker image, or set `PAYPAL_MCP_TRANSPORT=hosted` |
+| PayPal assistant: `list_transactions` returns HTTP 403 | Transaction search is not enabled for the PayPal app | Enable it in the Developer Dashboard (it can take a few hours to apply) |
+| Demo "Start run" is disabled | `DEMO_PUBLIC` is off, or a run is in progress | Enter the admin token on the demo page, or wait for the run to finish |
 
 ## 17. Limitations and roadmap
 
@@ -359,13 +421,14 @@ The suite (191 tests) needs no network access or credentials; PayPal, OpenAI, an
 
 - A bearer token proves continuity of a paid session, not the real-world identity of an agent.
 - JSON persistence and in-memory rate limits support a single process only.
-- In PayPal Sandbox mode a person approves each deposit in the browser; there is no saved payment method for the agent yet.
-- Authorization settlement is covered by mocked-transport tests built from PayPal's published API specifications, but has not yet been exercised against the live Sandbox.
-- AI agent behaviour depends on the model; the scripted crawlers give deterministic results for rehearsals. The Claude path has not been run against the live API.
+- Autonomous agent payment exists only in the Sandbox (`PAYPAL_SANDBOX_AUTOPAY`, PayPal's test card). In production a buyer would approve once and save a PayPal payment method; that is not built yet, so without autopay a person approves each deposit.
+- The buyer-approval checkout path has been run against the live Sandbox up to the approval step (the demo shows the real checkout URL); completing it needs a Sandbox buyer login, so the capture after approval is covered by mocked-transport tests.
+- PayPal's hosted MCP server failed every tool call in testing (2026-11-05); the bundled local server is used instead.
+- AI agent behaviour depends on the model; the scripted crawlers give deterministic results for rehearsals. The Claude path, and the PayPal assistant's AI question path, have not been run against a live model in this version (the assistant's tool execution was run against the live MCP server with a scripted stand-in model).
 
 **Roadmap**
 
-1. One-time buyer consent with a saved PayPal payment method and a spending cap, so agents pay autonomously.
+1. One-time buyer consent with a saved PayPal payment method (vaulting) and a spending cap, so agents pay autonomously outside the Sandbox too.
 2. Reputation-based deposits: a compliance history lowers an agent's future deposit.
 3. Optional pay-per-page fee captured from the hold, so publishers also earn from good crawlers.
 4. PostgreSQL and Redis for multi-instance deployments; PayPal webhooks for settlement events.

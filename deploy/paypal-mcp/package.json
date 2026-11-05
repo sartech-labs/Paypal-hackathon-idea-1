@@ -1,0 +1,12 @@
+{
+  "name": "crawlertrust-paypal-mcp",
+  "private": true,
+  "description": "PayPal's MCP server (@paypal/mcp), pinned for the CrawlerTrust PayPal assistant.",
+  "license": "MIT",
+  "dependencies": {
+    "@paypal/mcp": "1.8.1"
+  },
+  "overrides": {
+    "@paypal/agent-toolkit": "1.11.0"
+  }
+}

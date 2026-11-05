@@ -1,40 +1,38 @@
 # Demo video script (under 3 minutes)
 
-The Devpost submission needs a public YouTube video shorter than 3 minutes. This script shows the full story: the problem, an AI agent that behaves, an AI agent that does not, real PayPal Sandbox money movement, and the AI explanation.
+The Devpost submission needs a public YouTube video shorter than 3 minutes. The whole demo runs in the browser: the live demo page at `/` and the publisher console at `/console`. No terminal is needed on camera.
 
 ## Before recording
 
-1. **Credentials:** `.env` has `PAYMENT_MODE=paypal_sandbox`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`), and an `ADMIN_API_TOKEN`. Keep `DASHBOARD_PUBLIC=true` so the console loads without typing the token on camera.
-2. **Settlement mode:** decide between `DEPOSIT_SETTLEMENT=refund` (refund appears in the Sandbox account) and `authorization` (the hold is voided). Rehearse the chosen mode end to end first; authorization mode has not yet been run against the live Sandbox.
-3. **Sandbox buyer:** log in to the PayPal Sandbox buyer account in a browser tab so approvals take one click.
+1. **Credentials:** `.env` has `PAYMENT_MODE=paypal_sandbox`, `PAYPAL_SANDBOX_AUTOPAY=true`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`), `DEMO_PUBLIC=true`, and `DASHBOARD_PUBLIC=true`. With autopay, deposits are real Sandbox payments made with PayPal's Sandbox test card, so there is no PayPal login on camera.
+2. **PayPal MCP server:** use the Docker image (Node.js and `@paypal/mcp` included), or install Node.js 18+ locally. Before recording, press **Verify with PayPal** once on any Sandbox deposit, so `npx` has already downloaded the package.
+3. **Settlement mode:** `DEPOSIT_SETTLEMENT=refund` shows a refund in PayPal; `authorization` shows a voided hold. Both modes have been run live against the Sandbox.
 4. **Fresh state:** stop the server, delete `storage/*.json` and `storage/audit.jsonl`, and restart so the console starts empty.
-5. **Screen layout:** browser with the console on the left (about 60%), terminal on the right. Increase the terminal font size.
-6. **Dry run:** run both agent personas once. If the model's behaviour differs from the plan, adjust the narration rather than the code.
-7. **Fallback:** if the AI provider or PayPal is slow on the day, record with `PAYMENT_MODE=mock` and say so on screen ("simulated payments"), or use the scripted crawlers (`client.compliant`, `client.violating`).
+5. **Dry run:** run both personas with the AI driver once. If the model's behaviour differs from the plan, adjust the narration rather than the code.
+6. **Fallback:** if the AI provider is slow on the day, choose the **Scripted crawler** driver (same gateway, same PayPal calls, no model) and say so on screen.
+7. **Browser:** one window at 1440 px wide, zoom 100%, light theme. Close other tabs.
 
 ## Storyboard
 
 | Time | Screen | Voiceover |
 | :--- | :--- | :--- |
-| 0:00–0:15 | Title card, then the console's empty KPI row | "AI crawlers read the web at machine speed. `robots.txt` is only a request, and publishers pay for every scraper that ignores it." |
-| 0:15–0:35 | Terminal: `curl -i http://127.0.0.1:8000/gateway/news` showing `HTTP 402` and the deposit | "CrawlerTrust turns the policy into a commitment. Before an AI agent can read, it posts a small refundable deposit through PayPal and accepts the rules." |
-| 0:35–1:20 | Terminal: `python -m client.agent --persona compliant`. Show the reasoning lines, the 402, the PayPal approval click, paced requests, and the line where it ignores the hidden instruction on `/news/economy`. Console updates live. | "Here an AI model, GPT-5.5, is the crawler. It reads the policy, pays the deposit with PayPal, paces itself from the gateway's rate-limit signals, and ignores a prompt injection hidden in a page. It completes the session and gets its deposit back." |
-| 1:20–1:35 | PayPal Sandbox: the refund (refund mode) or the voided authorization (authorization mode) | "That's a real Sandbox transaction, returned automatically." |
-| 1:35–2:15 | Terminal: `python -m client.agent --persona rogue`. Console: blocked requests appear, the deposit turns **Forfeited**, the violations chart grows. | "Now the same agent, told to grab everything. It requests the admin area, private customer data, and bursts requests. The gateway blocks every one, and the deposit is forfeited by policy, not by the model." |
-| 2:15–2:40 | Console: click **Explain** on the forfeited deposit. Click an evidence chip to highlight the audit event. | "The AI then explains the decision to both sides, and every statement cites the exact audit event behind it." |
-| 2:40–2:55 | Console: the policy assistant drafts a policy from plain-English terms | "Publishers can write their terms in plain English and the AI drafts the machine-readable policy, validated before anything changes." |
-| 2:55–3:00 | Closing card: repo URL and the one-line positioning | "Other 402 schemes charge for access. CrawlerTrust charges for misbehaviour. Good agents crawl free." |
+| 0:00–0:15 | Live demo page, empty state with the five steps | "AI crawlers read the web at machine speed. `robots.txt` is only a request, and publishers pay for every scraper that ignores it." |
+| 0:15–0:25 | Point at the badges: PayPal Sandbox, settlement, AI model, PayPal MCP | "CrawlerTrust is an HTTP 402 gateway. Before an AI agent can read, it posts a small refundable deposit through PayPal and accepts the site's rules." |
+| 0:25–1:15 | Pick **Compliant research crawler** and **AI agent**, press **Start run**. The step rail fills in: 402 challenge, policy, PayPal deposit, crawl. Hover the prompt-injection card on `/news/economy`. | "Here GPT-5.5 is the crawler. It gets HTTP 402, reads the policy, pays the deposit with PayPal, and paces itself to the rate limit. This page hides an instruction telling AI agents to grab private customer data. The agent ignores it." |
+| 1:15–1:35 | Session completes: deposit card turns **Refunded**, PayPal order, capture, and refund IDs appear. Explanation card shows findings with evidence chips. | "The session ends and the gateway decides from its own audit log: no violations, so the deposit comes back. The explanation cites the exact audit events." |
+| 1:35–1:55 | Press **Verify with PayPal (MCP)**. The table shows every check matching. | "Then the publisher checks PayPal's own records, through PayPal's MCP server: order, amount, capture refunded, refund completed. Read-only, and every check matches." |
+| 1:55–2:30 | Pick **Rogue scraper**, **Start run**. Red 403 and 429 rows stack up; step 4 turns red; deposit turns **Forfeited**. | "Now the same model, told to grab everything. It probes the admin area and private data, tries path traversal, and bursts requests. The gateway blocks each one, and the deposit is forfeited by policy, not by the model." |
+| 2:30–2:50 | PayPal assistant: click the suggestion "Check the last 3 deposits against PayPal's records" and **Ask**. Show the answer and the tool-call list. | "The PayPal assistant answers questions with PayPal's MCP tools and shows every call it made, so the answer can be checked." |
+| 2:50–3:00 | Closing card: repo URL and the one-line positioning | "Other 402 schemes charge for access. CrawlerTrust charges for misbehaviour. Good agents crawl free." |
 
-Keep the final cut under 2:55 to leave margin for YouTube's processing.
+Keep the final cut under 2:55 to leave margin for YouTube's processing. If time is short, cut the PayPal assistant question (2:30–2:50) and keep **Verify with PayPal**.
 
-## Commands used on camera
+## Command-line alternative
+
+The same runs are available from a terminal, for example for a second take:
 
 ```bash
 python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
-```
-
-```bash
-curl -i -H "X-Crawler-Id: demo-crawler" http://127.0.0.1:8000/gateway/news
 ```
 
 ```bash

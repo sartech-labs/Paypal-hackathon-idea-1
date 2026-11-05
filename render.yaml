@@ -17,18 +17,33 @@ services:
         value: production
       - key: ADMIN_API_TOKEN
         generateValue: true
-      # Read-only dashboard for judges; admin actions still need ADMIN_API_TOKEN.
+      # Read-only console for judges; admin actions still need ADMIN_API_TOKEN.
       - key: DASHBOARD_PUBLIC
         value: "true"
-      # Switch to paypal_sandbox (and set the PayPal secrets) for the Sandbox demo.
+      # Live demo at /: visitors may start crawler runs and ask the read-only PayPal
+      # assistant, capped per hour (DEMO_MAX_RUNS_PER_HOUR, DEMO_MAX_QUESTIONS_PER_HOUR).
+      - key: DEMO_PUBLIC
+        value: "true"
+      # Public AI runs and questions spend the AI key; keep the caps low.
+      - key: DEMO_MAX_RUNS_PER_HOUR
+        value: "10"
+      - key: DEMO_MAX_QUESTIONS_PER_HOUR
+        value: "20"
+      # Real PayPal Sandbox payments. Without the PayPal secrets, set PAYMENT_MODE=mock.
       - key: PAYMENT_MODE
-        value: mock
+        value: paypal_sandbox
+      # Pay deposits with PayPal's Sandbox test card, so visitors need no Sandbox login.
+      - key: PAYPAL_SANDBOX_AUTOPAY
+        value: "true"
       - key: DEPOSIT_SETTLEMENT
         value: refund
       - key: PAYPAL_CLIENT_ID
         sync: false
       - key: PAYPAL_CLIENT_SECRET
         sync: false
+      # PayPal assistant: PayPal's MCP server runs inside the image (@paypal/mcp, stdio).
+      - key: PAYPAL_MCP_TRANSPORT
+        value: local
       - key: AI_ENABLED
         value: "true"
       # openai uses OPENAI_API_KEY (default model gpt-5.5); set anthropic or auto to use Claude.

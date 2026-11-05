@@ -5,6 +5,9 @@
 *.pem
 *.key
 
+# Node packages (PayPal MCP server)
+node_modules/
+
 # Virtual environments
 .venv/
 venv/
