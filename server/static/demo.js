@@ -578,6 +578,7 @@
 
   // --- run lifecycle ---------------------------------------------------------------------
   function resetRunView() {
+    state.run = null;
     state.nextSeq = 0;
     state.counts = { allowed: 0, blocked: 0, violations: 0 };
     state.note = null;

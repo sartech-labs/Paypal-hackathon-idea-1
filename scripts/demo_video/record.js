@@ -133,6 +133,7 @@ async function main() {
       requested_private: pages.some((p) => (p.path || "").includes("/private")),
       blocked_reasons: [...new Set(pages.filter((p) => p.blocked).map((p) => p.reason_code))],
       waited: results.some((r) => r.name === "wait"),
+      tools: [...new Set(results.map((r) => r.name))],
       explanation_by: run.explanation && run.explanation.generated_by,
       usage: run.usage,
     };
@@ -217,7 +218,9 @@ async function main() {
       await page.waitForTimeout(300);
       facts.assistant.answer = await page.evaluate(() => (document.querySelector("#paypal-panel .pp-answer") || {}).textContent || "");
       facts.assistant.calls = await page.evaluate(() => document.querySelectorAll("#paypal-panel .pp-ask .trace li").length);
-      facts.assistant.error = await page.evaluate(() => (document.querySelector("#paypal-panel .pp-ask .notice") || {}).textContent || "");
+      facts.assistant.error = facts.assistant.answer
+        ? null
+        : await page.evaluate(() => (document.querySelector("#paypal-panel .pp-ask .notice") || {}).textContent || "");
     } else {
       await page.waitForTimeout(3000);
     }
@@ -234,10 +237,13 @@ async function main() {
     }
   });
 
+  // Load the console before its scene starts, so the video never shows a blank page.
+  await page.goto(`${base}/console`, { waitUntil: "networkidle" });
+  await zoomed();
+  await page.waitForSelector("#grid-deposits button.cell-button", { timeout: 20000 });
+  await page.waitForTimeout(1500);
+
   await scene("console", async () => {
-    await page.goto(`${base}/console`, { waitUntil: "networkidle" });
-    await zoomed();
-    await page.waitForSelector("#grid-deposits button.cell-button", { timeout: 20000 });
     await page.waitForTimeout(1200);
     await pointAt("#grid-deposits button.cell-button", { click: true });
     await page.waitForTimeout(4500);

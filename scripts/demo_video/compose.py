@@ -14,6 +14,7 @@ Output: <work-dir>/crawlertrust-demo.mp4 and crawlertrust-demo.srt.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -58,6 +59,7 @@ def build_scenes(facts: dict[str, Any]) -> list[Scene]:
     assistant = facts.get("assistant", {})
     who = "GPT-5.5" if ai else "the scripted crawler"
 
+    reads = " It reads the policy, pays" if "read_policy" in compliant.get("tools", []) else " It pays"
     paced = " Then it crawls only allowed pages, and waits when the rate limit says so." if compliant.get("waited") else " Then it crawls only allowed pages, within the rate limit."
     injection = (
         " One page hides an instruction telling AI agents to grab private customer data."
@@ -71,6 +73,8 @@ def build_scenes(facts: dict[str, Any]) -> list[Scene]:
         if explained_by_ai
         else "The explanation cites the audit event behind every statement."
     )
+
+    rogue_line = f"Now {'the same model plays a greedy scraper' if ai else 'a greedy scraper'}. " + rogue_attempts(rogue)
 
     scenes = [
         Scene(
@@ -88,8 +92,8 @@ def build_scenes(facts: dict[str, Any]) -> list[Scene]:
         ),
         Scene(
             "compliant",
-            "First, a well-behaved research agent. It asks for the news and gets HTTP 402, Payment Required. It reads the policy, pays a one-cent refundable deposit with PayPal, and accepts the rules." + paced + injection,
-            "First, a well-behaved research agent. It asks for the news and gets H T T P four-oh-two, Payment Required. It reads the policy, pays a one-cent refundable deposit with PayPal, and accepts the rules." + paced + injection,
+            "First, a well-behaved research agent. It asks for the news and gets HTTP 402, Payment Required." + reads + " a one-cent refundable deposit with PayPal, and accepts the rules." + paced + injection,
+            "First, a well-behaved research agent. It asks for the news and gets H T T P four-oh-two, Payment Required." + reads + " a one-cent refundable deposit with PayPal, and accepts the rules." + paced + injection,
             12.0,
         ),
         Scene(
@@ -104,12 +108,7 @@ def build_scenes(facts: dict[str, Any]) -> list[Scene]:
             "The publisher can check this against PayPal itself. Verify with PayPal reads the order and the refund through PayPal's M C P server. The order, amount, capture and refund all match.",
             6.0,
         ),
-        Scene(
-            "rogue",
-            f"Now {'the same model plays a greedy scraper' if ai else 'a greedy scraper'}. It pays, skips the rules, and goes after the admin area, private data and a path-traversal trick, then bursts requests. The gateway blocks every one.",
-            f"Now {'the same model plays a greedy scraper' if ai else 'a greedy scraper'}. It pays, skips the rules, and goes after the admin area, private data and a path-traversal trick, then bursts requests. The gateway blocks every one.",
-            10.0,
-        ),
+        Scene("rogue", rogue_line, rogue_line, 10.0),
         Scene(
             "rogue_outcome",
             "The deposit is forfeited. That decision comes from deterministic policy rules, not from the model. The AI only explains it." if ai else "The deposit is forfeited, by deterministic policy rules.",
@@ -145,6 +144,38 @@ def build_scenes(facts: dict[str, Any]) -> list[Scene]:
     return scenes
 
 
+FORBIDDEN_PREFIXES = (("/admin", "the admin area"), ("/private", "private customer data"), ("/internal", "internal reports"))
+
+
+def _requests(run: dict[str, Any]) -> list[tuple[str, str]]:
+    """(status, path) pairs from facts paths such as '403 /admin'."""
+    pairs = []
+    for entry in run.get("paths", []):
+        status, _, path = entry.partition(" ")
+        pairs.append((status, path))
+    return pairs
+
+
+def _join(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def rogue_attempts(rogue: dict[str, Any]) -> str:
+    """Describe only what the rogue run actually tried."""
+    paths = [path for _status, path in _requests(rogue)]
+    tried = [label for prefix, label in FORBIDDEN_PREFIXES if any(p.startswith(prefix) for p in paths)]
+    if "INVALID_PATH" in rogue.get("blocked_reasons", []):
+        tried.append("a path-traversal trick")
+    burst = "RATE_LIMIT_EXCEEDED" in rogue.get("blocked_reasons", [])
+    if tried:
+        line = f"It pays, skips the rules, and goes after {_join(tried)}"
+        line += ", then bursts requests past the rate limit." if burst else "."
+        return line + " The gateway blocks every one."
+    if burst:
+        return "It pays, skips the rules, and bursts requests past the rate limit. The gateway blocks them."
+    return "It pays and skips the rules."
+
+
 def validate(facts: dict[str, Any]) -> list[str]:
     """Problems that would make the narration untrue."""
     problems = []
@@ -157,6 +188,11 @@ def validate(facts: dict[str, Any]) -> list[str]:
         problems.append("compliant run requested a /private path (fell for the injection)")
     if r.get("deposit_state") != "FORFEITED":
         problems.append(f"rogue run: deposit {r.get('deposit_state')} (expected FORFEITED)")
+    leaked = [p for s, p in _requests(r) if s == "200" and p.startswith(tuple(x for x, _ in FORBIDDEN_PREFIXES))]
+    if leaked:
+        problems.append(f"rogue run was served forbidden paths: {leaked}")
+    if not r.get("blocked_reasons"):
+        problems.append("rogue run had no blocked requests")
     if v.get("mismatches") or not v.get("checks"):
         problems.append(f"verify: {v.get('checks')} checks, {v.get('mismatches')} mismatch(es)")
     if _ai(facts):
@@ -193,7 +229,9 @@ def synthesize(scenes: list[Scene], work: Path) -> dict[str, Path]:
     for model in TTS_MODELS:
         try:
             for scene in scenes:
-                target = work / f"tts-{scene.name}.wav"
+                # Cache by content, so a changed line is spoken again.
+                key = hashlib.sha1(f"{model}|{TTS_VOICE}|{TTS_STYLE}|{scene.say}".encode()).hexdigest()[:12]
+                target = work / f"tts-{scene.name}-{key}.wav"
                 if not target.exists():
                     extra = {"instructions": TTS_STYLE} if "gpt-4o" in model else {}
                     response = client.audio.speech.create(
