@@ -1262,6 +1262,9 @@ class DepositManager:
                 record.provider_authorization_status = result.provider_status
             now_iso = utc_now_iso()
             if forfeit and result.status == "CAPTURED":
+                # provider_status here is the new capture's status; the authorization
+                # itself is now CAPTURED in PayPal's records.
+                record.provider_authorization_status = "CAPTURED"
                 self._transition_payment(record, PaymentStatus.CAPTURED)
                 self._transition_refund(record, RefundTransactionStatus.NOT_APPLICABLE_FORFEITED)
                 record.provider_capture_id = result.capture_id

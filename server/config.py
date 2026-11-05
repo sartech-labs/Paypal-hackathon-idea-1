@@ -29,6 +29,18 @@ class Settings(BaseModel):
     paypal_client_secret: str = Field(default="")
     paypal_currency: str = Field(default="USD")
     paypal_timeout_seconds: float = Field(default=15.0, gt=0.0, le=120.0)
+    # Sandbox only: pay deposits with PayPal's Sandbox test card instead of buyer approval,
+    # so AI agents (and demo viewers) can complete real Sandbox payments without a login.
+    paypal_sandbox_autopay: bool = Field(default=False)
+
+    # PayPal MCP server used by the publisher's PayPal assistant (read-only tools).
+    # "local" runs PayPal's @paypal/mcp package over stdio; "hosted" connects to PayPal's
+    # remote MCP server over SSE with the app's OAuth access token.
+    paypal_mcp_enabled: bool = Field(default=True)
+    paypal_mcp_transport: Literal["local", "hosted"] = Field(default="local")
+    paypal_mcp_command: str = Field(default="npx -y @paypal/mcp@1.8.1", max_length=500)
+    paypal_mcp_url: str = Field(default="https://mcp.sandbox.paypal.com/sse")
+    paypal_mcp_timeout_seconds: float = Field(default=60.0, gt=0.0, le=300.0)
 
     deposit_amount: Decimal = Field(default=Decimal("0.01"))
     # How a deposit is settled: "refund" captures up front and refunds compliant
@@ -54,6 +66,11 @@ class Settings(BaseModel):
     admin_api_token: str = Field(default="")
     # Read-only publisher dashboard without the admin token (for demo deployments only).
     dashboard_public: bool = Field(default=False)
+    # Live demo page: when true, anyone may start crawler runs and ask the PayPal
+    # assistant (read-only), within the hourly caps below. Admin token otherwise.
+    demo_public: bool = Field(default=False)
+    demo_max_runs_per_hour: int = Field(default=20, ge=1, le=1000)
+    demo_max_questions_per_hour: int = Field(default=30, ge=1, le=1000)
     log_level: str = Field(default="INFO")
 
     # Publisher-side AI. Provider "auto" uses Claude when Anthropic credentials resolve
@@ -93,6 +110,14 @@ class Settings(BaseModel):
             raise ValueError("paypal_base_url must use https://")
         return cleaned
 
+    @field_validator("paypal_mcp_url")
+    @classmethod
+    def validate_paypal_mcp_url(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned.startswith("https://"):
+            raise ValueError("paypal_mcp_url must use https://")
+        return cleaned
+
     @field_validator("ai_model", mode="before")
     @classmethod
     def normalize_ai_model(cls, value: object) -> Optional[str]:
@@ -123,7 +148,13 @@ class Settings(BaseModel):
     def validate_production_constraints(self) -> "Settings":
         if self.app_env == "production" and not self.admin_api_token.strip():
             raise ValueError("ADMIN_API_TOKEN must be configured when APP_ENV=production")
+        if self.paypal_sandbox_autopay and not self.paypal_is_sandbox:
+            raise ValueError("PAYPAL_SANDBOX_AUTOPAY is only allowed with the PayPal Sandbox API")
         return self
+
+    @property
+    def paypal_is_sandbox(self) -> bool:
+        return urlsplit(self.paypal_base_url).hostname == "api-m.sandbox.paypal.com"
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -158,6 +189,12 @@ def load_settings_from_env() -> Settings:
         paypal_client_secret=os.getenv("PAYPAL_CLIENT_SECRET", ""),
         paypal_currency=os.getenv("PAYPAL_CURRENCY", "USD"),
         paypal_timeout_seconds=float(os.getenv("PAYPAL_TIMEOUT_SECONDS", "15.0")),
+        paypal_sandbox_autopay=_env_bool("PAYPAL_SANDBOX_AUTOPAY", False),
+        paypal_mcp_enabled=_env_bool("PAYPAL_MCP_ENABLED", True),
+        paypal_mcp_transport=os.getenv("PAYPAL_MCP_TRANSPORT", "local").strip().lower() or "local",  # type: ignore[arg-type]
+        paypal_mcp_command=os.getenv("PAYPAL_MCP_COMMAND", "").strip() or "npx -y @paypal/mcp@1.8.1",
+        paypal_mcp_url=os.getenv("PAYPAL_MCP_URL", "").strip() or "https://mcp.sandbox.paypal.com/sse",
+        paypal_mcp_timeout_seconds=float(os.getenv("PAYPAL_MCP_TIMEOUT_SECONDS", "60")),
         deposit_amount=Decimal(os.getenv("DEPOSIT_AMOUNT", "0.01")),
         deposit_settlement=os.getenv("DEPOSIT_SETTLEMENT", "refund"),  # type: ignore[arg-type]
         session_ttl_seconds=int(os.getenv("SESSION_TTL_SECONDS", "1800")),
@@ -176,6 +213,9 @@ def load_settings_from_env() -> Settings:
         sessions_db_path=Path(os.getenv("SESSIONS_DB_PATH", "storage/sessions_db.json")),
         admin_api_token=os.getenv("ADMIN_API_TOKEN", ""),
         dashboard_public=_env_bool("DASHBOARD_PUBLIC", False),
+        demo_public=_env_bool("DEMO_PUBLIC", False),
+        demo_max_runs_per_hour=int(os.getenv("DEMO_MAX_RUNS_PER_HOUR", "20")),
+        demo_max_questions_per_hour=int(os.getenv("DEMO_MAX_QUESTIONS_PER_HOUR", "30")),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         ai_enabled=_env_bool("AI_ENABLED", True),
         ai_provider=os.getenv("AI_PROVIDER", "auto").strip().lower() or "auto",  # type: ignore[arg-type]

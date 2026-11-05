@@ -16,6 +16,7 @@
     chartAsTable: false,
     timer: null,
     inFlight: false,
+    paypal: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -403,6 +404,7 @@
     state.selectedDepositId = row.deposit_id;
     state.selectedUpdatedAt = row.updated_at;
     loadExplanation(row.deposit_id);
+    if (state.paypal) state.paypal.setDeposit(row);
   }
 
   async function loadExplanation(depositId) {
@@ -622,6 +624,7 @@
       state.token = value || null;
       store.set("sessionStorage", "ct-admin-token", state.token);
       refresh();
+      if (state.paypal) state.paypal.refresh();
     });
 
     $("chart-view-toggle").addEventListener("click", (event) => {
@@ -636,6 +639,13 @@
     const auto = $("auto-refresh");
     auto.checked = store.get("localStorage", "ct-auto-refresh") !== "off";
     auto.addEventListener("change", () => setAutoRefresh(auto.checked));
+
+    if (window.CTPayPal) {
+      state.paypal = window.CTPayPal.create($("paypal-panel"), {
+        headers: () => (state.token ? { "X-Admin-Token": state.token } : {}),
+        compact: true,
+      });
+    }
 
     initGrids();
     updateAssistantState();

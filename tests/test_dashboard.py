@@ -36,7 +36,7 @@ async def _one_refunded_one_forfeited(client: httpx.AsyncClient) -> tuple[str, s
 
 @pytest.mark.asyncio
 async def test_dashboard_page_and_assets_are_served(async_client: httpx.AsyncClient) -> None:
-    page = await async_client.get("/")
+    page = await async_client.get("/console")
     assert page.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
     assert "CrawlerTrust publisher console" in page.text

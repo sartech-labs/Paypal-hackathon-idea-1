@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CrawlerTrust Live Demo</title>
+  <meta name="description" content="Run an AI crawler against a CrawlerTrust gateway: an HTTP 402 challenge, a refundable PayPal deposit, policy enforcement, automatic refund or forfeiture, and PayPal verification through PayPal's MCP server.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%232a78d6'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="stylesheet" href="/static/demo.css">
+  <script src="/static/paypal_panel.js" defer></script>
+  <script src="/static/demo.js" defer></script>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-row">
+        <span class="logo">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="var(--accent)"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+          <h1>CrawlerTrust</h1>
+        </span>
+        <nav class="nav" aria-label="Pages">
+          <a href="/" aria-current="page">Live demo</a>
+          <a href="/console">Publisher console</a>
+          <a href="/docs">API docs</a>
+        </nav>
+      </div>
+      <p class="tagline">Refundable PayPal deposits that keep AI crawlers accountable. Good agents crawl free; agents that break the rules pay.</p>
+      <div class="badges" id="badges" aria-label="Gateway configuration"></div>
+    </div>
+    <div class="controls">
+      <form class="token-form" id="token-form" autocomplete="off">
+        <input type="password" id="admin-token" placeholder="Admin token" aria-label="Admin token">
+        <button type="submit">Use token</button>
+      </form>
+      <button type="button" id="theme-toggle" aria-label="Switch color theme">Theme: system</button>
+    </div>
+  </header>
+
+  <section class="banner" id="banner" role="status" hidden></section>
+
+  <section class="card launcher" aria-label="Start a crawler run">
+    <fieldset>
+      <legend>1. Pick a crawler</legend>
+      <div class="choice-row">
+        <label class="choice">
+          <input type="radio" name="persona" value="compliant" checked>
+          <span class="choice-title">Compliant research crawler</span>
+          <span class="choice-desc">Reads the policy, pays the deposit with PayPal, paces itself to the rate limit, and ignores a prompt injection planted in a page.</span>
+          <span class="choice-expect">Expected outcome: deposit returned</span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="persona" value="rogue">
+          <span class="choice-title">Rogue scraper</span>
+          <span class="choice-desc">Pays, then ignores the rules: probes admin and private paths, tries path traversal, and bursts requests.</span>
+          <span class="choice-expect">Expected outcome: deposit forfeited</span>
+        </label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>2. Who drives it</legend>
+      <div class="choice-stack">
+        <label class="choice">
+          <input type="radio" name="driver" value="ai" id="driver-ai">
+          <span class="choice-title" id="driver-ai-title">AI agent</span>
+          <span class="choice-desc" id="driver-ai-desc">An AI model reads the challenge and decides each step.</span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="driver" value="scripted" id="driver-scripted">
+          <span class="choice-title">Scripted crawler</span>
+          <span class="choice-desc">Fixed steps, no AI key needed. Same gateway, same PayPal calls.</span>
+        </label>
+      </div>
+    </fieldset>
+    <div class="launch-actions">
+      <button type="button" class="primary big" id="start-button">Start run</button>
+      <button type="button" id="stop-button" hidden>Stop run</button>
+      <p class="hint" id="launch-hint" role="status"></p>
+    </div>
+  </section>
+
+  <ol class="steps" id="steps" aria-label="Protocol steps"></ol>
+
+  <div class="demo-layout">
+    <section class="card" aria-labelledby="run-title">
+      <div class="card-head">
+        <div>
+          <h2 id="run-title">Live run</h2>
+          <p class="card-sub" id="run-sub">Every step the crawler takes and how the gateway answers.</p>
+        </div>
+        <span class="run-meta" id="run-meta"></span>
+      </div>
+      <div class="callout" id="approval" role="alert" hidden>
+        <strong>PayPal approval needed</strong>
+        <span>The crawler created a PayPal Sandbox order for its deposit. Approve it with a Sandbox buyer account; the run continues automatically.</span>
+        <div class="callout-actions">
+          <button type="button" class="primary" id="approval-open">Open PayPal checkout</button>
+          <button type="button" id="approval-done">I approved it</button>
+        </div>
+      </div>
+      <ol class="timeline" id="timeline" aria-live="polite"></ol>
+      <div id="report"></div>
+    </section>
+
+    <aside class="demo-side">
+      <section class="card" aria-labelledby="deposit-title">
+        <div class="card-head">
+          <div>
+            <h2 id="deposit-title">Deposit</h2>
+            <p class="card-sub" id="deposit-sub">The refundable PayPal deposit backing this crawler's session.</p>
+          </div>
+        </div>
+        <div id="deposit"><p class="empty">No deposit yet. Start a run.</p></div>
+      </section>
+
+      <section class="card" aria-labelledby="explain-title">
+        <div class="card-head">
+          <div>
+            <h2 id="explain-title">Why this outcome</h2>
+            <p class="card-sub">Decided by the gateway's rules from its audit log. The explanation cites the audit events behind each statement.</p>
+          </div>
+        </div>
+        <div id="explanation"><p class="empty">Appears when the session ends.</p></div>
+      </section>
+
+      <section class="card" id="paypal-panel" aria-labelledby="paypal-title"></section>
+    </aside>
+  </div>
+
+  <footer>
+    CrawlerTrust gateway ·
+    <a href="/console">Publisher console</a> ·
+    <a href="/docs">API docs</a> ·
+    <a href="/policies">Policy JSON</a> ·
+    <a href="/robots.txt">robots.txt</a> ·
+    <a href="/health">Health</a>
+  </footer>
+</div>
+</body>
+</html>

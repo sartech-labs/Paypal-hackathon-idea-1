@@ -181,6 +181,11 @@ class PaymentProvider(abc.ABC):
     def mode(self) -> PaymentMode:
         """Return the active PaymentMode."""
 
+    @property
+    def autopay(self) -> bool:
+        """True when deposits complete without a buyer approval step (Sandbox test card)."""
+        return False
+
     @abc.abstractmethod
     async def create_order(
         self,
@@ -600,6 +605,18 @@ class MockPaymentProvider(PaymentProvider):
         )
 
 
+# PayPal's published Sandbox test card. Used only when PAYPAL_SANDBOX_AUTOPAY=true, which
+# settings validation allows only against api-m.sandbox.paypal.com. With a card payment
+# source PayPal completes the order (capture or authorization) in the create call, and
+# the later capture/authorize step reconciles through the ORDER_ALREADY_* paths.
+SANDBOX_TEST_CARD: dict[str, str] = {
+    "number": "4032039317984658",
+    "expiry": "2030-12",
+    "security_code": "123",
+    "name": "CrawlerTrust Sandbox Agent",
+}
+
+
 class PayPalSandboxProvider(PaymentProvider):
     """
     PayPal Sandbox API v2 payment provider implementing:
@@ -623,10 +640,17 @@ class PayPalSandboxProvider(PaymentProvider):
         self._transport = transport
         self._cached_token: Optional[str] = None
         self._token_expires_at: float = 0.0
+        # Settings validation already rejects autopay outside the Sandbox API.
+        self._autopay = settings.paypal_sandbox_autopay and settings.paypal_is_sandbox
 
     @property
     def mode(self) -> PaymentMode:
         return PaymentMode.PAYPAL_SANDBOX
+
+    @property
+    def autopay(self) -> bool:
+        """True when deposits are paid with PayPal's Sandbox test card (no buyer approval)."""
+        return self._autopay
 
     def _ensure_credentials(self) -> None:
         if not self._client_id or not self._client_secret:
@@ -836,20 +860,24 @@ class PayPalSandboxProvider(PaymentProvider):
                         },
                     }
                 ],
-                "payment_source": {
-                    "paypal": {
-                        "experience_context": {
-                            "return_url": (
-                                f"{self._app_public_url}/deposits/paypal/return?"
-                                f"{callback_query}"
-                            ),
-                            "cancel_url": (
-                                f"{self._app_public_url}/deposits/paypal/cancel?"
-                                f"{callback_query}"
-                            ),
+                "payment_source": (
+                    {"card": dict(SANDBOX_TEST_CARD)}
+                    if self._autopay
+                    else {
+                        "paypal": {
+                            "experience_context": {
+                                "return_url": (
+                                    f"{self._app_public_url}/deposits/paypal/return?"
+                                    f"{callback_query}"
+                                ),
+                                "cancel_url": (
+                                    f"{self._app_public_url}/deposits/paypal/cancel?"
+                                    f"{callback_query}"
+                                ),
+                            }
                         }
                     }
-                },
+                ),
             }
             try:
                 response = await client.post(

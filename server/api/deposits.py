@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+import html
+from typing import Literal, Optional, Union
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse
 
 from server.core.security import StateTransitionError
 from server.dependencies import (
@@ -76,6 +78,43 @@ def _paypal_callback_response(
         captured_amount=deposit.captured_amount,
         currency=deposit.currency,
     )
+
+
+_CALLBACK_MESSAGES = {
+    "CAPTURED": ("Deposit paid", "PayPal captured the refundable deposit. The crawler can continue."),
+    "AUTHORIZED": ("Deposit hold placed", "PayPal authorized the refundable deposit hold. The crawler can continue."),
+    "ALREADY_CAPTURED": ("Deposit already paid", "This deposit was already captured."),
+    "ALREADY_AUTHORIZED": ("Deposit hold already placed", "This deposit hold was already authorized."),
+    "CANCELLED": ("Checkout cancelled", "No payment was taken. The crawler cannot start a paid session."),
+}
+
+
+def _wants_html(request: Request) -> bool:
+    return "text/html" in request.headers.get("accept", "")
+
+
+def _callback_page(result: PayPalApprovalCallbackResponse) -> HTMLResponse:
+    """Small page for the buyer's browser after PayPal redirects back."""
+    title, message = _CALLBACK_MESSAGES[result.outcome]
+    body = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{html.escape(title)} · CrawlerTrust</title>
+<style>
+:root {{ color-scheme: light dark; --page: #f9f9f7; --text: #0b0b0b; --muted: #52514e; --card: #fcfcfb; --border: rgba(11,11,11,.1); }}
+@media (prefers-color-scheme: dark) {{ :root {{ --page: #0d0d0d; --text: #f0efec; --muted: #c3c2b7; --card: #1a1a19; --border: rgba(255,255,255,.1); }} }}
+body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--page); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 16px; box-sizing: border-box; }}
+main {{ max-width: 420px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }}
+h1 {{ font-size: 20px; margin: 0 0 8px; }} p {{ margin: 0 0 12px; color: var(--muted); }} code {{ font-size: 13px; }}
+</style></head>
+<body><main>
+<h1>{html.escape(title)}</h1>
+<p>{html.escape(message)}</p>
+<p>Deposit <code>{html.escape(result.deposit_id)}</code> · PayPal order <code>{html.escape(result.provider_order_id)}</code></p>
+<p>You can close this window and return to the demo.</p>
+</main>
+<script>try {{ if (window.opener) {{ window.opener.postMessage({{ type: "crawlertrust-paypal", outcome: {result.outcome!r} }}, window.location.origin); setTimeout(() => window.close(), 1500); }} }} catch (_) {{}}</script>
+</body></html>"""
+    return HTMLResponse(body)
 
 
 async def _authorize_deposit_access(
@@ -155,8 +194,9 @@ async def _authorize_deposit_access(
 async def paypal_approval_return(
     deposit_id: str,
     token: str,
+    request: Request,
     container: AppContainer = Depends(get_container),
-) -> PayPalApprovalCallbackResponse:
+) -> Union[PayPalApprovalCallbackResponse, HTMLResponse]:
     deposit = await _get_paypal_callback_deposit(
         deposit_id=deposit_id,
         order_id=token,
@@ -196,10 +236,11 @@ async def paypal_approval_return(
                 "message": updated.failure_reason or "PayPal payment could not be verified.",
             },
         )
-    return _paypal_callback_response(
+    result = _paypal_callback_response(
         updated,
         "AUTHORIZED" if updated.payment_status == PaymentStatus.AUTHORIZED else "CAPTURED",
     )
+    return _callback_page(result) if _wants_html(request) else result
 
 
 @router.get(
@@ -210,8 +251,9 @@ async def paypal_approval_return(
 async def paypal_approval_cancel(
     deposit_id: str,
     token: str,
+    request: Request,
     container: AppContainer = Depends(get_container),
-) -> PayPalApprovalCallbackResponse:
+) -> Union[PayPalApprovalCallbackResponse, HTMLResponse]:
     deposit = await _get_paypal_callback_deposit(
         deposit_id=deposit_id,
         order_id=token,
@@ -223,7 +265,8 @@ async def paypal_approval_cancel(
         outcome = "ALREADY_AUTHORIZED"
     else:
         outcome = "CANCELLED"
-    return _paypal_callback_response(deposit, outcome)
+    result = _paypal_callback_response(deposit, outcome)
+    return _callback_page(result) if _wants_html(request) else result
 
 
 @router.post(

@@ -8,12 +8,14 @@ from fastapi import Depends, Header, HTTPException, Request, status
 
 from server.config import Settings
 from server.core.identity import IdentityService
+from server.core.quotas import HourlyQuota
 from server.core.security import constant_time_equals
 from server.core.sessions import SessionManager
 from server.schemas import PaymentMode, SessionRecord, SettlementMode
 from server.services.ai_client import TextGenerator, build_text_generator
 from server.services.audit_logger import AuditLogger
 from server.services.content_service import ContentService
+from server.services.demo_runner import DemoRunner, HttpFactory, LlmFactory
 from server.services.deposit_manager import DepositManager
 from server.services.explainer import DepositExplainer
 from server.services.payment_service import (
@@ -21,6 +23,8 @@ from server.services.payment_service import (
     PaymentProvider,
     PayPalSandboxProvider,
 )
+from server.services.paypal_assistant import PayPalAssistant
+from server.services.paypal_mcp import PayPalMCPClient
 from server.services.policy_assistant import PolicyAssistant
 from server.services.policy_engine import PolicyEngine
 from server.services.rate_limiter import SlidingWindowRateLimiter
@@ -35,6 +39,9 @@ class AppContainer:
         payment_provider: Optional[PaymentProvider] = None,
         rate_limiter: Optional[SlidingWindowRateLimiter] = None,
         ai_generator: Optional[TextGenerator] = None,
+        paypal_mcp: Optional[PayPalMCPClient] = None,
+        demo_http_factory: Optional[HttpFactory] = None,
+        demo_llm_factory: Optional[LlmFactory] = None,
     ) -> None:
         self.settings = settings
         self.content_service = ContentService(settings)
@@ -68,6 +75,14 @@ class AppContainer:
         self.ai_generator: TextGenerator = ai_generator or build_text_generator(settings)
         self.explainer = DepositExplainer(self.ai_generator, self.site_config)
         self.policy_assistant = PolicyAssistant(self.ai_generator, self.site_config)
+        self.paypal_mcp = paypal_mcp or PayPalMCPClient(settings)
+        self.paypal_assistant = PayPalAssistant(self.ai_generator, self.paypal_mcp, self.deposit_manager)
+        self.paypal_quota = HourlyQuota(settings.demo_max_questions_per_hour)
+        self.demo_runner = DemoRunner(
+            max_runs_per_hour=settings.demo_max_runs_per_hour,
+            http_factory=demo_http_factory,
+            llm_factory=demo_llm_factory,
+        )
 
     def load_persisted_state(self) -> None:
         """Load audit log, payment/challenge records, and session snapshots from disk."""
@@ -117,6 +132,15 @@ def is_valid_admin_token(
     if not configured or not x_admin_token:
         return False
     return constant_time_equals(configured, x_admin_token.strip())
+
+
+def demo_access(container: AppContainer, x_admin_token: Optional[str]) -> str:
+    """'admin' with a valid admin token, 'public' when DEMO_PUBLIC=true, else 'none'."""
+    if is_valid_admin_token(container, x_admin_token):
+        return "admin"
+    if x_admin_token is None and container.settings.demo_public:
+        return "public"
+    return "none"
 
 
 async def require_authenticated_session(

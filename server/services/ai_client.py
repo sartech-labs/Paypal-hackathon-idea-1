@@ -11,7 +11,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Optional, Protocol
+from typing import Any, Awaitable, Callable, Optional, Protocol
 
 import anthropic
 import openai
@@ -58,6 +58,28 @@ class AIResult:
             raise AIServiceError("The model returned text that is not valid JSON.") from exc
 
 
+@dataclass(frozen=True)
+class ToolSpec:
+    """A function tool offered to the model in a tool loop."""
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    strict: bool = True
+
+
+@dataclass(frozen=True)
+class ToolLoopResult:
+    text: str
+    model: str
+    steps: int
+    tool_calls: int
+
+
+# Runs one tool call: (name, arguments) -> (result text, is_error).
+ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[tuple[str, bool]]]
+
+
 class TextGenerator(Protocol):
     """Interface implemented by the provider clients and by test fakes."""
 
@@ -78,6 +100,17 @@ class TextGenerator(Protocol):
         max_tokens: int = 16000,
     ) -> AIResult: ...
 
+    async def run_tool_loop(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        tools: list[ToolSpec],
+        execute: ToolExecutor,
+        max_steps: int = 8,
+        max_tokens: int = 8000,
+    ) -> ToolLoopResult: ...
+
 
 # --- Claude (Anthropic) -----------------------------------------------------------------
 
@@ -96,6 +129,12 @@ class ClaudeTextGenerator:
         self._use_refusal_fallback = settings.ai_refusal_fallback
         self._timeout = settings.ai_timeout_seconds
         self._client = client
+        # With AI_PROVIDER=auto and no key at all, either provider's key would do.
+        self._missing_key_message = (
+            "No AI key is configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY to enable AI features."
+            if settings.ai_provider == "auto"
+            else "No Claude credentials are configured. Set ANTHROPIC_API_KEY to enable AI features."
+        )
 
     @property
     def provider(self) -> str:
@@ -127,13 +166,7 @@ class ClaudeTextGenerator:
         json_schema: Optional[dict[str, Any]] = None,
         max_tokens: int = 16000,
     ) -> AIResult:
-        if not self._enabled:
-            raise AIUnavailableError("AI features are disabled (AI_ENABLED=false).")
-        if not self.is_available():
-            raise AIUnavailableError(
-                "No Claude credentials are configured. Set ANTHROPIC_API_KEY to enable AI features."
-            )
-
+        self._ensure_ready()
         output_config: dict[str, Any] = {"effort": self._effort}
         if json_schema is not None:
             output_config["format"] = {"type": "json_schema", "schema": json_schema}
@@ -145,10 +178,25 @@ class ClaudeTextGenerator:
             "messages": [{"role": "user", "content": prompt}],
             "output_config": output_config,
         }
+        response = await self._create(request)
+        text = "".join(
+            block.text for block in response.content if getattr(block, "type", None) == "text"
+        )
+        if not text.strip():
+            raise AIServiceError("Claude returned an empty response.")
+        return AIResult(text=text, model=str(response.model), stop_reason=str(response.stop_reason))
+
+    def _ensure_ready(self) -> None:
+        if not self._enabled:
+            raise AIUnavailableError("AI features are disabled (AI_ENABLED=false).")
+        if not self.is_available():
+            raise AIUnavailableError(self._missing_key_message)
+
+    async def _create(self, request: dict[str, Any]) -> Any:
+        """Call the Messages API and map SDK errors and unusable stops to AI errors."""
         if self._use_refusal_fallback:
             request["betas"] = [SERVER_SIDE_FALLBACK_BETA]
             request["fallbacks"] = "default"
-
         try:
             response = await self._get_client().beta.messages.create(**request)
         except anthropic.AuthenticationError as exc:
@@ -178,13 +226,67 @@ class ClaudeTextGenerator:
             )
         if response.stop_reason == "max_tokens":
             raise AIServiceError("Claude's response was cut off at the output token limit.")
+        return response
 
-        text = "".join(
-            block.text for block in response.content if getattr(block, "type", None) == "text"
-        )
-        if not text.strip():
-            raise AIServiceError("Claude returned an empty response.")
-        return AIResult(text=text, model=str(response.model), stop_reason=str(response.stop_reason))
+    async def run_tool_loop(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        tools: list[ToolSpec],
+        execute: ToolExecutor,
+        max_steps: int = 8,
+        max_tokens: int = 8000,
+    ) -> ToolLoopResult:
+        """Manual tool-use loop: the model calls tools, the caller executes them."""
+        self._ensure_ready()
+        messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+        tool_defs = [
+            {
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.input_schema,
+                **({"strict": True} if t.strict else {}),
+            }
+            for t in tools
+        ]
+        calls = 0
+        model = self._model
+        for step in range(1, max_steps + 1):
+            response = await self._create(
+                {
+                    "model": self._model,
+                    "max_tokens": max_tokens,
+                    "system": system,
+                    "tools": tool_defs,
+                    "messages": messages,
+                    "output_config": {"effort": self._effort},
+                }
+            )
+            model = str(getattr(response, "model", model))
+            # Echo the full content back so thinking and tool_use blocks stay paired.
+            messages.append({"role": "assistant", "content": response.content})
+            if response.stop_reason == "pause_turn":
+                continue
+            uses = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
+            if not uses:
+                text = "".join(
+                    b.text for b in response.content if getattr(b, "type", None) == "text"
+                ).strip()
+                if not text:
+                    raise AIServiceError("Claude returned an empty response.")
+                return ToolLoopResult(text=text, model=model, steps=step, tool_calls=calls)
+            results: list[dict[str, Any]] = []
+            for use in uses:
+                calls += 1
+                arguments = use.input if isinstance(use.input, dict) else {}
+                content, is_error = await execute(use.name, arguments)
+                block: dict[str, Any] = {"type": "tool_result", "tool_use_id": use.id, "content": content}
+                if is_error:
+                    block["is_error"] = True
+                results.append(block)
+            messages.append({"role": "user", "content": results})
+        raise AIServiceError(f"The assistant did not finish within {max_steps} steps.")
 
 
 # --- OpenAI -----------------------------------------------------------------------------
@@ -250,13 +352,7 @@ class OpenAITextGenerator:
         json_schema: Optional[dict[str, Any]] = None,
         max_tokens: int = 16000,
     ) -> AIResult:
-        if not self._enabled:
-            raise AIUnavailableError("AI features are disabled (AI_ENABLED=false).")
-        if not self.is_available():
-            raise AIUnavailableError(
-                "No OpenAI API key is configured. Set OPENAI_API_KEY to enable AI features."
-            )
-
+        self._ensure_ready()
         request: dict[str, Any] = {
             "model": self._model,
             "instructions": system,
@@ -274,6 +370,22 @@ class OpenAITextGenerator:
                 }
             }
 
+        response = await self._create(request)
+        text = getattr(response, "output_text", "") or ""
+        if not text.strip():
+            raise AIServiceError("OpenAI returned an empty response.")
+        return AIResult(text=text, model=str(response.model), stop_reason="completed")
+
+    def _ensure_ready(self) -> None:
+        if not self._enabled:
+            raise AIUnavailableError("AI features are disabled (AI_ENABLED=false).")
+        if not self.is_available():
+            raise AIUnavailableError(
+                "No OpenAI API key is configured. Set OPENAI_API_KEY to enable AI features."
+            )
+
+    async def _create(self, request: dict[str, Any]) -> Any:
+        """Call the Responses API and map SDK errors and unusable results to AI errors."""
         try:
             response = await self._get_client().responses.create(**request)
         except openai.AuthenticationError as exc:
@@ -309,11 +421,66 @@ class OpenAITextGenerator:
         refusal = openai_refusal_text(response)
         if refusal is not None:
             raise AIRefusalError(f"OpenAI declined this request: {refusal[:200]}")
+        return response
 
-        text = getattr(response, "output_text", "") or ""
-        if not text.strip():
-            raise AIServiceError("OpenAI returned an empty response.")
-        return AIResult(text=text, model=str(response.model), stop_reason="completed")
+    async def run_tool_loop(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        tools: list[ToolSpec],
+        execute: ToolExecutor,
+        max_steps: int = 8,
+        max_tokens: int = 8000,
+    ) -> ToolLoopResult:
+        """Manual function-calling loop over the Responses API."""
+        self._ensure_ready()
+        items: list[Any] = [{"role": "user", "content": prompt}]
+        tool_defs = [
+            {
+                "type": "function",
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.input_schema,
+                "strict": t.strict,
+            }
+            for t in tools
+        ]
+        calls = 0
+        model = self._model
+        for step in range(1, max_steps + 1):
+            response = await self._create(
+                {
+                    "model": self._model,
+                    "instructions": system,
+                    "input": items,
+                    "tools": tool_defs,
+                    "max_output_tokens": max_tokens,
+                    "reasoning": {"effort": self._effort},
+                }
+            )
+            model = str(getattr(response, "model", model))
+            output = list(getattr(response, "output", None) or [])
+            # Keep every output item (reasoning, messages, calls) for the next request.
+            items.extend(output)
+            function_calls = [item for item in output if getattr(item, "type", None) == "function_call"]
+            if not function_calls:
+                text = (getattr(response, "output_text", "") or "").strip()
+                if not text:
+                    raise AIServiceError("OpenAI returned an empty response.")
+                return ToolLoopResult(text=text, model=model, steps=step, tool_calls=calls)
+            for call in function_calls:
+                calls += 1
+                try:
+                    arguments = json.loads(call.arguments or "{}")
+                except json.JSONDecodeError:
+                    arguments = None
+                if isinstance(arguments, dict):
+                    content, _is_error = await execute(call.name, arguments)
+                else:
+                    content = json.dumps({"error": "Tool arguments were not a JSON object."})
+                items.append({"type": "function_call_output", "call_id": call.call_id, "output": content})
+        raise AIServiceError(f"The assistant did not finish within {max_steps} steps.")
 
 
 # --- Provider selection -------------------------------------------------------------------

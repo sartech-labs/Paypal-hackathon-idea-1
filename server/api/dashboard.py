@@ -1,4 +1,4 @@
-"""Publisher dashboard: the web console at / and its read-only data endpoints."""
+"""Publisher dashboard: the web console at /console and its read-only data endpoints."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def _needs_attention(deposit: DepositRecord) -> bool:
     )
 
 
-@router.get("/", include_in_schema=False)
+@router.get("/console", include_in_schema=False)
 async def dashboard_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "dashboard.html", media_type="text/html")
 
@@ -146,6 +146,7 @@ async def dashboard_data(
                 refund_status=d.refund_status,
                 created_at=d.created_at,
                 updated_at=d.updated_at,
+                provider_order_id=d.provider_order_id,
             )
             for d in sorted(deposits, key=lambda record: record.created_at, reverse=True)
         ],

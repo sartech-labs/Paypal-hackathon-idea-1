@@ -1,4 +1,4 @@
-"""Test doubles for the Claude API used by CrawlerTrust's AI features."""
+"""Test doubles for the AI APIs and the PayPal MCP server used by CrawlerTrust."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from types import SimpleNamespace
 from typing import Any, Optional, Union
 
-from server.services.ai_client import AIResult
+from server.services.ai_client import AIResult, AIUnavailableError, ToolLoopResult, ToolSpec
 
 
 class FakeTextGenerator:
@@ -19,9 +19,14 @@ class FakeTextGenerator:
         model: str = "claude-test-model",
         available: bool = True,
         provider: str = "claude",
+        tool_script: Optional[list[Any]] = None,
     ) -> None:
         self.responses = list(responses or [])
         self.calls: list[dict[str, Any]] = []
+        # Tool loop script: each step is a list of (tool name, arguments) calls, a final
+        # answer string, or an exception to raise.
+        self.tool_script = list(tool_script or [])
+        self.tool_loops: list[dict[str, Any]] = []
         self._model = model
         self._available = available
         self._provider = provider
@@ -48,6 +53,9 @@ class FakeTextGenerator:
         self.calls.append(
             {"system": system, "prompt": prompt, "json_schema": json_schema, "max_tokens": max_tokens}
         )
+        if not self._available:
+            # Like the real generators: no key configured.
+            raise AIUnavailableError("No AI key is configured (fake).")
         if not self.responses:
             raise AssertionError("FakeTextGenerator received more calls than scripted responses")
         item = self.responses.pop(0)
@@ -55,6 +63,30 @@ class FakeTextGenerator:
             raise item
         text = item if isinstance(item, str) else json.dumps(item)
         return AIResult(text=text, model=self._model, stop_reason="end_turn")
+
+    async def run_tool_loop(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        tools: list[ToolSpec],
+        execute: Any,
+        max_steps: int = 8,
+        max_tokens: int = 8000,
+    ) -> ToolLoopResult:
+        record: dict[str, Any] = {"system": system, "prompt": prompt, "tools": [t.name for t in tools], "results": []}
+        self.tool_loops.append(record)
+        calls = 0
+        for step, item in enumerate(self.tool_script, start=1):
+            if isinstance(item, Exception):
+                raise item
+            if isinstance(item, str):
+                return ToolLoopResult(text=item, model=self._model, steps=step, tool_calls=calls)
+            for name, arguments in item:
+                calls += 1
+                content, is_error = await execute(name, arguments)
+                record["results"].append({"name": name, "content": content, "is_error": is_error})
+        raise AssertionError("FakeTextGenerator tool script ended without a final answer")
 
 
 class _FakeAsyncMessages:
@@ -64,9 +96,12 @@ class _FakeAsyncMessages:
         self.calls: list[dict[str, Any]] = []
 
     async def create(self, **kwargs: Any) -> Any:
-        self.calls.append(kwargs)
+        # Snapshot the conversation: tool loops keep appending to the same list.
+        self.calls.append({**kwargs, "messages": list(kwargs.get("messages", []))})
         if self.error is not None:
             raise self.error
+        if isinstance(self.response, list):
+            return self.response.pop(0)
         return self.response
 
 
@@ -93,9 +128,14 @@ class _FakeAsyncResponses:
         self.calls: list[dict[str, Any]] = []
 
     async def create(self, **kwargs: Any) -> Any:
-        self.calls.append(kwargs)
+        snapshot = dict(kwargs)
+        if isinstance(kwargs.get("input"), list):
+            snapshot["input"] = list(kwargs["input"])
+        self.calls.append(snapshot)
         if self.error is not None:
             raise self.error
+        if isinstance(self.response, list):
+            return self.response.pop(0)
         return self.response
 
 
@@ -152,3 +192,60 @@ def fake_message(
         stop_details=stop_details,
         model=model,
     )
+
+
+# --- PayPal MCP server ------------------------------------------------------------------
+
+
+class FakeMCPRawSession:
+    """Stands in for mcp.ClientSession: lists tools and returns canned tool results."""
+
+    def __init__(self, results: dict[str, Any], tools: Optional[list[str]] = None) -> None:
+        self.results = results
+        self.tool_names = tools or [
+            "get_order",
+            "get_refund",
+            "list_transactions",
+            "list_disputes",
+            "get_dispute",
+            "create_refund",
+            "accept_dispute_claim",
+        ]
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def list_tools(self) -> Any:
+        return SimpleNamespace(
+            tools=[SimpleNamespace(name=name, description=f"{name} tool", input_schema={"type": "object"}) for name in self.tool_names]
+        )
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        self.calls.append((name, arguments))
+        value = self.results.get(name)
+        if callable(value):
+            value = value(arguments)
+        if isinstance(value, Exception):
+            raise value
+        text = value if isinstance(value, str) else json.dumps(value)
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)], is_error=False)
+
+
+def fake_mcp_connector(session: FakeMCPRawSession, seen_tokens: Optional[list[str]] = None) -> Any:
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def connect(token: str) -> Any:
+        if seen_tokens is not None:
+            seen_tokens.append(token)
+        yield session
+
+    return connect
+
+
+class FakeTokenSource:
+    configured = True
+
+    def __init__(self, token: str = "A21-test-access-token") -> None:
+        self.token = token
+
+    async def get_token(self) -> str:
+        return self.token

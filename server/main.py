@@ -11,11 +11,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from server.api import audit, dashboard, deposits, gateway, policies, sessions
+from server.api import audit, dashboard, deposits, demo, gateway, paypal, policies, sessions
 from server.config import Settings, load_settings_from_env
 from server.dependencies import AppContainer
 from server.services.ai_client import TextGenerator
+from server.services.demo_runner import HttpFactory, LlmFactory
 from server.services.payment_service import PaymentProvider
+from server.services.paypal_mcp import PayPalMCPClient
 from server.services.rate_limiter import SlidingWindowRateLimiter
 
 logger = logging.getLogger("crawlertrust")
@@ -26,6 +28,9 @@ def create_app(
     payment_provider: Optional[PaymentProvider] = None,
     rate_limiter: Optional[SlidingWindowRateLimiter] = None,
     ai_generator: Optional[TextGenerator] = None,
+    paypal_mcp: Optional[PayPalMCPClient] = None,
+    demo_http_factory: Optional[HttpFactory] = None,
+    demo_llm_factory: Optional[LlmFactory] = None,
 ) -> FastAPI:
     """Create and configure the CrawlerTrust FastAPI application."""
     resolved_settings = settings or load_settings_from_env()
@@ -39,6 +44,9 @@ def create_app(
         payment_provider=payment_provider,
         rate_limiter=rate_limiter,
         ai_generator=ai_generator,
+        paypal_mcp=paypal_mcp,
+        demo_http_factory=demo_http_factory,
+        demo_llm_factory=demo_llm_factory,
     )
     container.load_persisted_state()
 
@@ -122,6 +130,8 @@ def create_app(
     app.include_router(policies.router)
     app.include_router(audit.router)
     app.include_router(dashboard.router)
+    app.include_router(demo.router)
+    app.include_router(paypal.router)
     app.mount("/static", StaticFiles(directory=dashboard.STATIC_DIR), name="static")
 
     return app

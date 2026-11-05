@@ -570,6 +570,7 @@ class DashboardDepositRow(BaseModel):
     refund_status: RefundTransactionStatus
     created_at: str
     updated_at: str
+    provider_order_id: Optional[str] = None
 
 
 class DashboardSessionRow(BaseModel):
@@ -633,3 +634,128 @@ class AuditSummaryResponse(BaseModel):
     refunds_by_status: dict[str, int]
     sessions_by_status: dict[str, int]
     violation_counts_by_reason: dict[str, int]
+
+
+# --- PayPal assistant (PayPal MCP server) ------------------------------------------------
+
+
+class PayPalToolCallTrace(BaseModel):
+    source: Literal["paypal_mcp", "crawlertrust"]
+    tool: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    ok: bool
+    duration_ms: int
+    summary: str
+    error: Optional[str] = None
+    preview: Optional[str] = None
+
+
+class PayPalVerificationCheck(BaseModel):
+    label: str
+    crawlertrust: str
+    paypal: str
+    status: Literal["match", "mismatch", "info"]
+
+
+class PayPalVerificationResponse(BaseModel):
+    deposit_id: str
+    deposit_state: DepositState
+    settlement_mode: SettlementMode
+    consistent: bool
+    verdict: str
+    checks: list[PayPalVerificationCheck]
+    calls: list[PayPalToolCallTrace]
+    mcp_server: str
+    transport: Literal["local", "hosted"]
+    checked_at: str
+
+
+class PayPalAssistantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=3, max_length=600)
+
+
+class PayPalAssistantResponse(BaseModel):
+    answer: str
+    generated_by: Literal["claude", "openai"]
+    model: str
+    calls: list[PayPalToolCallTrace]
+    steps: int
+    mcp_server: str
+    transport: Literal["local", "hosted"]
+    notice: str
+    generated_at: str
+
+
+class PayPalAssistantStatus(BaseModel):
+    mcp_configured: bool
+    mcp_unavailable_reason: Optional[str] = None
+    mcp_transport: Literal["local", "hosted"]
+    mcp_server: str
+    read_only_tools: list[str]
+    ai_available: bool
+    ai_provider: str
+    ai_model: str
+    payment_mode: PaymentMode
+    access: Literal["admin", "public"]
+    questions_remaining_this_hour: Optional[int] = None
+
+
+# --- Live demo runs ------------------------------------------------------------------------
+
+
+class DemoRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    driver: Literal["ai", "scripted"]
+    persona: Literal["compliant", "rogue"]
+
+
+class DemoRunEvent(BaseModel):
+    seq: int
+    at: str
+    kind: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class DemoRunResponse(BaseModel):
+    run_id: str
+    driver: Literal["ai", "scripted"]
+    persona: Literal["compliant", "rogue"]
+    status: Literal["running", "awaiting_approval", "completed", "failed", "cancelled"]
+    crawler_id: str
+    model: Optional[str] = None
+    provider: Optional[str] = None
+    started_at: str
+    finished_at: Optional[str] = None
+    approval_url: Optional[str] = None
+    deposit: Optional[dict[str, Any]] = None
+    session: Optional[dict[str, Any]] = None
+    explanation: Optional[dict[str, Any]] = None
+    final_text: Optional[str] = None
+    error: Optional[str] = None
+    usage: dict[str, Any] = Field(default_factory=dict)
+    events: list[DemoRunEvent] = Field(default_factory=list)
+    next_seq: int = 0
+
+
+class DemoConfigResponse(BaseModel):
+    site_name: str
+    policy_version: str
+    payment_mode: PaymentMode
+    paypal_autopay: bool
+    settlement_mode: SettlementMode
+    deposit_amount: str
+    currency: str
+    ai_available: bool
+    ai_provider: str
+    ai_model: str
+    paypal_mcp_configured: bool
+    paypal_mcp_transport: Literal["local", "hosted"]
+    demo_public: bool
+    access: Literal["admin", "public", "none"]
+    can_start_runs: bool
+    runs_remaining_this_hour: int
+    active_run_id: Optional[str] = None
+    recent_runs: list[dict[str, Any]] = Field(default_factory=list)

@@ -104,7 +104,7 @@ EventHandler = Callable[[str, dict[str, Any]], None]
 
 @dataclass
 class AgentRunResult:
-    stop: str  # completed | max_turns | refusal | max_tokens | error
+    stop: str  # completed | max_turns | refusal | max_tokens | error | cancelled
     final_text: str
     turns: int
     model: str
@@ -336,13 +336,18 @@ class CrawlerAgent:
         refusal_fallback: bool = True,
         on_event: Optional[EventHandler] = None,
         provider: str = "anthropic",
+        driver: Any = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> None:
         self._toolbox = toolbox
         self._max_turns = max_turns
-        self._model = model or DEFAULT_MODELS[provider]
+        self._model = model or DEFAULT_MODELS.get(provider, provider)
         self._emit: EventHandler = on_event or (lambda kind, payload: None)
-        if provider == "openai":
-            self._driver: Any = OpenAIDriver(llm, persona, self._model, effort)
+        self._should_stop = should_stop or (lambda: False)
+        if driver is not None:
+            self._driver: Any = driver
+        elif provider == "openai":
+            self._driver = OpenAIDriver(llm, persona, self._model, effort)
         else:
             self._driver = ClaudeDriver(llm, persona, self._model, effort, refusal_fallback)
 
@@ -350,6 +355,10 @@ class CrawlerAgent:
         result = AgentRunResult(stop="max_turns", final_text="", turns=0, model=self._model)
 
         for _ in range(self._max_turns):
+            if self._should_stop():
+                result.stop = "cancelled"
+                self._emit("stop", {"reason": "The run was stopped by the operator."})
+                return result
             result.turns += 1
             turn = self._driver.next_turn()
             result.input_tokens += turn.input_tokens

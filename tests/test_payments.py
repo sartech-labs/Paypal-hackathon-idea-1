@@ -12,7 +12,7 @@ import pytest
 from server.config import Settings
 from server.main import create_app
 from server.schemas import DepositState, PaymentStatus, RefundTransactionStatus
-from server.services.payment_service import PayPalSandboxProvider
+from server.services.payment_service import SANDBOX_TEST_CARD, PayPalSandboxProvider
 
 
 def _build_paypal_mock_transport(
@@ -418,6 +418,31 @@ async def test_paypal_order_contains_current_return_and_cancel_experience_contex
         "cancel_url": f"http://testserver/deposits/paypal/cancel?{callback_query}",
     }
     assert order_request["request_id"].startswith("ord_req_dep_")
+
+
+@pytest.mark.asyncio
+async def test_sandbox_autopay_pays_with_the_test_card_instead_of_buyer_approval(
+    test_settings: Settings,
+) -> None:
+    test_settings.payment_mode = "paypal_sandbox"
+    settings = test_settings.model_copy(update={"paypal_sandbox_autopay": True})
+    order_requests: list[dict[str, Any]] = []
+    provider = PayPalSandboxProvider(settings, transport=_build_paypal_mock_transport(order_requests=order_requests))
+    assert provider.autopay
+    app = create_app(settings=settings, payment_provider=provider)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        await _create_paypal_deposit(client, "crawler-autopay")
+        config = (await client.get("/demo/config", headers={"X-Admin-Token": settings.admin_api_token})).json()
+    source = order_requests[0]["body"]["payment_source"]
+    assert list(source) == ["card"]
+    assert source["card"]["number"] == SANDBOX_TEST_CARD["number"]
+    assert config["paypal_autopay"] is True
+
+
+def test_sandbox_autopay_is_rejected_outside_the_sandbox(test_settings: Settings) -> None:
+    with pytest.raises(ValueError, match="only allowed with the PayPal Sandbox"):
+        Settings(**{**test_settings.model_dump(), "paypal_base_url": "https://api-m.paypal.com", "paypal_sandbox_autopay": True})
+    assert not PayPalSandboxProvider(test_settings).autopay
 
 
 @pytest.mark.asyncio
