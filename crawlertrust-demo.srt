@@ -1,0 +1,131 @@
+1
+00:00:00,350 --> 00:00:06,614
+AI crawlers read the web at machine speed, and robots.txt is only a polite request.
+
+2
+00:00:06,614 --> 00:00:12,350
+CrawlerTrust backs a site's crawling rules with a refundable PayPal deposit.
+
+3
+00:00:13,150 --> 00:00:17,811
+This is the live demo, running against the PayPal Sandbox.
+
+4
+00:00:17,811 --> 00:00:21,025
+The crawler is driven by OpenAI GPT-5.5,
+
+5
+00:00:21,025 --> 00:00:26,650
+and the publisher's PayPal assistant talks to PayPal's own MCP server.
+
+6
+00:00:27,450 --> 00:00:30,020
+First, a well-behaved research agent.
+
+7
+00:00:30,020 --> 00:00:33,980
+It asks for the news and gets HTTP 402, Payment Required.
+
+8
+00:00:33,980 --> 00:00:38,704
+It reads the policy, pays a one-cent refundable deposit with PayPal,
+
+9
+00:00:38,704 --> 00:00:40,232
+and accepts the rules.
+
+10
+00:00:40,232 --> 00:00:44,191
+Then it crawls only allowed pages, within the rate limit.
+
+11
+00:00:44,191 --> 00:00:49,610
+One page hides an instruction telling AI agents to grab private customer data.
+
+12
+00:00:49,610 --> 00:00:53,500
+The agent treats page text as untrusted, and ignores it.
+
+13
+00:00:54,300 --> 00:00:58,963
+When the session ends, the gateway decides from its own audit log.
+
+14
+00:00:58,963 --> 00:01:02,142
+No violations, so PayPal refunds the deposit.
+
+15
+00:01:02,142 --> 00:01:07,300
+The AI explains why, and every statement cites the audit event behind it.
+
+16
+00:01:08,100 --> 00:01:11,745
+The publisher can check this against PayPal itself.
+
+17
+00:01:11,745 --> 00:01:17,319
+Verify with PayPal reads the order and the refund through PayPal's MCP server.
+
+18
+00:01:17,319 --> 00:01:20,750
+The order, amount, capture and refund all match.
+
+19
+00:01:21,550 --> 00:01:24,606
+Now the same model plays a greedy scraper.
+
+20
+00:01:24,606 --> 00:01:28,680
+It pays, skips the rules, and goes after the admin area,
+
+21
+00:01:28,680 --> 00:01:33,190
+private data and a path-traversal trick, then bursts requests.
+
+22
+00:01:33,190 --> 00:01:35,300
+The gateway blocks every one.
+
+23
+00:01:36,100 --> 00:01:37,990
+The deposit is forfeited.
+
+24
+00:01:37,990 --> 00:01:43,435
+That decision comes from deterministic policy rules, not from the model.
+
+25
+00:01:43,435 --> 00:01:45,250
+The AI only explains it.
+
+26
+00:01:46,050 --> 00:01:48,551
+Publishers can also ask questions.
+
+27
+00:01:48,551 --> 00:01:52,450
+The PayPal assistant answers with PayPal's MCP tools.
+
+28
+00:01:53,250 --> 00:01:58,210
+Here GPT-5.5 checked recent deposits against PayPal's records,
+
+29
+00:01:58,210 --> 00:02:03,650
+and it lists every tool call it made, so the answer can be verified.
+
+30
+00:02:04,450 --> 00:02:10,700
+The publisher console tracks every session, deposit and violation in real time.
+
+31
+00:02:11,500 --> 00:02:14,302
+Other 402 schemes charge for access.
+
+32
+00:02:14,302 --> 00:02:17,260
+CrawlerTrust charges for misbehaviour.
+
+33
+00:02:17,260 --> 00:02:19,050
+Good agents crawl free.
