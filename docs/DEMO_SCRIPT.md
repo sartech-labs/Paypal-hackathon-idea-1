@@ -2,6 +2,8 @@
 
 The Devpost submission needs a public YouTube video shorter than 3 minutes. The whole demo runs in the browser: the live demo page at `/` and the publisher console at `/console`. No terminal is needed on camera.
 
+**Automated recording.** `scripts/demo_video/make_video.sh ai video-out` records this storyboard in a real browser against the PayPal Sandbox and renders a narrated, captioned MP4 (see [`scripts/demo_video/README.md`](../scripts/demo_video/README.md)). The narration is generated from what each take actually did, and a take that goes off-script is rejected. The submitted video was made this way: 2 min 14 s, GPT-5.5 as both crawler personas, OpenAI `gpt-4o-mini-tts` narration. The manual storyboard below is for recording by hand.
+
 ## Before recording
 
 1. **Credentials:** `.env` has `PAYMENT_MODE=paypal_sandbox`, `PAYPAL_SANDBOX_AUTOPAY=true`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`), `DEMO_PUBLIC=true`, and `DASHBOARD_PUBLIC=true`. With autopay, deposits are real Sandbox payments made with PayPal's Sandbox test card, so there is no PayPal login on camera.
