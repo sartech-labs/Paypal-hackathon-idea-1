@@ -59,3 +59,6 @@ storage/*.lock
 *.swo
 .DS_Store
 Thumbs.db
+
+# Demo video renders
+video-out/

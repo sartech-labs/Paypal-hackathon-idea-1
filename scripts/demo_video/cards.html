@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CrawlerTrust video cards</title>
+<style>
+  :root { --page: #0d0d0d; --text: #f0efec; --muted: #c3c2b7; --accent: #3987e5; --good: #0ca30c; --critical: #d03b3b; }
+  html, body { margin: 0; width: 1920px; height: 1080px; background: var(--page); color: var(--text); font-family: Inter, system-ui, sans-serif; }
+  .card { display: none; box-sizing: border-box; width: 1920px; height: 1080px; padding: 150px 170px; flex-direction: column; justify-content: center; gap: 34px; }
+  .card:target { display: flex; }
+  .brand { display: flex; align-items: center; gap: 26px; }
+  .brand svg { width: 96px; height: 96px; }
+  h1 { margin: 0; font-size: 108px; font-weight: 700; letter-spacing: -0.02em; }
+  h2 { margin: 0; font-size: 54px; font-weight: 600; line-height: 1.2; max-width: 1500px; }
+  p { margin: 0; font-size: 34px; line-height: 1.45; color: var(--muted); max-width: 1500px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 18px; }
+  .pill { padding: 10px 24px; border-radius: 999px; border: 2px solid rgba(255,255,255,0.18); font-size: 28px; color: var(--muted); }
+  .pill b { color: var(--text); font-weight: 600; }
+  .contrast { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; max-width: 1500px; }
+  .contrast div { padding: 28px 32px; border-radius: 20px; background: #1a1a19; font-size: 36px; line-height: 1.35; }
+  .contrast .good { border-left: 8px solid var(--good); }
+  .contrast .bad { border-left: 8px solid var(--critical); }
+  .small { font-size: 26px; color: #898781; }
+</style>
+</head>
+<body>
+<section class="card" id="title">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="#3987e5"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+    <h1>CrawlerTrust</h1>
+  </div>
+  <h2>Refundable PayPal deposits that keep AI crawlers accountable</h2>
+  <p>An HTTP 402 gateway: AI agents pay a small refundable PayPal deposit to crawl. Follow the rules and get it back. Break them and lose it.</p>
+  <div class="pills">
+    <span class="pill"><b>PayPal</b> Orders v2 · Payments v2 · MCP server</span>
+    <span class="pill"><b>AI</b> agent · explanations · PayPal assistant</span>
+    <span class="pill">PayPal AI Hackathon 2026</span>
+  </div>
+</section>
+
+<section class="card" id="closing">
+  <h2>Other 402 schemes charge for access. CrawlerTrust charges for misbehaviour.</h2>
+  <div class="contrast">
+    <div class="good">Compliant agent: deposit refunded, crawls free</div>
+    <div class="bad">Rogue agent: blocked, deposit forfeited</div>
+  </div>
+  <p>The money decision comes from deterministic policy rules. The AI acts, explains, and checks PayPal's records, but never decides who gets paid.</p>
+  <div class="pills">
+    <span class="pill"><b>PayPal</b> Sandbox · Orders v2 · Payments v2 · @paypal/mcp</span>
+    <span class="pill"><b>OpenAI</b> GPT-5.5 · Claude supported</span>
+    <span class="pill">Python · FastAPI · MCP Python SDK</span>
+  </div>
+  <p class="small">github.com/sartech-labs/Paypal-hackathon-idea-1</p>
+</section>
+</body>
+</html>
