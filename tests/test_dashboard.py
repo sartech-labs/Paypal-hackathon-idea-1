@@ -73,8 +73,8 @@ async def test_dashboard_kpis_and_rows(async_client: httpx.AsyncClient) -> None:
     kpis = data["kpis"]
     assert kpis["sessions_total"] == 2 and kpis["sessions_active"] == 0
     assert kpis["deposits_total"] == 2
-    assert kpis["deposits_returned"] == 1 and kpis["amount_returned"] == "0.01"
-    assert kpis["deposits_forfeited"] == 1 and kpis["amount_forfeited"] == "0.01"
+    assert kpis["deposits_returned"] == 1 and kpis["amount_returned"] == "1.00"
+    assert kpis["deposits_forfeited"] == 1 and kpis["amount_forfeited"] == "1.00"
     assert kpis["deposits_held"] == 0 and kpis["deposits_needing_attention"] == 0
     assert kpis["violations_by_reason"] == {"DISALLOWED_PATH": 1}
     assert kpis["gateway_requests_allowed"] == 1 and kpis["gateway_requests_rejected"] == 1

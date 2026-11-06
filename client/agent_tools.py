@@ -199,6 +199,7 @@ class GatewayToolbox:
                     "status": 402,
                     "message": "Payment required: this site asks AI crawlers for a refundable deposit.",
                     "deposit": self.challenge.get("deposit"),
+                    "pricing": self.challenge.get("pricing"),
                     "policy_version": self.challenge.get("policy_version"),
                     "rules_summary": self.challenge.get("rules_summary"),
                     "notice": self.challenge.get("notice"),
@@ -212,6 +213,7 @@ class GatewayToolbox:
             return {
                 "status": 200,
                 "path": path,
+                "pricing_tier": resp.headers.get("X-CrawlerTrust-Pricing-Tier"),
                 "remaining_session_budget": _int_header(resp, "X-CrawlerTrust-Remaining-Budget"),
                 "remaining_window_requests": _int_header(resp, "X-CrawlerTrust-Remaining-Window"),
                 "content": (
@@ -263,6 +265,17 @@ class GatewayToolbox:
                     "refund_policy",
                 )
             },
+            "pricing_tiers": [
+                {
+                    "tier_id": tier.get("tier_id"),
+                    "name": tier.get("name"),
+                    "price": tier.get("price"),
+                    "currency": tier.get("currency"),
+                    "covers_lower_tiers": True,
+                    "resources": [resource.get("path") for resource in tier.get("resources") or []],
+                }
+                for tier in policy.get("pricing_tiers") or []
+            ],
             "robots_txt": robots_resp.text if robots_resp.status_code == 200 else None,
         }
 
@@ -384,6 +397,9 @@ class GatewayToolbox:
                 "currency",
                 "payment_status",
                 "deposit_state",
+                "pricing_tier",
+                "pricing_tier_name",
+                "requested_resource",
             )
         }
 

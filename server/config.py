@@ -42,7 +42,13 @@ class Settings(BaseModel):
     paypal_mcp_url: str = Field(default="https://mcp.sandbox.paypal.com/sse")
     paypal_mcp_timeout_seconds: float = Field(default=60.0, gt=0.0, le=300.0)
 
+    # Base deposit for pages outside every pricing tier (for example /news).
     deposit_amount: Decimal = Field(default=Decimal("0.01"))
+    # Tier prices, numbered from most to least valuable: tier1 = Premium, tier2 = Standard,
+    # tier3 = Public. Unset values keep the price from data/site_config.json.
+    tier1_price: Optional[Decimal] = Field(default=None)
+    tier2_price: Optional[Decimal] = Field(default=None)
+    tier3_price: Optional[Decimal] = Field(default=None)
     # How a deposit is settled: "refund" captures up front and refunds compliant
     # sessions; "authorization" places a hold that is voided for compliant
     # sessions and captured only on forfeiture.
@@ -93,6 +99,24 @@ class Settings(BaseModel):
         if amount <= Decimal("0.00"):
             raise ValueError("deposit_amount must be strictly positive (> 0.00)")
         return amount
+
+    @field_validator("tier1_price", "tier2_price", "tier3_price", mode="before")
+    @classmethod
+    def validate_tier_price(cls, value: object) -> Optional[Decimal]:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        try:
+            amount = Decimal(str(value).strip()).quantize(Decimal("0.01"))
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise ValueError(f"Invalid tier price: {value!r}") from exc
+        if amount <= Decimal("0.00"):
+            raise ValueError("Tier prices must be strictly positive (> 0.00)")
+        return amount
+
+    @property
+    def tier_prices(self) -> list[Optional[Decimal]]:
+        """Tier price overrides, most valuable tier first."""
+        return [self.tier1_price, self.tier2_price, self.tier3_price]
 
     @field_validator("paypal_currency")
     @classmethod
@@ -196,6 +220,9 @@ def load_settings_from_env() -> Settings:
         paypal_mcp_url=os.getenv("PAYPAL_MCP_URL", "").strip() or "https://mcp.sandbox.paypal.com/sse",
         paypal_mcp_timeout_seconds=float(os.getenv("PAYPAL_MCP_TIMEOUT_SECONDS", "60")),
         deposit_amount=Decimal(os.getenv("DEPOSIT_AMOUNT", "0.01")),
+        tier1_price=os.getenv("TIER1_PRICE") or None,  # type: ignore[arg-type]
+        tier2_price=os.getenv("TIER2_PRICE") or None,  # type: ignore[arg-type]
+        tier3_price=os.getenv("TIER3_PRICE") or None,  # type: ignore[arg-type]
         deposit_settlement=os.getenv("DEPOSIT_SETTLEMENT", "refund"),  # type: ignore[arg-type]
         session_ttl_seconds=int(os.getenv("SESSION_TTL_SECONDS", "1800")),
         challenge_ttl_seconds=int(os.getenv("CHALLENGE_TTL_SECONDS", "600")),

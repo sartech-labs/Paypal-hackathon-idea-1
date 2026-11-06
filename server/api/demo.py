@@ -9,8 +9,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from fastapi.responses import FileResponse
 
 from server.api.dashboard import STATIC_DIR
+from server.core.security import utc_now_iso, validate_crawler_id
 from server.dependencies import AppContainer, demo_access, get_container, is_valid_admin_token
-from server.schemas import DemoConfigResponse, DemoRunRequest, DemoRunResponse
+from server.schemas import (
+    DemoConfigResponse,
+    DemoRequestHistoryResponse,
+    DemoRequestRow,
+    DemoRunRequest,
+    DemoRunResponse,
+)
 from server.services.demo_runner import DemoRunError
 
 router = APIRouter(tags=["Live demo"])
@@ -95,7 +102,96 @@ async def demo_config(
         runs_remaining_this_hour=runner.runs_remaining(),
         active_run_id=runner.active_run_id() if access != "none" else None,
         recent_runs=runner.recent() if access != "none" else [],
+        pricing_tiers=container.pricing.tiers,
     )
+
+
+GATEWAY_REQUEST_EVENTS = {
+    "CHALLENGE_ISSUED",
+    "GATEWAY_ACCESS_ALLOWED",
+    "GATEWAY_ACCESS_REJECTED",
+    "POLICY_VIOLATION",
+}
+AUDIT_SCAN_LIMIT = 5000
+MAX_HISTORY_ROWS = 200
+
+
+@router.get(
+    "/demo/requests",
+    response_model=DemoRequestHistoryResponse,
+    summary="Crawler request history: every gateway request with its pricing tier, deposit, and decision",
+)
+async def request_history(
+    crawler_id: Optional[str] = Query(default=None, max_length=128),
+    limit: int = Query(default=MAX_HISTORY_ROWS, ge=1, le=MAX_HISTORY_ROWS),
+    container: AppContainer = Depends(get_container),
+    x_admin_token: Optional[str] = Header(default=None),
+) -> DemoRequestHistoryResponse:
+    """Rows come from the append-only audit log joined with the stored deposit records.
+
+    Nothing here is synthesized: a row exists only for a request the gateway answered,
+    and payment fields reflect the deposit's current recorded state.
+    """
+    _require_view(container, x_admin_token)
+    if crawler_id is not None:
+        try:
+            crawler_id = validate_crawler_id(crawler_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"error": "invalid_crawler_id", "message": str(exc)},
+            ) from exc
+    events = await container.audit_logger.get_events(crawler_id=crawler_id, limit=AUDIT_SCAN_LIMIT)
+    requests = [event for event in events if event.event_type in GATEWAY_REQUEST_EVENTS][-limit:]
+    deposits = {d.deposit_id: d for d in await container.deposit_manager.list_deposits()}
+    pricing = container.pricing
+
+    rows: list[DemoRequestRow] = []
+    for event in requests:
+        details = event.details or {}
+        deposit = deposits.get(event.deposit_id) if event.deposit_id else None
+        amount = None
+        if event.event_type == "CHALLENGE_ISSUED":
+            http_status = 402
+            decision = "payment_required"
+            amount = details.get("required_amount")
+            if event.challenge_id:
+                challenge = await container.deposit_manager.get_challenge(event.challenge_id)
+                if challenge is not None and challenge.deposit_id:
+                    deposit = deposits.get(challenge.deposit_id)
+        else:
+            raw_status = details.get("http_status")
+            http_status = int(raw_status) if isinstance(raw_status, int) else (200 if event.allowed else None)
+            decision = "granted" if event.allowed else "denied"
+        # Events written since tiers exist record the tier; older ones are resolved by path.
+        if "pricing_tier" in details:
+            tier = pricing.get(details.get("pricing_tier"))
+        else:
+            tier = pricing.tier_for_request_path(event.path) if event.path else None
+        if deposit is not None and amount is None:
+            amount = deposit.required_amount
+        rows.append(
+            DemoRequestRow(
+                request_id=event.event_id,
+                timestamp=event.timestamp,
+                crawler_id=event.crawler_id,
+                resource=event.path,
+                pricing_tier=tier.tier_id if tier else None,
+                pricing_tier_name=tier.name if tier else None,
+                deposit_id=deposit.deposit_id if deposit else None,
+                deposit_amount=amount,
+                currency=(deposit.currency if deposit else details.get("currency")) or container.site_config.currency,
+                http_status=http_status,
+                payment_status=deposit.payment_status.value if deposit else None,
+                deposit_state=deposit.deposit_state.value if deposit else None,
+                access_decision=decision,  # type: ignore[arg-type]
+                reason_code=event.reason_code,
+                simulated_payment=(deposit.payment_mode.value == "mock") if deposit else None,
+                provider_order_id=deposit.provider_order_id if deposit else None,
+            )
+        )
+    rows.reverse()  # newest first
+    return DemoRequestHistoryResponse(rows=rows, generated_at=utc_now_iso())
 
 
 @router.post(
@@ -119,6 +215,14 @@ async def start_run(
             },
         )
     generator = container.ai_generator
+    tier = None
+    if payload.tier is not None:
+        tier = container.pricing.get(payload.tier)
+        if tier is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"error": "unknown_pricing_tier", "message": f"Unknown pricing tier: {payload.tier}"},
+            )
     try:
         run = container.demo_runner.start(
             driver=payload.driver,
@@ -128,6 +232,7 @@ async def start_run(
             ai_model=generator.model,
             ai_effort=container.settings.ai_effort,
             ai_available=generator.is_available(),
+            tier=tier,
         )
     except DemoRunError as exc:
         raise HTTPException(

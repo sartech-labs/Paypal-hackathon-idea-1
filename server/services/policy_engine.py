@@ -18,6 +18,7 @@ from server.schemas import (
     SessionStatus,
     SiteConfig,
 )
+from server.services.pricing import PricingCatalog
 from server.services.rate_limiter import SlidingWindowRateLimiter
 
 
@@ -32,9 +33,11 @@ class PolicyEngine:
         site_config: SiteConfig,
         rate_limiter: SlidingWindowRateLimiter,
         known_allowed_pages: set[str] | None = None,
+        pricing: PricingCatalog | None = None,
     ) -> None:
         self._site_config = site_config
         self._rate_limiter = rate_limiter
+        self._pricing = pricing or PricingCatalog(site_config)
         self._known_allowed_pages = (
             set(known_allowed_pages)
             if known_allowed_pages is not None
@@ -316,7 +319,31 @@ class PolicyEngine:
                 remaining_window_requests=rem_window_after,
             )
 
-        # 12. Authorized access
+        # 12. Pricing tier: the session's deposit must cover the resource's tier. A crawler
+        # that paid for Public content cannot read Standard or Premium content with it.
+        covered, required_tier = self._pricing.deposit_covers(deposit.pricing_tier, normalized_path)
+        if not covered and required_tier is not None:
+            paid = self._pricing.get(deposit.pricing_tier)
+            paid_label = f"the {paid.name} tier" if paid else "the base site deposit"
+            return PolicyDecision(
+                allowed=False,
+                http_status=402,
+                reason_code="TIER_NOT_COVERED",
+                reason=(
+                    f"'{normalized_path}' is {required_tier.name} content "
+                    f"({required_tier.price} {required_tier.currency} deposit). This session's deposit "
+                    f"covers {paid_label} only; request the resource without a session to receive a "
+                    f"{required_tier.name} payment challenge."
+                ),
+                violation=False,
+                disqualifying=False,
+                policy_version=policy_ver,
+                normalized_path=normalized_path,
+                remaining_session_budget=remaining_budget,
+                remaining_window_requests=rem_window_after,
+            )
+
+        # 13. Authorized access
         return PolicyDecision(
             allowed=True,
             http_status=200,

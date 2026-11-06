@@ -27,6 +27,7 @@ from server.services.paypal_assistant import PayPalAssistant
 from server.services.paypal_mcp import PayPalMCPClient
 from server.services.policy_assistant import PolicyAssistant
 from server.services.policy_engine import PolicyEngine
+from server.services.pricing import PricingCatalog
 from server.services.rate_limiter import SlidingWindowRateLimiter
 
 
@@ -46,13 +47,18 @@ class AppContainer:
         self.settings = settings
         self.content_service = ContentService(settings)
         self.site_config = self.content_service.site_config
-        self.identity_service = IdentityService(self.site_config)
+        # Central tier pricing (data/site_config.json -> pricing_tiers), shared by the 402
+        # challenge, the policy engine, the demo, and the dashboards.
+        self.pricing = PricingCatalog(self.site_config)
+        self.pricing.validate_resources(self.content_service.allowed_page_paths)
+        self.identity_service = IdentityService(self.site_config, self.pricing)
         self.audit_logger = AuditLogger(settings.audit_log_path)
         self.rate_limiter = rate_limiter or SlidingWindowRateLimiter()
         self.policy_engine = PolicyEngine(
             site_config=self.site_config,
             rate_limiter=self.rate_limiter,
             known_allowed_pages=self.content_service.allowed_page_paths,
+            pricing=self.pricing,
         )
         if payment_provider is not None:
             self.payment_provider = payment_provider
@@ -80,6 +86,7 @@ class AppContainer:
         self.paypal_quota = HourlyQuota(settings.demo_max_questions_per_hour)
         self.demo_runner = DemoRunner(
             max_runs_per_hour=settings.demo_max_runs_per_hour,
+            max_deposit=self.pricing.max_price(),
             http_factory=demo_http_factory,
             llm_factory=demo_llm_factory,
         )

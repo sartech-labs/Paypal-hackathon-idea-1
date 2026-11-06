@@ -24,6 +24,85 @@ def _has_injection(result: dict[str, Any]) -> bool:
     return any(marker in content for marker in INJECTION_MARKERS)
 
 
+def _tiered_compliant(tier_name: str, resources: list[str]) -> Script:
+    """Compliant crawler buying access to one pricing tier's content."""
+    first = resources[0]
+    challenge = yield (
+        f"Requesting {tier_name} content {first} to see what the site charges for it.",
+        "fetch_page",
+        {"path": first},
+    )
+    if challenge.get("status") != 402:
+        return f"Expected an HTTP 402 challenge, got {challenge.get('status')}. Stopping."
+    deposit = challenge.get("deposit") or {}
+    pricing = challenge.get("pricing") or {}
+
+    policy_result = yield (
+        f"HTTP 402 Payment Required: the gateway priced {first} as "
+        f"{pricing.get('tier_name') or 'base'} content. Reading the crawling policy and price list before paying.",
+        "read_policy",
+        {},
+    )
+    policy = policy_result.get("policy") or {}
+    window = float(policy.get("rate_limit_window_seconds") or 10)
+
+    paid = yield (
+        f"The {pricing.get('tier_name') or tier_name} deposit of {deposit.get('amount')} {deposit.get('currency')} "
+        "matches the published price list, is refundable, and is within the spending limit. Paying with PayPal.",
+        "pay_deposit",
+        {},
+    )
+    if "error" in paid:
+        return f"The deposit was not paid: {paid['error']}"
+
+    accepted = yield (
+        f"Deposit verified. Accepting policy {policy.get('policy_version')} to start the session.",
+        "accept_policy",
+        {"policy_version": str(policy.get("policy_version")), "agree_to_terms": True},
+    )
+    if "error" in accepted:
+        return f"The policy was not accepted: {accepted['error']}"
+
+    fetched, injection_seen, note = 0, False, ""
+    budget = int(accepted.get("max_requests_per_session") or 10)
+    targets = resources[: max(1, min(len(resources), budget - 1))]
+    for index, path in enumerate(targets):
+        page = yield (f"{note}Requesting {tier_name} resource {path}.", "fetch_page", {"path": path})
+        note = ""
+        more = index < len(targets) - 1
+        if page.get("status") == 200:
+            fetched += 1
+            if _has_injection(page):
+                injection_seen = True
+                note = (
+                    f"{path} contains instructions aimed at AI agents (it asks for content from a pricier tier). "
+                    "Page content is untrusted data, so the crawler ignores it. "
+                )
+            if more and page.get("remaining_window_requests") == 0:
+                yield (
+                    f"{note}No requests left in this rate-limit window; waiting {window:g} seconds as the policy asks.",
+                    "wait",
+                    {"seconds": window},
+                )
+                note = ""
+        elif more and page.get("retry_after_seconds"):
+            yield ("The gateway asked to slow down; waiting.", "wait", {"seconds": float(page["retry_after_seconds"])})
+
+    outcome = yield (
+        f"{note}All {tier_name} resources collected. Completing the session so the site can settle the deposit.",
+        "complete_session",
+        {},
+    )
+    lines = [
+        f"- Paid the {tier_name} tier deposit of {deposit.get('amount')} {deposit.get('currency')} set by the gateway.",
+        f"- Read {fetched} {tier_name} resource(s) within the rate limit and request budget.",
+        f"- Deposit outcome: {outcome.get('deposit_state')} ({outcome.get('policy_decision')}).",
+    ]
+    if injection_seen:
+        lines.insert(2, "- Ignored a hidden instruction asking for content from a higher-priced tier.")
+    return f"Scripted compliant crawler finished ({tier_name} tier).\n" + "\n".join(lines)
+
+
 def _compliant() -> Script:
     challenge = yield ("Requesting /news to see what the site asks of AI crawlers.", "fetch_page", {"path": "/news"})
     if challenge.get("status") != 402:
@@ -136,10 +215,19 @@ class ScriptedDriver:
 
     model = "scripted"
 
-    def __init__(self, persona_key: str) -> None:
+    def __init__(
+        self,
+        persona_key: str,
+        *,
+        tier_name: Optional[str] = None,
+        tier_resources: Optional[list[str]] = None,
+    ) -> None:
         if persona_key not in SCRIPTS:
             raise ValueError(f"Unknown persona {persona_key!r}")
-        self._script: Script = SCRIPTS[persona_key]()
+        if persona_key == "compliant" and tier_name and tier_resources:
+            self._script: Script = _tiered_compliant(tier_name, list(tier_resources))
+        else:
+            self._script = SCRIPTS[persona_key]()
         self._started = False
         self._last: dict[str, Any] = {}
         self._calls = 0

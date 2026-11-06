@@ -8,6 +8,9 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%232a78d6'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/dashboard.css">
   <link rel="stylesheet" href="/static/demo.css">
+  <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
+          integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
+          crossorigin="anonymous" defer></script>
   <script src="/static/paypal_panel.js" defer></script>
   <script src="/static/demo.js" defer></script>
 </head>
@@ -40,27 +43,43 @@
 
   <section class="banner" id="banner" role="status" hidden></section>
 
-  <section class="card launcher" aria-label="Start a crawler run">
+  <section class="card launcher launcher-persona" aria-label="Pick a crawler">
     <fieldset>
       <legend>1. Pick a crawler</legend>
       <div class="choice-row">
         <label class="choice">
           <input type="radio" name="persona" value="compliant" checked>
           <span class="choice-title">Compliant research crawler</span>
-          <span class="choice-desc">Reads the policy, pays the deposit with PayPal, paces itself to the rate limit, and ignores a prompt injection planted in a page.</span>
+          <span class="choice-desc">Reads the policy, pays the deposit for the content tier you choose with PayPal, paces itself to the rate limit, and ignores a prompt injection planted in a page.</span>
           <span class="choice-expect">Expected outcome: deposit returned</span>
         </label>
         <label class="choice">
           <input type="radio" name="persona" value="rogue">
           <span class="choice-title">Rogue scraper</span>
           <span class="choice-desc">Pays, then ignores the rules: probes admin and private paths, tries path traversal, and bursts requests.</span>
-          <span class="choice-expect">Expected outcome: deposit forfeited</span>
+          <span class="choice-expect" id="rogue-expect">Expected outcome: deposit forfeited</span>
         </label>
       </div>
     </fieldset>
+  </section>
+
+  <section class="card tiers-card" id="tiers-card" aria-labelledby="tiers-title">
+    <div class="card-head">
+      <div>
+        <h2 id="tiers-title">2. Choose Your Content Access Tier</h2>
+        <p class="card-sub" id="tiers-sub">Different content has different economic value. The publisher sets these prices on the gateway; the gateway, not the crawler, decides the deposit for each resource.</p>
+      </div>
+    </div>
+    <div class="tier-grid" id="tier-grid" role="radiogroup" aria-labelledby="tiers-title">
+      <p class="empty">Loading the publisher's price list...</p>
+    </div>
+    <p class="hint tier-hint" id="tier-hint" role="status"></p>
+  </section>
+
+  <section class="card launcher launcher-run" aria-label="Start a crawler run">
     <fieldset>
-      <legend>2. Who drives it</legend>
-      <div class="choice-stack">
+      <legend id="driver-legend">3. Who drives it</legend>
+      <div class="choice-row">
         <label class="choice">
           <input type="radio" name="driver" value="ai" id="driver-ai">
           <span class="choice-title" id="driver-ai-title">AI agent</span>
@@ -91,6 +110,7 @@
         </div>
         <span class="run-meta" id="run-meta"></span>
       </div>
+      <div class="run-summary" id="run-summary" hidden></div>
       <div class="callout" id="approval" role="alert" hidden>
         <strong>PayPal approval needed</strong>
         <span>The crawler created a PayPal Sandbox order for its deposit. Approve it with a Sandbox buyer account; the run continues automatically.</span>
@@ -127,6 +147,21 @@
       <section class="card" id="paypal-panel" aria-labelledby="paypal-title"></section>
     </aside>
   </div>
+
+  <section class="card history-card" aria-labelledby="history-title">
+    <div class="card-head">
+      <div>
+        <h2 id="history-title">Request history</h2>
+        <p class="card-sub">Every request the gateway answered, joined with the deposit that paid for it. Built from the audit log and stored payment records; nothing here is simulated by the page.</p>
+      </div>
+      <div class="history-controls">
+        <label class="inline-check"><input type="checkbox" id="history-this-run"> This run only</label>
+        <input type="search" id="history-filter" placeholder="Filter by crawler, resource, tier..." aria-label="Filter request history">
+      </div>
+    </div>
+    <div id="grid-requests" class="grid grid-requests"></div>
+    <p class="hint" id="history-hint"></p>
+  </section>
 
   <footer>
     CrawlerTrust gateway ·

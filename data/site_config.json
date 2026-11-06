@@ -15,7 +15,8 @@
     "/",
     "/news",
     "/news/technology",
-    "/news/economy"
+    "/news/economy",
+    "/content"
   ],
   "disallowed_paths": [
     "/admin",
@@ -28,6 +29,103 @@
     "max_rate_limit_violations_before_disqualification": 2,
     "max_budget_violations_before_disqualification": 1,
     "require_explicit_session_completion": true
-  }
+  },
+  "pricing_tiers": [
+    {
+      "tier_id": "premium",
+      "name": "Premium",
+      "description": "Exclusive market intelligence, proprietary research, and financial reports.",
+      "price": "5.00",
+      "currency": "USD",
+      "rank": 3,
+      "categories": [
+        "Exclusive market intelligence",
+        "Proprietary research",
+        "Financial reports"
+      ],
+      "path_prefix": "/content/premium",
+      "resources": [
+        {
+          "path": "/content/premium/market-intelligence-report",
+          "title": "Market Intelligence Report",
+          "category": "Exclusive market intelligence"
+        },
+        {
+          "path": "/content/premium/proprietary-research",
+          "title": "Proprietary Research Brief",
+          "category": "Proprietary research"
+        },
+        {
+          "path": "/content/premium/financial-reports",
+          "title": "Quarterly Financial Reports",
+          "category": "Financial reports"
+        }
+      ]
+    },
+    {
+      "tier_id": "standard",
+      "name": "Standard",
+      "description": "Industry analysis, market research, and company information.",
+      "price": "3.00",
+      "currency": "USD",
+      "rank": 2,
+      "categories": [
+        "Industry analysis",
+        "Market research",
+        "Company information"
+      ],
+      "path_prefix": "/content/standard",
+      "resources": [
+        {
+          "path": "/content/standard/industry-analysis",
+          "title": "Industry Analysis",
+          "category": "Industry analysis"
+        },
+        {
+          "path": "/content/standard/market-research",
+          "title": "Market Research Digest",
+          "category": "Market research"
+        },
+        {
+          "path": "/content/standard/company-information",
+          "title": "Company Information",
+          "category": "Company information"
+        }
+      ]
+    },
+    {
+      "tier_id": "public",
+      "name": "Public",
+      "description": "General news (including the /news sections), public announcements, and basic information.",
+      "price": "1.00",
+      "currency": "USD",
+      "rank": 1,
+      "categories": [
+        "General news",
+        "Public announcements",
+        "Basic information"
+      ],
+      "path_prefix": "/content/public",
+      "additional_path_prefixes": [
+        "/news"
+      ],
+      "resources": [
+        {
+          "path": "/content/public/general-news",
+          "title": "General News",
+          "category": "General news"
+        },
+        {
+          "path": "/content/public/announcements",
+          "title": "Public Announcements",
+          "category": "Public announcements"
+        },
+        {
+          "path": "/content/public/basic-information",
+          "title": "Basic Information",
+          "category": "Basic information"
+        }
+      ]
+    }
+  ]
 }
-

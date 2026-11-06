@@ -206,6 +206,9 @@ class DepositManager:
             provider_authorization_id=record.provider_authorization_id,
             provider_authorization_status=record.provider_authorization_status,
             released_at=record.released_at,
+            pricing_tier=record.pricing_tier,
+            pricing_tier_name=record.pricing_tier_name,
+            requested_resource=record.requested_resource,
         )
 
     async def register_challenge(self, challenge: ChallengeRecord) -> None:
@@ -423,6 +426,9 @@ class DepositManager:
                 created_at=now_iso,
                 updated_at=now_iso,
                 settlement_mode=self._settlement_mode,
+                pricing_tier=challenge.pricing_tier,
+                pricing_tier_name=challenge.pricing_tier_name,
+                requested_resource=challenge.requested_path,
             )
 
             challenge.consumed = True
@@ -440,7 +446,8 @@ class DepositManager:
                 request_id=record.order_request_id,
                 description=(
                     f"CrawlerTrust refundable deposit for {record.site_id} "
-                    f"(crawler={record.crawler_id})"
+                    + (f"[{record.pricing_tier_name} tier] " if record.pricing_tier_name else "")
+                    + f"(crawler={record.crawler_id})"
                 ),
                 intent=(
                     "AUTHORIZE"
@@ -498,6 +505,8 @@ class DepositManager:
                 "required_amount": updated_copy.required_amount,
                 "currency": updated_copy.currency,
                 "simulated": order_res.simulated,
+                "pricing_tier": updated_copy.pricing_tier,
+                "requested_resource": updated_copy.requested_resource,
             },
         )
         return updated_copy

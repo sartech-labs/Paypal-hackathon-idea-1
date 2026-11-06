@@ -162,6 +162,31 @@ class RefundPolicyConfig(BaseModel):
     require_explicit_session_completion: bool = True
 
 
+class PricingResource(BaseModel):
+    """A protected resource sold under a pricing tier."""
+
+    path: str
+    title: str
+    category: str
+
+
+class PricingTier(BaseModel):
+    """Publisher-defined content access tier. The gateway, never the crawler, picks the price."""
+
+    tier_id: str = Field(..., pattern=r"^[a-z][a-z0-9_-]{1,31}$")
+    name: str
+    description: str
+    price: str
+    currency: str = "USD"
+    # Higher rank covers lower ranks: a Premium deposit also opens Standard and Public content.
+    rank: int = Field(..., ge=1, le=100)
+    categories: list[str] = Field(default_factory=list)
+    path_prefix: str
+    # Further path prefixes priced at this tier (for example /news for the Public tier).
+    additional_path_prefixes: list[str] = Field(default_factory=list)
+    resources: list[PricingResource] = Field(default_factory=list)
+
+
 class SiteConfig(BaseModel):
     site_id: str
     site_name: str
@@ -178,12 +203,24 @@ class SiteConfig(BaseModel):
     allowed_paths: list[str]
     disallowed_paths: list[str]
     refund_policy: RefundPolicyConfig
+    # Tier-based deposit pricing by resource path; paths outside every tier use deposit_amount.
+    pricing_tiers: list[PricingTier] = Field(default_factory=list)
 
 
 class ChallengeDepositInfo(BaseModel):
     amount: str
     currency: str
     refundable: bool
+
+
+class ChallengePricingInfo(BaseModel):
+    """The pricing tier the gateway applied to the requested resource."""
+
+    tier_id: str
+    tier_name: str
+    price: str
+    currency: str
+    resource: str
 
 
 class RulesSummary(BaseModel):
@@ -202,6 +239,7 @@ class ChallengeResponse(BaseModel):
     site_id: str
     policy_version: str
     deposit: ChallengeDepositInfo
+    pricing: Optional[ChallengePricingInfo] = None
     rules_summary: RulesSummary
     policy_url: str = "/policies"
     payment_url: str = "/deposits/create"
@@ -227,6 +265,8 @@ class ChallengeRecord(BaseModel):
     expires_at: str
     consumed: bool = False
     deposit_id: Optional[str] = None
+    pricing_tier: Optional[str] = None
+    pricing_tier_name: Optional[str] = None
 
 
 class DepositCreateRequest(BaseModel):
@@ -274,6 +314,10 @@ class DepositRecord(BaseModel):
     provider_authorization_id: Optional[str] = None
     provider_authorization_status: Optional[str] = None
     released_at: Optional[str] = None
+    # Pricing tier of the resource named in the 402 challenge (None = base site deposit).
+    pricing_tier: Optional[str] = None
+    pricing_tier_name: Optional[str] = None
+    requested_resource: Optional[str] = None
 
     @property
     def is_funded(self) -> bool:
@@ -325,6 +369,10 @@ class DepositResponse(BaseModel):
     provider_authorization_id: Optional[str] = None
     provider_authorization_status: Optional[str] = None
     released_at: Optional[str] = None
+    # Pricing tier of the resource named in the 402 challenge (None = base site deposit).
+    pricing_tier: Optional[str] = None
+    pricing_tier_name: Optional[str] = None
+    requested_resource: Optional[str] = None
 
 
 class PayPalApprovalCallbackResponse(BaseModel):
@@ -571,6 +619,12 @@ class DashboardDepositRow(BaseModel):
     created_at: str
     updated_at: str
     provider_order_id: Optional[str] = None
+    provider_capture_id: Optional[str] = None
+    provider_authorization_id: Optional[str] = None
+    provider_refund_id: Optional[str] = None
+    pricing_tier: Optional[str] = None
+    pricing_tier_name: Optional[str] = None
+    requested_resource: Optional[str] = None
 
 
 class DashboardSessionRow(BaseModel):
@@ -710,6 +764,8 @@ class DemoRunRequest(BaseModel):
 
     driver: Literal["ai", "scripted"]
     persona: Literal["compliant", "rogue"]
+    # Content access tier for the compliant crawler (validated against the site's tiers).
+    tier: Optional[str] = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{1,31}$")
 
 
 class DemoRunEvent(BaseModel):
@@ -736,6 +792,7 @@ class DemoRunResponse(BaseModel):
     final_text: Optional[str] = None
     error: Optional[str] = None
     usage: dict[str, Any] = Field(default_factory=dict)
+    pricing_tier: Optional[dict[str, Any]] = None
     events: list[DemoRunEvent] = Field(default_factory=list)
     next_seq: int = 0
 
@@ -759,3 +816,30 @@ class DemoConfigResponse(BaseModel):
     runs_remaining_this_hour: int
     active_run_id: Optional[str] = None
     recent_runs: list[dict[str, Any]] = Field(default_factory=list)
+    pricing_tiers: list[PricingTier] = Field(default_factory=list)
+
+
+class DemoRequestRow(BaseModel):
+    """One gateway request, joined with the deposit that paid for it (from the audit log)."""
+
+    request_id: str
+    timestamp: str
+    crawler_id: Optional[str] = None
+    resource: Optional[str] = None
+    pricing_tier: Optional[str] = None
+    pricing_tier_name: Optional[str] = None
+    deposit_id: Optional[str] = None
+    deposit_amount: Optional[str] = None
+    currency: Optional[str] = None
+    http_status: Optional[int] = None
+    payment_status: Optional[str] = None
+    deposit_state: Optional[str] = None
+    access_decision: Literal["granted", "payment_required", "denied"]
+    reason_code: Optional[str] = None
+    simulated_payment: Optional[bool] = None
+    provider_order_id: Optional[str] = None
+
+
+class DemoRequestHistoryResponse(BaseModel):
+    rows: list[DemoRequestRow]
+    generated_at: str

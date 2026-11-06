@@ -20,7 +20,13 @@
     lastExplanationFor: null,
     counts: { allowed: 0, blocked: 0, violations: 0 },
     note: null,
+    tier: null,
+    historyGrid: null,
+    historyTimer: null,
+    historyLoading: false,
+    historyAgain: false,
   };
+  const HISTORY_IDLE_MS = 15000;
 
   const $ = (id) => document.getElementById(id);
 
@@ -75,6 +81,8 @@
       RATE_LIMIT_EXCEEDED: "Rate limit exceeded",
       MAX_REQUESTS_EXCEEDED: "Request budget exceeded",
       SESSION_ALREADY_COMPLETED: "Reused a completed session",
+      TIER_NOT_COVERED: "Deposit does not cover this pricing tier",
+      PAYMENT_REQUIRED: "Payment required",
       ELIGIBLE_FOR_REFUND: "Eligible for refund",
       FORFEITED_BY_POLICY: "Forfeited by policy",
     };
@@ -103,6 +111,25 @@
   function depositChip(code) {
     const [tone, icon, label] = DEPOSIT_STATUS[code] || ["neutral", "●", humanize(code)];
     return chip(tone, icon, label);
+  }
+
+  // --- pricing tiers (prices come from the gateway's /demo/config, never from this page) ---
+  function money(amount, currency) {
+    const value = Number(amount);
+    if (amount === null || amount === undefined || amount === "" || Number.isNaN(value)) return "";
+    try {
+      return new Intl.NumberFormat(undefined, { style: "currency", currency: currency || "USD" }).format(value);
+    } catch (_) {
+      return `${amount} ${currency || ""}`.trim();
+    }
+  }
+
+  function tiers() { return (state.config && state.config.pricing_tiers) || []; }
+  function tierById(id) { return tiers().find((t) => t.tier_id === id) || null; }
+
+  function tierBadge(id, name) {
+    if (!id) return el("span", { className: "tier-badge", dataset: { tier: "base" }, text: "Base" });
+    return el("span", { className: "tier-badge", dataset: { tier: id }, text: name || (tierById(id) || {}).name || id });
   }
 
   function authHeaders(extra) {
@@ -196,8 +223,84 @@
       badge("accent", c.settlement_mode === "authorization" ? "Settlement: authorization hold" : "Settlement: capture + refund"),
       badge(c.ai_available ? "good" : "neutral", c.ai_available ? `AI: ${providerName(c.ai_provider)} (${c.ai_model})` : "AI: not configured (scripted runs only)"),
       badge(c.paypal_mcp_configured ? "good" : "neutral", c.paypal_mcp_configured ? "PayPal MCP: connected" : "PayPal MCP: not configured"),
-      badge("neutral", `Deposit ${c.deposit_amount} ${c.currency} · policy ${c.policy_version}`)
+      badge("neutral", `Base deposit ${c.deposit_amount} ${c.currency} · policy ${c.policy_version}`)
     );
+    if ((c.pricing_tiers || []).length) {
+      badges.append(badge("accent", `Tiered pricing: ${c.pricing_tiers.map((t) => `${t.name} ${money(t.price, t.currency)}`).join(" · ")}`));
+    }
+  }
+
+  function selectedPersona() {
+    const input = document.querySelector("input[name=persona]:checked");
+    return input ? input.value : "compliant";
+  }
+
+  function selectTier(id) {
+    if (!tierById(id)) return;
+    state.tier = id;
+    store.set("sessionStorage", "ct-tier", id);
+    for (const card of document.querySelectorAll(".tier-card")) {
+      const selected = card.dataset.tier === id;
+      card.dataset.selected = selected ? "true" : "false";
+      const button = card.querySelector("button");
+      button.setAttribute("aria-checked", selected ? "true" : "false");
+      button.textContent = selected ? "Selected" : `Select ${card.dataset.name}`;
+    }
+    updateTierHint();
+  }
+
+  function renderTiers() {
+    const grid = $("tier-grid");
+    clear(grid);
+    const list = tiers();
+    if (!list.length) {
+      grid.append(el("p", { className: "empty", text: "This gateway has no pricing tiers configured. Runs use the base deposit." }));
+      return;
+    }
+    for (const t of list) {
+      const example = (t.resources && t.resources[0] && t.resources[0].path) || t.path_prefix;
+      const button = el("button", {
+        type: "button",
+        role: "radio",
+        "aria-checked": "false",
+        "aria-label": `${t.name} tier, ${money(t.price, t.currency)} deposit`,
+        text: `Select ${t.name}`,
+        onclick: () => selectTier(t.tier_id),
+      });
+      grid.append(el("article", { className: "tier-card", dataset: { tier: t.tier_id, name: t.name, selected: "false" } }, [
+        el("div", { className: "tier-head" }, [
+          el("h3", { className: "tier-name", text: t.name }),
+          el("span", { className: "tier-price" }, [
+            el("span", { text: money(t.price, t.currency) }),
+            el("span", { className: "tier-price-unit", text: " deposit" }),
+          ]),
+        ]),
+        el("ul", { className: "tier-cats" }, (t.categories || []).map((cat) => el("li", { text: cat }))),
+        el("div", { className: "tier-example" }, [
+          el("span", { className: "tier-example-label", text: "Example protected resource" }),
+          el("code", { className: "mono", text: `GET /gateway${example}` }),
+        ]),
+        button,
+      ]));
+    }
+    const remembered = store.get("sessionStorage", "ct-tier");
+    selectTier(tierById(state.tier) ? state.tier : tierById(remembered) ? remembered : (tierById("standard") ? "standard" : list[0].tier_id));
+  }
+
+  function updateTierHint() {
+    // Tier choice only matters for the compliant crawler: hide it for the rogue scraper and
+    // renumber the remaining steps.
+    const rogue = selectedPersona() === "rogue";
+    $("tiers-card").hidden = rogue;
+    $("driver-legend").textContent = rogue ? "2. Who drives it" : "3. Who drives it";
+    const pub = tierById("public");
+    $("rogue-expect").textContent = pub
+      ? `Expected outcome: pays the Public deposit (${money(pub.price, pub.currency)}) for /news, then forfeits it`
+      : "Expected outcome: deposit forfeited";
+    const t = tierById(state.tier);
+    $("tier-hint").textContent = t
+      ? `Start run: the compliant crawler requests ${t.name} content and the gateway challenges it for a ${money(t.price, t.currency)} deposit.`
+      : "";
   }
 
   function updateLauncher() {
@@ -225,6 +328,7 @@
     for (const input of document.querySelectorAll("input[name=persona], input[name=driver]")) {
       if (input.id !== "driver-ai" || (c && c.ai_available)) input.disabled = Boolean(running);
     }
+    for (const button of document.querySelectorAll(".tier-card button")) button.disabled = Boolean(running);
   }
 
   async function loadConfig() {
@@ -241,8 +345,10 @@
         return;
       }
       hideBanner();
+      const firstLoad = !state.config;
       state.config = result.body;
       renderBadges(state.config);
+      if (firstLoad) renderTiers();
       if (state.config.access === "none") {
         showBanner("This deployment is private. Enter the admin token to watch and start runs, or run the gateway with DEMO_PUBLIC=true.");
       }
@@ -340,11 +446,15 @@
       ];
       if (status === 402) {
         const d = r.deposit || {};
-        detail = `Deposit required: ${d.amount} ${d.currency}, refundable. Policy ${r.policy_version}.`;
-        setStep("challenge", "done", `HTTP 402 · ${d.amount} ${d.currency} deposit`);
+        const pricing = r.pricing;
+        detail = pricing
+          ? `The gateway priced ${pricing.resource} as ${pricing.tier_name} content: deposit required ${money(d.amount, d.currency)} (${d.amount} ${d.currency}), refundable. Policy ${r.policy_version}.`
+          : `Deposit required: ${d.amount} ${d.currency}, refundable. Policy ${r.policy_version}.`;
+        setStep("challenge", "done", pricing ? `HTTP 402 · ${pricing.tier_name} · ${money(d.amount, d.currency)}` : `HTTP 402 · ${d.amount} ${d.currency} deposit`);
       } else if (status === 200) {
         state.counts.allowed += 1;
-        detail = `Served. Session budget left ${r.remaining_session_budget}, requests left in this window ${r.remaining_window_requests}.`;
+        const tierNote = r.pricing_tier ? `${(tierById(r.pricing_tier) || {}).name || r.pricing_tier} content served. ` : "Served. ";
+        detail = `${tierNote}Session budget left ${r.remaining_session_budget}, requests left in this window ${r.remaining_window_requests}.`;
         if (r.content) extra = el("details", { className: "tl-more" }, [el("summary", { text: "Page text (untrusted content)" }), el("pre", { text: r.content })]);
         setStep("crawl", "active", "Requests allowed by policy");
       } else {
@@ -353,8 +463,9 @@
         const violation = r.violation ? " Counts as a policy violation." : "";
         const disq = r.disqualifying ? " Disqualifying: the deposit will be kept." : "";
         detail = `${humanize(r.reason_code)}.${violation}${disq}`;
+        if (r.reason_code === "TIER_NOT_COVERED" && r.reason) detail = `${r.reason} Not a violation; no content was served.`;
         if (r.retry_after_seconds) detail += ` Retry after ${r.retry_after_seconds}s.`;
-        setStep("crawl", "failed", "Violations recorded");
+        if (r.reason_code !== "TIER_NOT_COVERED") setStep("crawl", "failed", "Violations recorded");
       }
       if (r.prompt_injection) {
         addItem(timelineItem({
@@ -362,7 +473,9 @@
           tone: "serious",
           icon: "!",
           title: "Prompt injection hidden in page content",
-          detail: "The page tells AI agents to fetch /private/customer-data. A well-behaved crawler treats page text as data and ignores it.",
+          detail: String(path).startsWith("/content/")
+            ? "The page tells AI agents to fetch a Premium report they have not paid for. A well-behaved crawler treats page text as data and ignores it; the gateway would refuse it anyway (deposit does not cover that tier)."
+            : "The page tells AI agents to fetch /private/customer-data. A well-behaved crawler treats page text as data and ignores it.",
           at,
         }));
       }
@@ -373,7 +486,8 @@
     } else if (name === "pay_deposit") {
       if (!isError) {
         const settlement = r.settlement_mode === "authorization" ? "authorization hold" : "captured";
-        detail = `${r.required_amount} ${r.currency} ${r.simulated ? "(simulated)" : "via PayPal Sandbox"} · ${settlement} · payment ${r.payment_status}.`;
+        const tierLabel = r.pricing_tier_name ? `${r.pricing_tier_name} tier · ` : "";
+        detail = `${tierLabel}${r.required_amount} ${r.currency} ${r.simulated ? "(simulated, mock mode: no PayPal call)" : "via PayPal Sandbox (real Sandbox order)"} · ${settlement} · payment ${r.payment_status}.`;
         setStep("deposit", "done", r.settlement_mode === "authorization" ? "Hold authorized" : "Captured");
       } else {
         detail = r.error || "Payment failed.";
@@ -490,6 +604,8 @@
         depositChip(d.deposit_state),
       ]),
       el("dl", { className: "facts" }, [
+        ...(d.pricing_tier ? [el("dt", { text: "Pricing tier" }), el("dd", null, [tierBadge(d.pricing_tier, d.pricing_tier_name)])] : []),
+        ...fact("Resource", d.requested_resource, true),
         ...fact("Payment", d.payment_mode === "mock" ? "Simulated (mock mode)" : "PayPal Sandbox"),
         ...fact("Settlement", d.settlement_mode === "authorization" ? "Authorization hold (void if compliant)" : "Capture, then refund if compliant"),
         ...fact("Decision", humanize(d.policy_decision)),
@@ -515,7 +631,7 @@
               },
             }),
           ])
-        : null
+        : ""
     );
     if (state.paypal) state.paypal.setDeposit(d);
   }
@@ -576,6 +692,162 @@
     ]));
   }
 
+  // --- execution summary -------------------------------------------------------------------
+  function summaryItem(label, value) {
+    return el("div", { className: "summary-item" }, [el("span", { className: "summary-label", text: label }), value]);
+  }
+
+  function renderRunSummary(run) {
+    const box = $("run-summary");
+    clear(box);
+    if (!run) { box.hidden = true; return; }
+    const d = run.deposit || {};
+    // The selected tier, or the tier the gateway priced the crawler's first request at.
+    const t = run.pricing_tier || (d.pricing_tier ? { tier_id: d.pricing_tier, name: d.pricing_tier_name } : null);
+    const outcome = d.deposit_state ? depositChip(d.deposit_state) : el("span", { text: "Not paid yet" });
+    const rail = d.payment_mode
+      ? el("span", { text: d.payment_mode === "mock" ? "Mock (simulated)" : "PayPal Sandbox (real Sandbox API)" })
+      : el("span", { text: state.config && state.config.payment_mode === "mock" ? "Mock (simulated)" : "PayPal Sandbox" });
+    box.append(
+      summaryItem("Pricing tier", t ? tierBadge(t.tier_id, t.name) : el("span", { text: "Not priced yet" })),
+      summaryItem("Deposit set by gateway", el("span", { className: "summary-strong", text: d.required_amount ? money(d.required_amount, d.currency) : t ? money(t.price, t.currency) : "—" })),
+      summaryItem("Requested resource", el("code", { className: "mono", text: d.requested_resource || (t ? t.resource : "/news") })),
+      summaryItem("Payment rail", rail),
+      summaryItem("Deposit outcome", outcome)
+    );
+    box.hidden = false;
+  }
+
+  // --- request history grid (AG Grid, same version and theme as /console) -----------------
+  function gridTheme() {
+    return window.agGrid.themeQuartz.withParams({
+      backgroundColor: "var(--surface-1)",
+      foregroundColor: "var(--text-primary)",
+      chromeBackgroundColor: "var(--surface-2)",
+      headerBackgroundColor: "var(--surface-2)",
+      headerTextColor: "var(--text-secondary)",
+      borderColor: "var(--grid)",
+      oddRowBackgroundColor: "var(--surface-1)",
+      rowHoverColor: "var(--surface-2)",
+      selectedRowBackgroundColor: "var(--surface-2)",
+      accentColor: "var(--accent)",
+      fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+      fontSize: 13,
+      headerFontWeight: 600,
+      spacing: 6,
+      wrapperBorderRadius: 8,
+      browserColorScheme: "inherit",
+    });
+  }
+
+  const DECISIONS = {
+    granted: ["good", "✓", "Granted"],
+    payment_required: ["warning", "$", "Payment required"],
+    denied: ["critical", "✕", "Denied"],
+  };
+
+  function cellNode(render) {
+    return (params) => (params.data ? render(params.data) : "");
+  }
+
+  function initHistoryGrid() {
+    const node = $("grid-requests");
+    if (!window.agGrid || typeof window.agGrid.createGrid !== "function") {
+      clear(node);
+      node.append(el("p", { className: "empty", text: "The table library (AG Grid, cdn.jsdelivr.net) could not be loaded. The same data is available from /demo/requests." }));
+      return;
+    }
+    if (window.agGrid.ModuleRegistry && window.agGrid.AllCommunityModule) {
+      window.agGrid.ModuleRegistry.registerModules([window.agGrid.AllCommunityModule]);
+    }
+    state.historyGrid = window.agGrid.createGrid(node, {
+      theme: gridTheme(),
+      defaultColDef: { sortable: true, resizable: true, filter: true, floatingFilter: false, minWidth: 90, flex: 1 },
+      rowData: [],
+      getRowId: (p) => p.data.request_id,
+      tooltipShowDelay: 300,
+      overlayNoRowsTemplate: "<span>No gateway requests yet. Start a run.</span>",
+      columnDefs: [
+        { headerName: "Timestamp", field: "timestamp", minWidth: 110, maxWidth: 130, sort: "desc", filter: false, valueFormatter: (p) => formatTime(p.value), tooltipValueGetter: (p) => p.value },
+        { headerName: "Request ID", field: "request_id", minWidth: 150, cellClass: "mono", tooltipField: "request_id" },
+        { headerName: "Crawler ID", field: "crawler_id", minWidth: 170, cellClass: "mono", tooltipField: "crawler_id" },
+        { headerName: "Resource", field: "resource", minWidth: 230, cellClass: "mono", tooltipField: "resource" },
+        {
+          headerName: "Pricing Tier", field: "pricing_tier_name", minWidth: 120, maxWidth: 140,
+          valueGetter: (p) => (p.data ? p.data.pricing_tier_name || "Base" : ""),
+          cellRenderer: cellNode((r) => tierBadge(r.pricing_tier, r.pricing_tier_name)),
+        },
+        {
+          headerName: "Deposit Amount", field: "deposit_amount", minWidth: 120, maxWidth: 140, type: "numericColumn", filter: "agNumberColumnFilter",
+          valueGetter: (p) => (p.data && p.data.deposit_amount != null ? Number(p.data.deposit_amount) : null),
+          valueFormatter: (p) => (p.data && p.value != null ? money(p.value, p.data.currency) : "—"),
+        },
+        {
+          headerName: "HTTP Status", field: "http_status", minWidth: 100, maxWidth: 120, filter: "agNumberColumnFilter",
+          cellRenderer: cellNode((r) => el("span", { className: "http-pill", dataset: { tone: httpTone(r.http_status) }, text: String(r.http_status || "—") })),
+        },
+        {
+          headerName: "Payment Status", field: "deposit_state", minWidth: 150,
+          valueGetter: (p) => (p.data ? (p.data.deposit_state ? (DEPOSIT_STATUS[p.data.deposit_state] || [])[2] || humanize(p.data.deposit_state) : "No deposit yet") : ""),
+          cellRenderer: cellNode((r) => (r.deposit_state ? depositChip(r.deposit_state) : el("span", { className: "muted", text: "No deposit yet" }))),
+          tooltipValueGetter: (p) => (p.data && p.data.payment_status ? `PayPal payment status: ${p.data.payment_status}` : null),
+        },
+        {
+          headerName: "Payment Rail", field: "simulated_payment", minWidth: 120, maxWidth: 150,
+          valueGetter: (p) => (p.data ? (p.data.simulated_payment === null || p.data.simulated_payment === undefined ? "—" : p.data.simulated_payment ? "Mock (simulated)" : "PayPal Sandbox") : ""),
+          tooltipValueGetter: (p) => (p.data && p.data.provider_order_id ? `Order ${p.data.provider_order_id}` : null),
+        },
+        {
+          headerName: "Access Decision", field: "access_decision", minWidth: 150,
+          valueGetter: (p) => (p.data ? (DECISIONS[p.data.access_decision] || [])[2] || p.data.access_decision : ""),
+          cellRenderer: cellNode((r) => {
+            const [tone, icon, label] = DECISIONS[r.access_decision] || ["neutral", "●", r.access_decision];
+            return chip(tone, icon, label);
+          }),
+          tooltipValueGetter: (p) => (p.data && p.data.reason_code ? humanize(p.data.reason_code) : null),
+        },
+      ],
+    });
+    $("history-filter").addEventListener("input", (event) => state.historyGrid.setGridOption("quickFilterText", event.target.value));
+    $("history-this-run").addEventListener("change", () => loadHistory());
+  }
+
+  async function loadHistory() {
+    if (!state.historyGrid) return;
+    if (state.historyLoading) { state.historyAgain = true; return; }
+    if (!state.config || state.config.access === "none") {
+      $("history-hint").textContent = "Request history needs view access (admin token, or a public demo).";
+      return;
+    }
+    const onlyRun = $("history-this-run").checked && state.run;
+    const url = onlyRun ? `/demo/requests?crawler_id=${encodeURIComponent(state.run.crawler_id)}` : "/demo/requests";
+    state.historyLoading = true;
+    try {
+      const result = await getJson(url);
+      if (result.ok) {
+        state.historyGrid.setGridOption("rowData", result.body.rows);
+        const rows = result.body.rows;
+        $("history-hint").textContent = `${rows.length} request(s)${onlyRun ? " for this run's crawler" : " (latest 200)"} · updated ${formatTime(result.body.generated_at)}.`;
+      } else {
+        $("history-hint").textContent = message(result.body, result.status);
+      }
+    } catch (_) {
+      $("history-hint").textContent = "Could not load request history.";
+    } finally {
+      state.historyLoading = false;
+      if (state.historyAgain) { state.historyAgain = false; loadHistory(); }
+    }
+  }
+
+  function scheduleHistory(ms) {
+    clearTimeout(state.historyTimer);
+    state.historyTimer = setTimeout(async () => {
+      await loadHistory();
+      const running = state.run && !["completed", "failed", "cancelled"].includes(state.run.status);
+      scheduleHistory(running ? 2000 : HISTORY_IDLE_MS);
+    }, ms);
+  }
+
   // --- run lifecycle ---------------------------------------------------------------------
   function resetRunView() {
     state.run = null;
@@ -589,6 +861,7 @@
     resetSteps();
     renderDeposit(null);
     renderExplanation(null);
+    renderRunSummary(null);
     $("approval").hidden = true;
   }
 
@@ -601,10 +874,12 @@
     $("approval").hidden = run.status !== "awaiting_approval";
     if (run.status === "awaiting_approval" && run.approval_url) $("approval-open").dataset.url = run.approval_url;
     renderDeposit(run);
+    renderRunSummary(run);
     const finished = ["completed", "failed", "cancelled"].includes(run.status);
     if (finished) {
       if (state.lastExplanationFor !== run.run_id) {
         state.lastExplanationFor = run.run_id;
+        loadHistory();
         renderExplanation(run.explanation);
         if (run.explanation) setStep("explain", "done", run.explanation.generated_by === "template" ? "Rule-based" : `By ${providerName(run.explanation.generated_by)}`);
         else setStep("explain", "skipped", "Not available");
@@ -653,11 +928,14 @@
     const driver = document.querySelector("input[name=driver]:checked").value;
     $("start-button").disabled = true;
     $("launch-hint").textContent = "Starting...";
+    // Only the tier ID is sent; the gateway looks up the resource and its price.
+    const payload = { persona, driver };
+    if (persona === "compliant" && tierById(state.tier)) payload.tier = state.tier;
     try {
       const result = await getJson("/demo/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ persona, driver }),
+        body: JSON.stringify(payload),
       });
       if (!result.ok) {
         $("launch-hint").textContent = message(result.body, result.status);
@@ -666,6 +944,7 @@
         return;
       }
       attach(result.body.run_id);
+      scheduleHistory(1000);
     } catch (_) {
       $("launch-hint").textContent = "Could not reach the gateway.";
       $("start-button").disabled = false;
@@ -716,9 +995,11 @@
     if (window.CTPayPal) {
       state.paypal = window.CTPayPal.create($("paypal-panel"), { headers: () => (state.token ? { "X-Admin-Token": state.token } : {}) });
     }
+    for (const input of document.querySelectorAll("input[name=persona]")) input.addEventListener("change", updateTierHint);
+    initHistoryGrid();
     renderDeposit(null);
     renderExplanation(null);
-    loadConfig();
+    loadConfig().then(() => scheduleHistory(0));
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

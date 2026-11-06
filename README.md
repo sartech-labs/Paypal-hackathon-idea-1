@@ -211,7 +211,10 @@ Copy `.env.example` to `.env`. Settings are validated at startup (`server/config
 | `PAYPAL_MCP_COMMAND` | `npx -y @paypal/mcp@1.8.1` | Command that starts the local server; the Docker image sets it to the bundled copy. Read-only `--tools` are always appended |
 | `PAYPAL_MCP_URL` | `https://mcp.sandbox.paypal.com/sse` | Hosted server URL |
 | `PAYPAL_MCP_TIMEOUT_SECONDS` | `60` | Timeout per MCP operation |
-| `DEPOSIT_AMOUNT` | `0.01` | Deposit amount (positive decimal) |
+| `TIER1_PRICE` | `5.00` | Premium tier deposit (positive decimal; empty = value in `data/site_config.json`) |
+| `TIER2_PRICE` | `3.00` | Standard tier deposit |
+| `TIER3_PRICE` | `1.00` | Public tier deposit |
+| `DEPOSIT_AMOUNT` | `0.01` | Base deposit for paths outside every pricing tier (the home page `/`); `/news` is Public-tier content |
 | `SESSION_TTL_SECONDS` / `CHALLENGE_TTL_SECONDS` | `1800` / `600` | Session and challenge lifetimes |
 | `MAX_REQUESTS_PER_SESSION` | `10` | Allowed content requests per session |
 | `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS` | `3` / `10` | Sliding-window rate limit |
@@ -445,7 +448,8 @@ The suite (222 tests) needs no network access or credentials; PayPal, OpenAI, Cl
   "crawler_id": "crawler-demo-01",
   "site_id": "demo-news-site",
   "policy_version": "1.0",
-  "deposit": { "amount": "0.01", "currency": "USD", "refundable": true },
+  "deposit": { "amount": "1.00", "currency": "USD", "refundable": true },
+  "pricing": { "tier_id": "public", "tier_name": "Public", "price": "1.00", "currency": "USD", "resource": "/news" },
   "rules_summary": {
     "allowed_paths": ["/", "/news", "/news/technology", "/news/economy"],
     "disallowed_paths": ["/admin", "/private/customer-data", "/internal/reports"],

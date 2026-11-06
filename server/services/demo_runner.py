@@ -17,7 +17,7 @@ import secrets
 import threading
 import time
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any, Callable, Optional
 
@@ -28,11 +28,13 @@ from client.agent_tools import GatewayToolbox
 from client.scripted_agent import ScriptedDriver
 from server.core.quotas import HourlyQuota
 from server.core.security import utc_now_iso
-from server.schemas import DemoRunEvent, DemoRunResponse
+from server.schemas import DemoRunEvent, DemoRunResponse, PricingTier
 
 logger = logging.getLogger("crawlertrust.demo")
 
-MAX_DEPOSIT = Decimal("1.00")
+# Default operator spending limit enforced by the crawler's toolbox. The gateway raises it
+# to its highest published price so every configured tier stays payable.
+MAX_DEPOSIT = Decimal("5.00")
 MAX_TURNS = 25
 APPROVAL_TIMEOUT_SECONDS = 600.0
 APPROVAL_POLL_SECONDS = 2.0
@@ -95,6 +97,7 @@ class DemoRun:
     final_text: Optional[str] = None
     error: Optional[str] = None
     usage: dict[str, Any] = field(default_factory=dict)
+    pricing_tier: Optional[dict[str, Any]] = None
     events: list[DemoRunEvent] = field(default_factory=list)
     cancel_event: threading.Event = field(default_factory=threading.Event)
     approved_event: threading.Event = field(default_factory=threading.Event)
@@ -132,6 +135,7 @@ class DemoRun:
                 final_text=self.final_text,
                 error=self.error,
                 usage=dict(self.usage),
+                pricing_tier=dict(self.pricing_tier) if self.pricing_tier else None,
                 events=[event for event in self.events if event.seq >= after],
                 next_seq=len(self.events),
             )
@@ -148,7 +152,20 @@ class DemoRun:
                 "started_at": self.started_at,
                 "deposit_id": deposit.get("deposit_id"),
                 "deposit_state": deposit.get("deposit_state"),
+                "pricing_tier": (self.pricing_tier or {}).get("tier_id"),
             }
+
+
+def _tier_summary(tier: PricingTier) -> dict[str, Any]:
+    resources = [resource.path for resource in tier.resources]
+    return {
+        "tier_id": tier.tier_id,
+        "name": tier.name,
+        "price": tier.price,
+        "currency": tier.currency,
+        "resource": resources[0] if resources else tier.path_prefix,
+        "resources": resources or [tier.path_prefix],
+    }
 
 
 def _tool_result_event(name: str, result: Any, is_error: bool) -> dict[str, Any]:
@@ -174,7 +191,9 @@ class DemoRunner:
         http_factory: Optional[HttpFactory] = None,
         llm_factory: Optional[LlmFactory] = None,
         sleep: Optional[Callable[[float], None]] = None,
+        max_deposit: Decimal = MAX_DEPOSIT,
     ) -> None:
+        self._max_deposit = max_deposit
         self._http_factory = http_factory or _default_http_factory
         self._llm_factory = llm_factory or _default_llm_factory
         self._sleep = sleep  # tests skip real waits; runs otherwise wait (interruptibly)
@@ -211,6 +230,7 @@ class DemoRunner:
         ai_model: Optional[str],
         ai_effort: str = "medium",
         ai_available: bool = False,
+        tier: Optional[PricingTier] = None,
     ) -> DemoRun:
         if persona not in PERSONAS:
             raise DemoRunError(f"Unknown persona {persona!r}.")
@@ -236,6 +256,8 @@ class DemoRunner:
                 crawler_id=f"{prefix}-{persona}-{secrets.token_hex(3)}",
                 provider=provider,
                 model=ai_model if driver == "ai" else "scripted",
+                # Tier selection drives the compliant crawler; the rogue scenario is unchanged.
+                pricing_tier=_tier_summary(tier) if tier is not None and persona == "compliant" else None,
             )
             self._runs[run.run_id] = run
             self._order.append(run.run_id)
@@ -271,6 +293,18 @@ class DemoRunner:
 
     def _execute(self, run: DemoRun, base_url: str, effort: str) -> None:
         persona = PERSONAS[run.persona]
+        tier = run.pricing_tier
+        if tier:
+            resources = ", ".join(tier["resources"])
+            persona = replace(
+                persona,
+                task=(
+                    f"Retrieve this site's {tier['name']} tier content ({resources}), starting with "
+                    f"{tier['resource']}, and write a short brief. The site prices content by tier and "
+                    "its gateway sets the deposit; pay only what the 402 challenge asks, and only if it "
+                    "fits your spending limit."
+                ),
+            )
         run.emit(
             "run_started",
             {
@@ -281,6 +315,7 @@ class DemoRunner:
                 "crawler_id": run.crawler_id,
                 "model": run.model,
                 "provider": run.provider,
+                "pricing_tier": tier,
             },
         )
         try:
@@ -288,7 +323,7 @@ class DemoRunner:
                 toolbox = GatewayToolbox(
                     http=http,
                     crawler_id=run.crawler_id,
-                    max_deposit=MAX_DEPOSIT,
+                    max_deposit=self._max_deposit,
                     sleep=self._sleep or (lambda seconds: run.cancel_event.wait(seconds)),
                 )
                 toolbox.approval_handler = lambda url: self._await_approval(run, toolbox, http, url)
@@ -324,7 +359,11 @@ class DemoRunner:
                         max_turns=MAX_TURNS,
                         on_event=on_event,
                         provider="scripted",
-                        driver=ScriptedDriver(run.persona),
+                        driver=ScriptedDriver(
+                            run.persona,
+                            tier_name=tier["name"] if tier else None,
+                            tier_resources=tier["resources"] if tier else None,
+                        ),
                         should_stop=run.cancel_event.is_set,
                     )
                 result = agent.run()

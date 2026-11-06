@@ -147,6 +147,12 @@ async def dashboard_data(
                 created_at=d.created_at,
                 updated_at=d.updated_at,
                 provider_order_id=d.provider_order_id,
+                provider_capture_id=d.provider_capture_id,
+                provider_authorization_id=d.provider_authorization_id,
+                provider_refund_id=d.provider_refund_id,
+                pricing_tier=d.pricing_tier,
+                pricing_tier_name=d.pricing_tier_name,
+                requested_resource=d.requested_resource,
             )
             for d in sorted(deposits, key=lambda record: record.created_at, reverse=True)
         ],

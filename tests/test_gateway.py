@@ -32,7 +32,7 @@ async def test_public_endpoints_and_402_challenge(async_client: httpx.AsyncClien
     data = chg_resp.json()
     assert data["error"] == "payment_required"
     assert data["crawler_id"] == "bot-alpha"
-    assert data["deposit"]["amount"] == "0.01"
+    assert data["deposit"]["amount"] == "1.00"  # /news is Public-tier content
     assert data["deposit"]["currency"] == "USD"
     assert data["policy_url"] == "/policies"
     assert data["payment_url"] == "/deposits/create"

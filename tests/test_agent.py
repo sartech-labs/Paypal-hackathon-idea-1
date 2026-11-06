@@ -135,7 +135,7 @@ def test_compliant_agent_completes_session_and_gets_refund(
     assert toolbox.outcome["deposit"]["deposit_state"] == "REFUNDED"
 
     challenge = _results_by_tool(toolbox, "fetch_page")[0]
-    assert challenge["status"] == 402 and challenge["deposit"]["amount"] == "0.01"
+    assert challenge["status"] == 402 and challenge["deposit"]["amount"] == "1.00"
 
     economy = _results_by_tool(toolbox, "fetch_page")[-1]
     assert economy["status"] == 200

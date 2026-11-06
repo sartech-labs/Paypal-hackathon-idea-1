@@ -72,6 +72,7 @@
       RATE_LIMIT_EXCEEDED: "Rate limit exceeded",
       MAX_REQUESTS_EXCEEDED: "Request budget exceeded",
       SESSION_ALREADY_COMPLETED: "Reused a completed session",
+      TIER_NOT_COVERED: "Deposit does not cover this pricing tier",
     };
     if (known[code]) return known[code];
     const lower = code.toLowerCase().replace(/_/g, " ");
@@ -241,9 +242,26 @@
       columnDefs: [
         { headerName: "Outcome", field: "deposit_state", minWidth: 150, cellRenderer: cellNode((d) => depositChip(d.deposit_state)) },
         { headerName: "Crawler", field: "crawler_id", minWidth: 150 },
+        {
+          headerName: "Tier", field: "pricing_tier_name", minWidth: 105, maxWidth: 125,
+          valueGetter: (p) => (p.data ? p.data.pricing_tier_name || "Base" : ""),
+          cellRenderer: cellNode((d) => el("span", { className: "tier-badge", dataset: { tier: d.pricing_tier || "base" }, text: d.pricing_tier_name || "Base" })),
+        },
+        { headerName: "Resource", field: "requested_resource", minWidth: 200, cellClass: "mono", tooltipField: "requested_resource" },
         { headerName: "Deposit", field: "amount", maxWidth: 120, valueFormatter: (p) => (p.data ? `${p.data.amount} ${p.data.currency}` : "") },
+        { headerName: "Payment", field: "payment_status", minWidth: 110, maxWidth: 130, valueFormatter: (p) => humanize(p.value) },
         { headerName: "Settlement", field: "settlement_mode", maxWidth: 130, valueFormatter: (p) => (p.value === "authorization" ? "Hold" : "Refund") },
         { headerName: "Decision", field: "policy_decision", minWidth: 150, valueFormatter: (p) => humanize(p.value) },
+        { headerName: "Order ID", field: "provider_order_id", minWidth: 150, cellClass: "mono", tooltipField: "provider_order_id" },
+        {
+          headerName: "Capture / Refund ID", colId: "provider_ids", minWidth: 190, cellClass: "mono",
+          valueGetter: (p) => {
+            if (!p.data) return "";
+            const held = p.data.provider_capture_id || p.data.provider_authorization_id;
+            return [held, p.data.provider_refund_id].filter(Boolean).join(" / ");
+          },
+          tooltipValueGetter: (p) => (p.value ? p.value : null),
+        },
         { headerName: "Created", field: "created_at", maxWidth: 120, sort: "desc", valueFormatter: (p) => formatTime(p.value), tooltipValueGetter: (p) => formatDateTime(p.value) },
         {
           headerName: "",

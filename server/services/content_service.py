@@ -58,7 +58,26 @@ class ContentService:
         raw["session_ttl_seconds"] = settings.session_ttl_seconds
         raw["challenge_ttl_seconds"] = settings.challenge_ttl_seconds
         raw["paypal_sandbox_enabled"] = settings.payment_mode == "paypal_sandbox"
+        raw["pricing_tiers"] = self._apply_tier_price_overrides(raw.get("pricing_tiers") or [], settings)
         return SiteConfig.model_validate(raw)
+
+    @staticmethod
+    def _apply_tier_price_overrides(tiers: list[Any], settings: Settings) -> list[Any]:
+        """Apply TIER1_PRICE..TIER3_PRICE: tier1 is the highest-ranked tier.
+
+        Tier prices are charged in the deposit currency (PAYPAL_CURRENCY).
+        """
+        ordered = sorted(
+            (dict(tier) for tier in tiers if isinstance(tier, dict)),
+            key=lambda tier: int(tier.get("rank", 0)),
+            reverse=True,
+        )
+        for index, tier in enumerate(ordered):
+            override = settings.tier_prices[index] if index < len(settings.tier_prices) else None
+            if override is not None:
+                tier["price"] = f"{override:.2f}"
+            tier["currency"] = settings.paypal_currency
+        return ordered
 
     def _load_allowed_pages(self, path: Path) -> dict[str, PageContent]:
         raw = self._load_json_file(path)

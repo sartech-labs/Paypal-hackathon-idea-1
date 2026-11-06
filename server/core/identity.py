@@ -14,18 +14,21 @@ from server.core.security import (
 )
 from server.schemas import (
     ChallengeDepositInfo,
+    ChallengePricingInfo,
     ChallengeRecord,
     ChallengeResponse,
     RulesSummary,
     SiteConfig,
 )
+from server.services.pricing import PricingCatalog
 
 
 class IdentityService:
     """Generates and validates crawler identities and single-use 402 challenges."""
 
-    def __init__(self, site_config: SiteConfig) -> None:
+    def __init__(self, site_config: SiteConfig, pricing: Optional[PricingCatalog] = None) -> None:
         self._site_config = site_config
+        self._pricing = pricing or PricingCatalog(site_config)
 
     def resolve_or_generate_crawler_id(self, candidate: Optional[str]) -> str:
         """Validate a provided crawler_id or generate a fresh unique crawler_id."""
@@ -44,19 +47,23 @@ class IdentityService:
         challenge_id = f"chg_{uuid.uuid4().hex}"
         now_iso = utc_now_iso()
         expires_iso = utc_future_iso(challenge_ttl_seconds)
+        # The deposit is priced by the gateway from the requested resource's tier.
+        amount, tier = self._pricing.deposit_for_request_path(requested_path)
 
         record = ChallengeRecord(
             challenge_id=challenge_id,
             crawler_id=valid_crawler_id,
             site_id=self._site_config.site_id,
             policy_version=self._site_config.policy_version,
-            required_amount=self._site_config.deposit_amount,
+            required_amount=amount,
             currency=self._site_config.currency,
             requested_path=requested_path,
             created_at=now_iso,
             expires_at=expires_iso,
             consumed=False,
             deposit_id=None,
+            pricing_tier=tier.tier_id if tier else None,
+            pricing_tier_name=tier.name if tier else None,
         )
 
         response = ChallengeResponse(
@@ -65,9 +72,20 @@ class IdentityService:
             site_id=self._site_config.site_id,
             policy_version=self._site_config.policy_version,
             deposit=ChallengeDepositInfo(
-                amount=self._site_config.deposit_amount,
+                amount=amount,
                 currency=self._site_config.currency,
                 refundable=self._site_config.refundable,
+            ),
+            pricing=(
+                ChallengePricingInfo(
+                    tier_id=tier.tier_id,
+                    tier_name=tier.name,
+                    price=tier.price,
+                    currency=tier.currency,
+                    resource=requested_path,
+                )
+                if tier
+                else None
             ),
             rules_summary=RulesSummary(
                 allowed_paths=list(self._site_config.allowed_paths),

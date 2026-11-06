@@ -6,7 +6,8 @@
         "/",
         "/news",
         "/news/technology",
-        "/news/economy"
+        "/news/economy",
+        "/content"
       ],
       "disallow": [
         "/admin",
@@ -21,4 +22,3 @@
   "gateway_prefix": "/gateway",
   "notice": "Automated crawlers and AI agents must establish a CrawlerTrust deposit session and accept the active policy before accessing content under /gateway."
 }
-

@@ -76,6 +76,8 @@ async def _handle_gateway_request(
             details={
                 "required_amount": challenge_record.required_amount,
                 "currency": challenge_record.currency,
+                "pricing_tier": challenge_record.pricing_tier,
+                "http_status": 402,
             },
         )
         return JSONResponse(
@@ -138,6 +140,11 @@ async def _handle_gateway_request(
     # Path shown in session history, audit events, and error responses: the
     # crawler's original request when the normalized form cannot represent it.
     display_path = decision.requested_path or decision.normalized_path or raw_subpath
+    resource_tier = (
+        container.pricing.tier_for_normalized_path(decision.normalized_path)
+        if decision.requested_path is None
+        else None
+    )
 
     # 4. Record evaluation against session history when session is active or completed
     updated_session = session
@@ -181,6 +188,8 @@ async def _handle_gateway_request(
             "session_disqualified": updated_session.disqualified,
             "remaining_session_budget": decision.remaining_session_budget,
             "remaining_window_requests": decision.remaining_window_requests,
+            "pricing_tier": resource_tier.tier_id if resource_tier else None,
+            "deposit_pricing_tier": deposit.pricing_tier if deposit else None,
         },
     )
 
@@ -219,6 +228,7 @@ async def _handle_gateway_request(
             "X-CrawlerTrust-Policy-Version": decision.policy_version,
             "X-CrawlerTrust-Remaining-Budget": str(decision.remaining_session_budget),
             "X-CrawlerTrust-Remaining-Window": str(decision.remaining_window_requests),
+            **({"X-CrawlerTrust-Pricing-Tier": resource_tier.tier_id} if resource_tier else {}),
         },
     )
 
