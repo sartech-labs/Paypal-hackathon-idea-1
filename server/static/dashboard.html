@@ -1,137 +1,284 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CrawlerTrust Console</title>
-  <meta name="description" content="Publisher console for CrawlerTrust: AI crawler sessions, refundable PayPal deposits, policy violations, and AI explanations.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%232a78d6'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <title>CrawlerTrust publisher console</title>
+  <meta name="description" content="Publisher console for CrawlerTrust: AI crawler sessions, refundable PayPal deposits, policy violations, analytics, and AI explanations.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%234c8dff'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>
+    /* Apply the saved theme before first paint (dark by default). */
+    try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
+  </script>
   <link rel="stylesheet" href="/static/dashboard.css">
   <link rel="stylesheet" href="/static/demo.css">
   <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
           integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
           crossorigin="anonymous" defer></script>
+  <script src="/static/grid_kit.js" defer></script>
   <script src="/static/paypal_panel.js" defer></script>
+  <script src="/static/analytics.js" defer></script>
   <script src="/static/dashboard.js" defer></script>
 </head>
 <body>
-<div class="app">
-  <header class="topbar">
-    <div class="brand">
-      <div class="brand-row">
-        <h1>CrawlerTrust publisher console</h1>
-        <nav class="nav" aria-label="Pages">
-          <a href="/">Live demo</a>
-          <a href="/console" aria-current="page">Publisher console</a>
-          <a href="/docs">API docs</a>
-        </nav>
-      </div>
-      <p id="site-line">Refundable PayPal deposits that keep AI crawlers accountable</p>
-      <div class="badges" id="badges" aria-label="Gateway configuration"></div>
-    </div>
+<header class="appbar">
+  <div class="appbar-inner">
+    <a class="brand-mark" href="/console" aria-label="CrawlerTrust publisher console">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="var(--accent)"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+      <span class="brand-name">CrawlerTrust</span>
+      <span class="brand-tag">Publisher</span>
+    </a>
+    <nav class="nav" aria-label="Pages">
+      <a href="/">Live demo</a>
+      <a href="/console" aria-current="page">Publisher console</a>
+      <a href="/docs">API docs</a>
+    </nav>
     <div class="controls">
-      <form class="token-form" id="token-form" autocomplete="off">
-        <input type="password" id="admin-token" placeholder="Admin token" aria-label="Admin token">
-        <button type="submit">Use token</button>
-      </form>
-      <button type="button" id="theme-toggle" aria-label="Switch color theme">Theme: system</button>
+      <div class="admin-menu">
+        <button type="button" id="admin-toggle" aria-expanded="false" aria-controls="admin-pop" data-active="false"><span aria-hidden="true">🔒</span> <span id="admin-toggle-text">Admin</span></button>
+        <div class="admin-pop" id="admin-pop" hidden>
+          <p class="hint">The admin token unlocks private deployments, the AI policy assistant, and full explanations. Public demos work without it.</p>
+          <form class="token-form" id="token-form" autocomplete="off">
+            <input type="password" id="admin-token" placeholder="Admin token" aria-label="Admin token">
+            <button type="submit" class="primary">Use token</button>
+          </form>
+        </div>
+      </div>
+      <button type="button" id="theme-toggle" aria-label="Switch color theme">Theme: dark</button>
     </div>
-  </header>
-
-  <section class="banner" id="banner" role="status" hidden></section>
-
-  <div class="filter-row">
-    <input type="search" id="quick-filter" placeholder="Filter tables by crawler, path, state..." aria-label="Filter all tables">
-    <label class="toggle"><input type="checkbox" id="auto-refresh" checked> Live refresh</label>
-    <span class="updated" id="updated">Waiting for data...</span>
   </div>
+</header>
 
-  <section class="kpis" id="kpis" aria-label="Key metrics"></section>
+<div class="console">
+  <aside class="sidenav" aria-label="Console sections">
+    <div class="sidenav-group">
+      <p class="sidenav-label">Monitor</p>
+      <button type="button" class="sidenav-link" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">◧</span>Overview</button>
+      <button type="button" class="sidenav-link" data-view="operations"><span class="nav-icon" aria-hidden="true">≡</span>Operations<span class="nav-count" id="count-sessions" title="Crawler sessions">0</span></button>
+      <button type="button" class="sidenav-link" data-view="security"><span class="nav-icon" aria-hidden="true">⚠</span>Security<span class="nav-count" id="count-violations" data-tone="critical" title="Policy violations">0</span></button>
+    </div>
+    <div class="sidenav-group">
+      <p class="sidenav-label">Insights</p>
+      <button type="button" class="sidenav-link" data-view="analytics"><span class="nav-icon" aria-hidden="true">◔</span>Analytics</button>
+    </div>
+    <div class="sidenav-group">
+      <p class="sidenav-label">Configure</p>
+      <button type="button" class="sidenav-link" data-view="policy"><span class="nav-icon" aria-hidden="true">§</span>Policy</button>
+    </div>
+    <div class="sidenav-foot">
+      <label class="toggle"><input type="checkbox" id="auto-refresh" checked> Live refresh</label>
+      <span class="updated"><span class="live-dot" aria-hidden="true"></span><span id="updated">Waiting for data...</span></span>
+    </div>
+  </aside>
 
-  <div class="layout">
-    <div class="col-main">
-      <section class="card" aria-labelledby="deposits-title">
-        <div class="card-head">
-          <div>
-            <h2 id="deposits-title">Deposits</h2>
-            <p class="card-sub">Each AI crawler session is backed by a refundable PayPal deposit. Select a row to see why it was returned or kept.</p>
+  <main class="console-main">
+    <div class="page-head">
+      <div>
+        <p class="eyebrow">Publisher console</p>
+        <h1 id="page-title">Overview</h1>
+        <p id="site-line">Refundable PayPal deposits that keep AI crawlers accountable</p>
+        <div class="badges" id="badges" aria-label="Gateway configuration"></div>
+      </div>
+      <div class="filter-row">
+        <input type="search" id="quick-filter" placeholder="Filter all tables..." aria-label="Filter all tables">
+      </div>
+    </div>
+
+    <section class="banner" id="banner" role="status" hidden></section>
+
+    <!-- Overview ------------------------------------------------------------------ -->
+    <section class="view" data-view="overview" aria-labelledby="page-title">
+      <section class="card console-empty" id="console-empty" hidden>
+        <span class="section-icon" aria-hidden="true">▶</span>
+        <div>
+          <h2>No crawler activity yet</h2>
+          <p class="card-sub">Run a compliant or a rogue crawler from the live demo. Its deposit, requests, and violations appear here within a few seconds.</p>
+        </div>
+        <a class="button-link primary" href="/">Open the live demo</a>
+      </section>
+      <section class="kpis" id="kpis" aria-label="Key metrics"></section>
+
+      <div class="layout">
+        <div class="col-main">
+          <section class="card" aria-labelledby="deposits-title">
+            <div class="card-head">
+              <div class="section-title">
+                <span class="section-icon" aria-hidden="true">$</span>
+                <div>
+                  <h2 id="deposits-title">Deposits &amp; PayPal transactions</h2>
+                  <p class="card-sub">Each AI crawler session is backed by a refundable PayPal deposit. Select a row to inspect it, see why it was returned or kept, and verify it with PayPal; expand it for every PayPal ID.</p>
+                </div>
+              </div>
+            </div>
+            <div id="grid-deposits" class="grid grid-deposits"></div>
+          </section>
+
+          <div class="split-2">
+            <section class="card" aria-labelledby="chart-title">
+              <div class="card-head">
+                <div>
+                  <h2 id="chart-title">Policy violations by reason</h2>
+                  <p class="card-sub">Blocked requests that counted as violations, all sessions.</p>
+                </div>
+                <button type="button" class="link" id="chart-view-toggle" aria-pressed="false">Show as table</button>
+              </div>
+              <div id="violations-chart"></div>
+            </section>
+            <section class="card" aria-labelledby="outcome-title">
+              <div class="card-head">
+                <div>
+                  <h2 id="outcome-title">Deposit outcomes</h2>
+                  <p class="card-sub">Every deposit by its current state, and the value behind each.</p>
+                </div>
+              </div>
+              <div id="outcome-chart"></div>
+            </section>
           </div>
         </div>
-        <div id="grid-deposits" class="grid grid-deposits"></div>
-      </section>
 
+        <aside class="col-side">
+          <section class="card" aria-labelledby="explain-title" id="explain-card">
+            <div class="card-head">
+              <div class="section-title">
+                <span class="section-icon" aria-hidden="true">?</span>
+                <div>
+                  <h2 id="explain-title">Deposit inspector</h2>
+                  <p class="card-sub" id="explain-sub">Select a deposit to explain its refund or forfeiture.</p>
+                </div>
+              </div>
+            </div>
+            <div id="deposit-facts"></div>
+            <div id="explanation"><div class="inspector-empty"><strong>No deposit selected</strong><span>Pick a row in the deposits table, or press Explain.</span></div></div>
+          </section>
+
+          <section class="card" id="paypal-panel" aria-labelledby="paypal-title"></section>
+        </aside>
+      </div>
+    </section>
+
+    <!-- Operations ------------------------------------------------------------------ -->
+    <section class="view" data-view="operations" hidden>
+      <div class="view-head">
+        <div>
+          <p>Paid sessions, and every request the gateway answered, joined with the deposit that paid for it.</p>
+        </div>
+      </div>
       <section class="card" aria-labelledby="sessions-title">
         <div class="card-head">
           <div>
             <h2 id="sessions-title">Crawler sessions</h2>
-            <p class="card-sub">Requests and violations counted by the gateway for every paid session.</p>
+            <p class="card-sub">Requests and violations counted by the gateway for every paid session. Expand a session for its deposit and timing.</p>
           </div>
         </div>
         <div id="grid-sessions" class="grid grid-sessions"></div>
       </section>
+      <section class="card" aria-labelledby="requests-title">
+        <div class="card-head">
+          <div>
+            <h2 id="requests-title">Request history</h2>
+            <p class="card-sub">The latest 200 gateway requests from the audit log, with pricing tier, deposit, and decision.</p>
+          </div>
+        </div>
+        <div id="grid-requests" class="grid grid-requests"></div>
+        <p class="hint" id="requests-hint"></p>
+      </section>
+    </section>
 
+    <!-- Security ------------------------------------------------------------------ -->
+    <section class="view" data-view="security" hidden>
+      <div class="view-head">
+        <div>
+          <p>Policy violations and the append-only audit log behind every decision.</p>
+        </div>
+      </div>
+      <section class="kpis" id="security-kpis" aria-label="Security metrics"></section>
+      <section class="card" aria-labelledby="violations-title">
+        <div class="card-head">
+          <div>
+            <h2 id="violations-title">Policy violations</h2>
+            <p class="card-sub">Requests the gateway blocked as violations: disallowed paths, path traversal, rate-limit bursts, and budget overruns.</p>
+          </div>
+        </div>
+        <div id="grid-violations" class="grid grid-violations"></div>
+      </section>
       <section class="card" aria-labelledby="events-title">
         <div class="card-head">
           <div>
             <h2 id="events-title">Live audit feed</h2>
-            <p class="card-sub">Append-only gateway, payment, and settlement events, newest first.</p>
+            <p class="card-sub">Append-only gateway, payment, and settlement events, newest first (latest 250).</p>
           </div>
         </div>
         <div id="grid-events" class="grid grid-events"></div>
       </section>
-    </div>
+    </section>
 
-    <aside class="col-side">
-      <section class="card" aria-labelledby="chart-title">
-        <div class="card-head">
-          <div>
-            <h2 id="chart-title">Policy violations by reason</h2>
-            <p class="card-sub">Blocked requests that counted as violations, all sessions.</p>
+    <!-- Analytics (AG Studio) ------------------------------------------------------- -->
+    <section class="view" data-view="analytics" hidden>
+      <div class="view-head">
+        <div>
+          <p>Interactive dashboards built with AG Studio from the gateway's live records. Click a chart segment to cross-filter the page; switch to Edit to build your own views.</p>
+        </div>
+        <div class="studio-toolbar">
+          <div class="segmented" id="studio-pages" role="group" aria-label="Dashboard pages"></div>
+          <button type="button" class="btn-sm" id="studio-refresh">Refresh data</button>
+          <button type="button" class="btn-sm" id="studio-mode" aria-pressed="false">Edit dashboard</button>
+        </div>
+      </div>
+      <div class="source-strip" id="studio-sources" aria-label="Data sources"></div>
+      <div class="studio-host" id="studio-host">
+        <div class="studio-status" id="studio-status"><span class="spinner" aria-hidden="true"></span><span>Open this view to load AG Studio.</span></div>
+      </div>
+      <p class="hint" id="studio-hint">All figures come from /dashboard/data, /demo/requests, and /demo/config. Nothing is sampled or simulated.</p>
+    </section>
+
+    <!-- Policy ------------------------------------------------------------------ -->
+    <section class="view" data-view="policy" hidden>
+      <div class="view-head">
+        <div>
+          <p>The machine-readable policy every crawler accepts, and an AI assistant to draft a new one.</p>
+        </div>
+      </div>
+      <div class="split-2">
+        <section class="card" aria-labelledby="policy-title">
+          <div class="card-head">
+            <div>
+              <h2 id="policy-title">Active policy</h2>
+              <p class="card-sub" id="policy-sub">Served at /policies and enforced on every gateway request.</p>
+            </div>
+            <a class="btn-sm" href="/policies" target="_blank" rel="noopener">View JSON</a>
           </div>
-          <button type="button" class="link" id="chart-view-toggle" aria-pressed="false">Show as table</button>
-        </div>
-        <div id="violations-chart"></div>
-      </section>
+          <div id="policy-view"><p class="empty">Loading the policy...</p></div>
+        </section>
 
-      <section class="card" aria-labelledby="explain-title" id="explain-card">
-        <div class="card-head">
-          <div>
-            <h2 id="explain-title">Why this outcome</h2>
-            <p class="card-sub" id="explain-sub">Select a deposit to explain its refund or forfeiture.</p>
+        <section class="card assistant" aria-labelledby="assistant-title">
+          <div class="card-head">
+            <div>
+              <h2 id="assistant-title">Policy assistant</h2>
+              <p class="card-sub">Describe your crawling terms in plain English; the AI model drafts the machine-readable policy. Drafts are validated and never applied automatically.</p>
+            </div>
           </div>
-        </div>
-        <div id="explanation"><p class="empty">No deposit selected.</p></div>
-      </section>
-
-      <section class="card" id="paypal-panel" aria-labelledby="paypal-title"></section>
-
-      <section class="card assistant" aria-labelledby="assistant-title">
-        <div class="card-head">
-          <div>
-            <h2 id="assistant-title">Policy assistant</h2>
-            <p class="card-sub">Describe your crawling terms in plain English; the AI model drafts the machine-readable policy. Drafts are validated and never applied automatically.</p>
+          <label for="terms" class="hint">Publisher terms</label>
+          <textarea id="terms">AI crawlers may read our home page and the news sections. The admin area, member profiles, and internal reports are off limits. Allow at most 5 requests every 10 seconds and 20 requests per visit. Ask for a 25 cent refundable deposit.</textarea>
+          <div class="assistant-actions">
+            <button type="button" class="primary" id="draft-button">Draft policy with AI</button>
+            <span class="hint" id="draft-hint">Enter the admin token in the top bar to draft a policy with AI.</span>
           </div>
-        </div>
-        <label for="terms" class="hint">Publisher terms</label>
-        <textarea id="terms">AI crawlers may read our home page and the news sections. The admin area, member profiles, and internal reports are off limits. Allow at most 5 requests every 10 seconds and 20 requests per visit. Ask for a 25 cent refundable deposit.</textarea>
-        <div class="assistant-actions">
-          <button type="button" class="primary" id="draft-button">Draft policy with AI</button>
-          <span class="hint" id="draft-hint">Requires the admin token.</span>
-        </div>
-        <div class="assistant-result" id="draft-result"></div>
-      </section>
-    </aside>
-  </div>
+          <div class="assistant-result" id="draft-result"></div>
+        </section>
+      </div>
+    </section>
 
-  <footer>
-    CrawlerTrust gateway ·
-    <a href="/">Live demo</a> ·
-    <a href="/docs">API docs</a> ·
-    <a href="/policies">Policy JSON</a> ·
-    <a href="/robots.txt">robots.txt</a> ·
-    <a href="/health">Health</a>
-  </footer>
+    <footer>
+      CrawlerTrust gateway ·
+      <a href="/">Live demo</a> ·
+      <a href="/docs">API docs</a> ·
+      <a href="/policies">Policy JSON</a> ·
+      <a href="/robots.txt">robots.txt</a> ·
+      <a href="/health">Health</a>
+    </footer>
+  </main>
 </div>
 <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
 </body>
 </html>

@@ -1,112 +1,160 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CrawlerTrust Live Demo</title>
   <meta name="description" content="Run an AI crawler against a CrawlerTrust gateway: an HTTP 402 challenge, a refundable PayPal deposit, policy enforcement, automatic refund or forfeiture, and PayPal verification through PayPal's MCP server.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%232a78d6'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%234c8dff'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>
+    /* Apply the saved theme before first paint (dark by default). */
+    try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
+  </script>
   <link rel="stylesheet" href="/static/dashboard.css">
   <link rel="stylesheet" href="/static/demo.css">
   <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
           integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
           crossorigin="anonymous" defer></script>
+  <script src="/static/grid_kit.js" defer></script>
   <script src="/static/paypal_panel.js" defer></script>
   <script src="/static/demo.js" defer></script>
 </head>
 <body>
-<div class="app">
-  <header class="topbar">
-    <div class="brand">
-      <div class="brand-row">
-        <span class="logo">
-          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="var(--accent)"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
-          <h1>CrawlerTrust</h1>
-        </span>
-        <nav class="nav" aria-label="Pages">
-          <a href="/" aria-current="page">Live demo</a>
-          <a href="/console">Publisher console</a>
-          <a href="/docs">API docs</a>
-        </nav>
+<header class="appbar">
+  <div class="appbar-inner">
+    <a class="brand-mark" href="/" aria-label="CrawlerTrust home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="var(--accent)"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+      <span class="brand-name">CrawlerTrust</span>
+      <span class="brand-tag">Live demo</span>
+    </a>
+    <nav class="nav" aria-label="Pages">
+      <a href="/" aria-current="page">Live demo</a>
+      <a href="/console">Publisher console</a>
+      <a href="/docs">API docs</a>
+    </nav>
+    <div class="controls">
+      <div class="admin-menu">
+        <button type="button" id="admin-toggle" aria-expanded="false" aria-controls="admin-pop" data-active="false"><span aria-hidden="true">🔒</span> <span id="admin-toggle-text">Admin</span></button>
+        <div class="admin-pop" id="admin-pop" hidden>
+          <p class="hint">The admin token unlocks private deployments, the AI policy assistant, and full explanations. Public demos work without it.</p>
+          <form class="token-form" id="token-form" autocomplete="off">
+            <input type="password" id="admin-token" placeholder="Admin token" aria-label="Admin token">
+            <button type="submit" class="primary">Use token</button>
+          </form>
+        </div>
       </div>
-      <p class="tagline">Refundable PayPal deposits that keep AI crawlers accountable. Good agents crawl free; agents that break the rules pay.</p>
+      <button type="button" id="theme-toggle" aria-label="Switch color theme">Theme: dark</button>
+    </div>
+  </div>
+</header>
+
+<main class="app">
+  <section class="hero" aria-labelledby="hero-title">
+    <div>
+      <p class="eyebrow">HTTP 402 gateway · PayPal deposits · AI agents</p>
+      <h1 id="hero-title">Keep AI crawlers accountable with <em>refundable PayPal deposits</em>.</h1>
+      <p class="tagline">Good agents crawl free; agents that break the rules pay. Pick a crawler below and watch the gateway challenge it, take a PayPal deposit, enforce the policy on every request, and settle.</p>
       <div class="badges" id="badges" aria-label="Gateway configuration"></div>
     </div>
-    <div class="controls">
-      <form class="token-form" id="token-form" autocomplete="off">
-        <input type="password" id="admin-token" placeholder="Admin token" aria-label="Admin token">
-        <button type="submit">Use token</button>
-      </form>
-      <button type="button" id="theme-toggle" aria-label="Switch color theme">Theme: system</button>
+    <div class="hero-legend" aria-label="Possible outcomes">
+      <div class="hero-pill" data-tone="good"><strong>✓ Compliant crawler</strong><span>Deposit returned in full</span></div>
+      <div class="hero-pill" data-tone="critical"><strong>✕ Rogue crawler</strong><span>Deposit forfeited to the publisher</span></div>
     </div>
-  </header>
+  </section>
 
   <section class="banner" id="banner" role="status" hidden></section>
 
-  <section class="card launcher launcher-persona" aria-label="Pick a crawler">
-    <fieldset>
-      <legend>1. Pick a crawler</legend>
-      <div class="choice-row">
-        <label class="choice">
-          <input type="radio" name="persona" value="compliant" checked>
-          <span class="choice-title">Compliant research crawler</span>
-          <span class="choice-desc">Reads the policy, pays the deposit for the content tier you choose with PayPal, paces itself to the rate limit, and ignores a prompt injection planted in a page.</span>
-          <span class="choice-expect">Expected outcome: deposit returned</span>
-        </label>
-        <label class="choice">
-          <input type="radio" name="persona" value="rogue">
-          <span class="choice-title">Rogue scraper</span>
-          <span class="choice-desc">Pays, then ignores the rules: probes admin and private paths, tries path traversal, and bursts requests.</span>
-          <span class="choice-expect" id="rogue-expect">Expected outcome: deposit forfeited</span>
-        </label>
-      </div>
-    </fieldset>
-  </section>
+  <section class="card launcher" aria-label="Configure and start a crawler run">
+    <div class="deck">
+      <fieldset class="deck-col">
+        <legend><span class="deck-num">1</span> Crawler</legend>
+        <div class="choice-row">
+          <label class="choice" data-tone="good">
+            <input type="radio" name="persona" value="compliant" checked>
+            <span class="choice-icon" aria-hidden="true">✓</span>
+            <span class="choice-title">Compliant research crawler</span>
+            <span class="choice-desc">Reads the policy, pays the deposit for the chosen tier, paces itself, and ignores a planted prompt injection.</span>
+            <span class="choice-expect">Expected outcome: deposit returned</span>
+          </label>
+          <label class="choice" data-tone="critical">
+            <input type="radio" name="persona" value="rogue">
+            <span class="choice-icon" aria-hidden="true">✕</span>
+            <span class="choice-title">Rogue scraper</span>
+            <span class="choice-desc">Pays, then probes admin and private paths, tries path traversal, and bursts requests.</span>
+            <span class="choice-expect" id="rogue-expect">Expected outcome: deposit forfeited</span>
+          </label>
+        </div>
+      </fieldset>
 
-  <section class="card tiers-card" id="tiers-card" aria-labelledby="tiers-title">
-    <div class="card-head">
-      <div>
-        <h2 id="tiers-title">2. Choose Your Content Access Tier</h2>
-        <p class="card-sub" id="tiers-sub">Different content has different economic value. The publisher sets these prices on the gateway; the gateway, not the crawler, decides the deposit for each resource.</p>
+      <section class="deck-col deck-tiers tiers-card" id="tiers-card" aria-labelledby="tiers-title">
+        <h2 class="deck-title" id="tiers-title"><span class="deck-num">2</span> Content access tier</h2>
+        <div class="tier-grid" id="tier-grid" role="radiogroup" aria-labelledby="tiers-title">
+          <p class="empty">Loading the publisher's price list...</p>
+        </div>
+        <p class="hint" id="tiers-sub">Prices are set by the publisher on the gateway; the gateway, not the crawler, decides the deposit for each resource.</p>
+      </section>
+
+      <fieldset class="deck-col">
+        <legend id="driver-legend"><span class="deck-num">3</span> Execution mode</legend>
+        <div class="choice-row">
+          <label class="choice" data-tone="accent">
+            <input type="radio" name="driver" value="ai" id="driver-ai">
+            <span class="choice-icon" aria-hidden="true">✦</span>
+            <span class="choice-title" id="driver-ai-title">AI agent</span>
+            <span class="choice-desc" id="driver-ai-desc">An AI model reads the challenge and decides each step.</span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="driver" value="scripted" id="driver-scripted">
+            <span class="choice-icon" aria-hidden="true">⚙</span>
+            <span class="choice-title">Scripted crawler</span>
+            <span class="choice-desc">Fixed steps, no AI key needed. Same gateway, same PayPal calls.</span>
+          </label>
+        </div>
+      </fieldset>
+    </div>
+    <div class="deck-foot">
+      <div class="deck-hints">
+        <p class="hint tier-hint" id="tier-hint" role="status"></p>
+        <p class="hint" id="launch-hint" role="status"></p>
+      </div>
+      <div class="launch-actions">
+        <span class="shortcut-hint" aria-hidden="true"><kbd>S</kbd> start · <kbd>R</kbd> reset</span>
+        <button type="button" class="big" id="reset-button" title="Clear the run view and start over (R)" aria-keyshortcuts="R">Reset</button>
+        <button type="button" class="big danger" id="stop-button" hidden>Stop run</button>
+        <button type="button" class="primary big" id="start-button" title="Start the run (S)" aria-keyshortcuts="S">▶ Start run</button>
       </div>
     </div>
-    <div class="tier-grid" id="tier-grid" role="radiogroup" aria-labelledby="tiers-title">
-      <p class="empty">Loading the publisher's price list...</p>
-    </div>
-    <p class="hint tier-hint" id="tier-hint" role="status"></p>
   </section>
 
-  <section class="card launcher launcher-run" aria-label="Start a crawler run">
-    <fieldset>
-      <legend id="driver-legend">3. Who drives it</legend>
-      <div class="choice-row">
-        <label class="choice">
-          <input type="radio" name="driver" value="ai" id="driver-ai">
-          <span class="choice-title" id="driver-ai-title">AI agent</span>
-          <span class="choice-desc" id="driver-ai-desc">An AI model reads the challenge and decides each step.</span>
-        </label>
-        <label class="choice">
-          <input type="radio" name="driver" value="scripted" id="driver-scripted">
-          <span class="choice-title">Scripted crawler</span>
-          <span class="choice-desc">Fixed steps, no AI key needed. Same gateway, same PayPal calls.</span>
-        </label>
+  <section class="card pipeline-card" id="pipeline-card" data-state="idle" aria-labelledby="pipeline-title">
+    <div class="pipeline-head">
+      <div class="pipeline-titles">
+        <h2 id="pipeline-title">Execution pipeline</h2>
+        <span class="run-state" id="run-state" data-state="idle"><span class="pulse" aria-hidden="true"></span><span id="run-state-text">Idle · waiting for a run</span></span>
       </div>
-    </fieldset>
-    <div class="launch-actions">
-      <button type="button" class="primary big" id="start-button">Start run</button>
-      <button type="button" id="stop-button" hidden>Stop run</button>
-      <p class="hint" id="launch-hint" role="status"></p>
+      <div class="pipe-stats" aria-label="Live run counters">
+        <span class="pstat" data-tone="accent"><span class="pstat-label">Elapsed</span><strong id="pipe-elapsed">0.0s</strong></span>
+        <span class="pstat"><span class="pstat-label">Requests</span><strong id="pipe-requests">0</strong></span>
+        <span class="pstat" data-tone="good"><span class="pstat-label">Allowed</span><strong id="pipe-allowed">0</strong></span>
+        <span class="pstat" data-tone="critical"><span class="pstat-label">Blocked</span><strong id="pipe-blocked">0</strong></span>
+        <span class="pstat" data-tone="critical"><span class="pstat-label">Violations</span><strong id="pipe-violations">0</strong></span>
+      </div>
     </div>
+    <div class="pipe-progress" aria-hidden="true"><span class="pipe-progress-fill" id="pipe-progress"></span></div>
+    <ol class="steps" id="steps" aria-label="Protocol steps"></ol>
   </section>
 
-  <ol class="steps" id="steps" aria-label="Protocol steps"></ol>
+  <section class="verdict" id="verdict" role="status" aria-live="polite" hidden></section>
 
   <div class="demo-layout">
     <section class="card" aria-labelledby="run-title">
       <div class="card-head">
-        <div>
-          <h2 id="run-title">Live run</h2>
-          <p class="card-sub" id="run-sub">Every step the crawler takes and how the gateway answers.</p>
+        <div class="section-title">
+          <span class="section-icon" aria-hidden="true">⏱</span>
+          <div>
+            <h2 id="run-title">Live execution timeline</h2>
+            <p class="card-sub" id="run-sub">Every step the crawler takes and how the gateway answers.</p>
+          </div>
         </div>
         <span class="run-meta" id="run-meta"></span>
       </div>
@@ -119,16 +167,30 @@
           <button type="button" id="approval-done">I approved it</button>
         </div>
       </div>
-      <ol class="timeline" id="timeline" aria-live="polite"></ol>
+      <div class="tl-toolbar">
+        <div class="segmented tl-filters" id="tl-filters" role="group" aria-label="Show timeline entries">
+          <button type="button" data-filter="all" aria-pressed="true">All</button>
+          <button type="button" data-filter="request" aria-pressed="false">Requests</button>
+          <button type="button" data-filter="payment" aria-pressed="false">Payments</button>
+          <button type="button" data-filter="agent" aria-pressed="false">Agent</button>
+          <button type="button" data-filter="alert" aria-pressed="false">Alerts <span class="tl-alert-count" id="tl-alert-count" hidden>0</span></button>
+        </div>
+        <label class="inline-check"><input type="checkbox" id="tl-follow" checked> Follow live</label>
+      </div>
+      <ol class="timeline" id="timeline" data-filter="all" aria-live="polite"></ol>
+      <div class="tl-live" id="tl-live" hidden><span class="tl-live-dots" aria-hidden="true"><i></i><i></i><i></i></span><span id="tl-live-text">The crawler is working...</span></div>
       <div id="report"></div>
     </section>
 
     <aside class="demo-side">
       <section class="card" aria-labelledby="deposit-title">
         <div class="card-head">
-          <div>
-            <h2 id="deposit-title">Deposit</h2>
-            <p class="card-sub" id="deposit-sub">The refundable PayPal deposit backing this crawler's session.</p>
+          <div class="section-title">
+            <span class="section-icon" aria-hidden="true">$</span>
+            <div>
+              <h2 id="deposit-title">Deposit &amp; transaction</h2>
+              <p class="card-sub" id="deposit-sub">The refundable PayPal deposit backing this crawler's session.</p>
+            </div>
           </div>
         </div>
         <div id="deposit"><p class="empty">No deposit yet. Start a run.</p></div>
@@ -136,9 +198,12 @@
 
       <section class="card" aria-labelledby="explain-title">
         <div class="card-head">
-          <div>
-            <h2 id="explain-title">Why this outcome</h2>
-            <p class="card-sub">Decided by the gateway's rules from its audit log. The explanation cites the audit events behind each statement.</p>
+          <div class="section-title">
+            <span class="section-icon" aria-hidden="true">?</span>
+            <div>
+              <h2 id="explain-title">Why this outcome</h2>
+              <p class="card-sub">Decided by the gateway's rules from its audit log. The explanation cites the audit events behind each statement.</p>
+            </div>
           </div>
         </div>
         <div id="explanation"><p class="empty">Appears when the session ends.</p></div>
@@ -150,15 +215,18 @@
 
   <section class="card history-card" aria-labelledby="history-title">
     <div class="card-head">
-      <div>
-        <h2 id="history-title">Request history</h2>
-        <p class="card-sub">Every request the gateway answered, joined with the deposit that paid for it. Built from the audit log and stored payment records; nothing here is simulated by the page.</p>
+      <div class="section-title">
+        <span class="section-icon" aria-hidden="true">≡</span>
+        <div>
+          <h2 id="history-title">Live request monitor</h2>
+          <p class="card-sub">Every request the gateway answered, joined with the deposit that paid for it. Built from the audit log and stored payment records; nothing here is simulated by the page. Expand a row to inspect it.</p>
+        </div>
       </div>
       <div class="history-controls">
         <label class="inline-check"><input type="checkbox" id="history-this-run"> This run only</label>
-        <input type="search" id="history-filter" placeholder="Filter by crawler, resource, tier..." aria-label="Filter request history">
       </div>
     </div>
+    <div class="monitor-stats" id="monitor-stats" aria-label="Request totals"></div>
     <div id="grid-requests" class="grid grid-requests"></div>
     <p class="hint" id="history-hint"></p>
   </section>
@@ -171,6 +239,6 @@
     <a href="/robots.txt">robots.txt</a> ·
     <a href="/health">Health</a>
   </footer>
-</div>
+</main>
 </body>
 </html>
