@@ -137,11 +137,18 @@
   function renderSuggestions() {
     const holder = $("suggestions");
     clear(holder);
+    holder.append(el("p", { class: "scenario-head", text: "Try asking" }));
     for (const s of suggestions()) {
       const button = el("button", { type: "button", class: "suggestion" }, el("small", { text: s.tag }), s.text);
       button.addEventListener("click", () => { $("task").value = s.text; autosize(); send(); });
       holder.append(button);
     }
+    holder.append(el("p", { class: "scenario-head", text: "Or watch another agent visit the site" }));
+    const rogue = el("button", { type: "button", class: "suggestion rogue-pick" },
+      el("small", { text: "A rule-breaking scraper (scripted red-team bot)" }),
+      "Pays the deposit without reading the rules, goes for admin pages and private data, then floods the site with requests. See what SARA does.");
+    rogue.addEventListener("click", () => sendRogue());
+    holder.append(rogue);
   }
 
   // --- offer catalog (left) --------------------------------------------------------------------
@@ -201,8 +208,9 @@
       );
       let hint = "Aria can make mistakes. It can only spend within your limits.";
       state.blocked = null;
-      if (!config.ai_available) state.blocked = "Set OPENAI_API_KEY or ANTHROPIC_API_KEY on the server to chat with the assistant.";
-      else if (!config.can_start_runs) state.blocked = "This deployment is private: enter the admin token (top right) to chat.";
+      state.runBlocked = config.can_start_runs ? null : "This deployment is private: enter the admin token (top right) to chat.";
+      if (state.runBlocked) state.blocked = state.runBlocked;
+      else if (!config.ai_available) state.blocked = "Set OPENAI_API_KEY or ANTHROPIC_API_KEY on the server to chat with the assistant. (The rule-breaking scraper still works.)";
       else if (config.runs_remaining_this_hour !== undefined) hint = `${hint} ${config.runs_remaining_this_hour} chats left this hour on this demo.`;
       $("launch-hint").textContent = state.blocked || hint;
       syncComposer();
@@ -275,7 +283,8 @@
   }
   function addMessage(role, content, extraClass) {
     const bubble = el("div", { class: "bubble" }, content);
-    const item = el("li", { class: `msg ${role}${extraClass ? ` ${extraClass}` : ""}` }, bubble);
+    const who = role === "ai" && state.runId && state.mode === "rogue" ? " rogue" : "";
+    const item = el("li", { class: `msg ${role}${who}${extraClass ? ` ${extraClass}` : ""}` }, bubble);
     $("messages").append(item);
     scrollChat(true);
     return bubble;
@@ -334,11 +343,11 @@
     const node = document.querySelector(`[data-live="${name}"]`);
     if (!node) return;
     clear(node);
-    node.append(...content);
+    node.append(...content.flat(2).filter((c) => c !== null && c !== undefined && c !== ""));
   }
   function liveItem(name, ...content) {
     const node = document.querySelector(`[data-live="${name}"]`);
-    if (node) node.append(el("li", {}, ...content));
+    if (node) node.append(el("li", {}, ...content.flat(2).filter((c) => c !== null && c !== undefined && c !== "")));
   }
   function resetFlow() {
     STAGES.forEach((name) => { const node = document.querySelector(`.stage[data-stage="${name}"]`); if (node) delete node.dataset.state; });
@@ -563,7 +572,7 @@
       state.paypalCard = el("div", { class: "ask-card paypal" },
         el("p", { class: "ask-kind", text: "PayPal" }),
         el("p", { class: "ask-title", text: "Approve the payment at PayPal" }),
-        el("p", { class: "ask-why", text: "The site created a PayPal order. Approve it with your PayPal (Sandbox buyer) account and I'll carry on." }),
+        el("p", { class: "ask-why", text: "The site set this payment up at PayPal. Approve it there with your PayPal account (a Sandbox personal account here), then come back and I'll carry on." }),
         el("div", { class: "ask-actions" }, open, doneBtn));
       closeLog(`Worked on it (${state.stepCount} steps so far)`);
       addMessage("ai", state.paypalCard);
@@ -609,6 +618,19 @@
     }
   }
 
+  async function sendRogue() {
+    if (state.runId) return;
+    if (state.runBlocked) { showBanner(state.runBlocked); return; }
+    hideBanner();
+    try {
+      const run = await api("/demo/runs", { method: "POST", body: JSON.stringify({ driver: "scripted", persona: "rogue" }) });
+      state.mode = "rogue";
+      attach(run.run_id, run, false, `Show me what happens when a badly behaved scraper visits ${state.merchant}.`);
+    } catch (err) {
+      showBanner(err.message);
+    }
+  }
+
   function startConversation(task) {
     $("suggestions").hidden = true;
     resetFlow();
@@ -626,6 +648,10 @@
 
   function attach(runId, initial, resumed, task) {
     state.runId = runId;
+    if (initial && initial.persona) state.mode = initial.persona === "rogue" ? "rogue" : "assistant";
+    else if (!resumed && state.mode !== "rogue") state.mode = "assistant";
+    document.body.dataset.mode = state.mode;
+    $("wallet-title").textContent = state.mode === "rogue" ? "The scraper's money" : "Your money";
     state.after = 0;
     state.startedAt = Date.now();
     syncComposer();
@@ -640,7 +666,11 @@
     if (!state.runId) return;
     try {
       const snap = await api(`/demo/runs/${encodeURIComponent(state.runId)}?after=${state.after}`);
-      if (!state.userTaskShown && snap.task) {
+      if (snap.persona && (snap.persona === "rogue") !== (state.mode === "rogue")) {
+        state.mode = snap.persona === "rogue" ? "rogue" : "assistant";
+        document.body.dataset.mode = state.mode;
+      }
+      if (!state.userTaskShown && snap.task && state.mode !== "rogue") {
         const first = $("messages").querySelector(".msg.user .bubble");
         if (first) first.textContent = snap.task;
         state.userTaskShown = true;
@@ -655,7 +685,7 @@
 
   function setRunState(status) {
     const node = $("run-state");
-    const map = { starting: ["running", "Starting"], running: ["running", "The assistant is working"], awaiting_decision: ["waiting", "Waiting for your OK (in the chat)"], awaiting_approval: ["waiting", "Waiting for PayPal approval"], completed: ["completed", "Finished"], failed: ["failed", "Failed"], cancelled: ["cancelled", "Stopped"] };
+    const map = { starting: ["running", "Starting"], running: ["running", state.mode === "rogue" ? "The scraper is working" : "The assistant is working"], awaiting_decision: ["waiting", "Waiting for your OK (in the chat)"], awaiting_approval: ["waiting", "Waiting for PayPal approval"], completed: ["completed", "Finished"], failed: ["failed", "Failed"], cancelled: ["cancelled", "Stopped"] };
     const [tone, label] = map[status] || ["idle", "Waiting for your request"];
     node.dataset.state = tone;
     $("run-state-text").textContent = label;
@@ -666,7 +696,8 @@
     state.lastMandate = snap.mandate || state.lastMandate;
     for (const event of snap.events || []) renderEvent(event);
     if (typeof snap.next_seq === "number") state.after = snap.next_seq;
-    renderWallet(snap.mandate);
+    if (snap.mandate) renderWallet(snap.mandate);
+    else if (snap.deposit && snap.deposit.required_amount) renderDepositOnly(snap.deposit);
     renderAsk(snap);
     renderPayPalApproval(snap);
   }
@@ -678,6 +709,7 @@
         addStep({ icon: "…", text: data.text, kind: "thinking" });
         break;
       case "text":
+        if (state.mode === "rogue") { addStep({ icon: "»", text: data.text, kind: "note" }); break; }
         closeLog(`Worked on it (${state.stepCount} steps so far)`);
         addMessage("ai", renderMarkdown(data.text), "note");
         break;
@@ -723,7 +755,9 @@
     if (snap) {
       setRunState(snap.status);
       STAGES.forEach((name) => { const node = document.querySelector(`.stage[data-stage="${name}"]`); if (node && node.dataset.state === "active") node.dataset.state = "done"; });
-      if (snap.status === "completed" && snap.final_text) {
+      if (state.mode === "rogue") {
+        renderVerdict(snap);
+      } else if (snap.status === "completed" && snap.final_text) {
         const answer = renderMarkdown(snap.final_text);
         answer.classList.add("answer");
         const m = snap.mandate || {};
@@ -738,6 +772,22 @@
     syncComposer();
     loadConfig();
     $("task").focus({ preventScroll: true });
+  }
+
+  function renderVerdict(snap) {
+    const x = snap.explanation;
+    const dep = snap.deposit || {};
+    const kept = String(dep.deposit_state || "").includes("FORFEIT");
+    const body = [];
+    body.push(el("p", { class: "verdict-head" }, el("span", { class: "status-pill", "data-tone": kept ? "bad" : "good", text: dep.deposit_state || "SETTLED" }), " ", x ? x.headline : (kept ? "The site kept the deposit." : "The deposit was returned.")));
+    if (x && x.summary) body.push(el("p", { text: x.summary }));
+    if (x && (x.findings || []).length) body.push(el("ul", {}, x.findings.map((f) => el("li", { text: f.statement }))));
+    if (x) body.push(el("p", { class: "answer-foot", text: x.generated_by === "template" ? "Rule-based explanation from the site's audit log." : `Explained by AI (${x.model || x.generated_by}), citing the site's audit log. The rules decided the outcome; the AI only explains it.` }));
+    const item = el("li", { class: "msg ai sara" }, el("div", { class: "bubble" }, el("p", { class: "sara-name", text: `${state.merchant} · protected by SARA` }), ...body));
+    $("messages").append(item);
+    scrollChat(true);
+    if (kept) stage("settle", "bad");
+    live("settle", el("span", { class: "status-pill", "data-tone": kept ? "bad" : "good", text: dep.deposit_state || "SETTLED" }), " ", x ? x.headline : "");
   }
 
   // --- wallet (left) -------------------------------------------------------------------------------------------
@@ -771,6 +821,24 @@
           ref ? code(ref) : null),
         p.note ? el("span", { class: "purchase-note", text: p.note }) : null));
     }
+  }
+
+  function renderDepositOnly(dep) {
+    const list = $("purchases");
+    clear(list);
+    const kept = String(dep.deposit_state || "").includes("FORFEIT");
+    const returned = ["REFUNDED", "RELEASED"].includes(dep.deposit_state);
+    $("w-budget").textContent = "-";
+    $("w-spent").textContent = returned ? money(0) : money(dep.required_amount);
+    $("w-remaining").textContent = "-";
+    $("w-meter").style.width = kept ? "100%" : "0";
+    list.append(el("li", { class: "purchase", "data-status": dep.deposit_state },
+      el("span", { class: "purchase-title", text: `Refundable crawl deposit (${dep.pricing_tier_name || "base"} content)` }),
+      el("span", { class: "purchase-amount", text: money(dep.required_amount) }),
+      el("span", { class: "purchase-meta" },
+        el("span", { class: "type-tag", text: "Deposit" }),
+        el("span", { class: "status-pill", "data-tone": kept ? "bad" : returned ? "good" : "info", text: kept ? "Kept by the site" : (STATUS_LABEL[dep.deposit_state] || dep.deposit_state || "Held") }),
+        dep.deposit_id ? code(dep.deposit_id) : null)));
   }
 
   // --- a small, safe Markdown renderer (text is escaped by building DOM nodes) ----------------------
@@ -834,6 +902,9 @@
     renderSuggestions();
     resetFlow();
     renderWallet(null);
+    state.mode = "assistant";
+    document.body.dataset.mode = "assistant";
+    $("wallet-title").textContent = "Your money";
     setRunState("idle");
     hideBanner();
     $("task").focus();

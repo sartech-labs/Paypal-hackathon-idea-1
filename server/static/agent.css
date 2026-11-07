@@ -231,6 +231,21 @@ body.studio-body { height: 100vh; display: flex; flex-direction: column; overflo
 .answer th { color: var(--text-secondary); font-weight: 650; }
 .answer-foot { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
 
+/* Another agent (the scripted rule-breaker) and the website's own verdict */
+.msg.ai.rogue::before { content: "R"; background: linear-gradient(135deg, #ef4f4f, #b3261e); }
+.msg.ai.sara::before { content: "S"; background: var(--accent); }
+.msg.ai.sara .bubble { padding: 10px 13px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); background: var(--accent-soft); }
+.sara-name { margin: 0 0 6px !important; font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); }
+.verdict-head { font-weight: 700; }
+.msg.ai.sara ul { margin: 6px 0; padding-left: 20px; font-size: 13.5px; }
+.step[data-kind="note"] { color: var(--text-muted); font-style: italic; }
+body[data-mode="rogue"] .chat-head .chat-sub::after { content: " · watching a scraper"; color: var(--critical-text); }
+
+.scenario-head { margin: 6px 0 0; font-size: 11.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-muted); }
+.suggestion.rogue-pick { border-color: color-mix(in srgb, var(--status-critical) 35%, transparent); }
+.suggestion.rogue-pick:hover { border-color: var(--status-critical); }
+.suggestion.rogue-pick small { color: var(--critical-text); }
+
 .suggestions { display: grid; gap: 8px; margin: 16px 0 6px 36px; }
 .suggestions[hidden] { display: none; }
 .suggestion { text-align: left; padding: 9px 12px; border-radius: 12px; font-size: 13px; line-height: 1.4; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-primary); }

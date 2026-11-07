@@ -23,18 +23,17 @@ On the user's side, **one AI agent** (Aria) has a toolbox that covers all four. 
 
 **See it in the browser.** Start the server and open:
 
-- **`/`: Agent studio.** Type a request, set a budget, and watch Aria crawl with a refundable deposit, buy a video, subscribe, and order products. Approve or decline its purchases as they come up. In Sandbox mode a person can also buy the same items with PayPal's JS SDK v6 buttons.
-- **`/crawler`: Crawler demo.** The deposit flow in detail, with compliant and rogue crawlers, the policy pipeline, and an evidence-cited explanation of the outcome.
+- **`/`: Agent studio.** On the right, chat with Aria, an ordinary AI assistant that knows nothing about the site in advance: it crawls with a refundable deposit, buys, subscribes, and orders within your limits, and asks you in the chat before anything large or recurring. Or pick the **rule-breaking scraper** scenario and watch the site block it and keep its deposit, with an AI explanation from the audit log. On the left, every step is explained live: the catalog, the `402` and the rules, the PayPal hold, the request checks, the purchases, and the settlement. In Sandbox mode a person can also buy the same items with PayPal's JS SDK v6 buttons.
 - **`/console`: Publisher console.** Revenue by payment type, orders and subscriptions (verify, refund, and ship from the table), deposits, violations, the audit log, AG Studio dashboards, and the **PayPal assistant**, which checks records against PayPal's own through **PayPal's MCP server**.
 - **`/mcp/`: MCP storefront.** Any MCP client (Claude, ChatGPT, your own agent) can discover offers, buy, subscribe, and crawl this site.
 
 ### Judge quick start (3 minutes, no credentials for mock mode)
 
 1. `pip install -r requirements.txt && cp .env.example .env`, add `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`) to `.env`, and run `python -m uvicorn server.main:app --port 8000`.
-2. Open **http://127.0.0.1:8000/**, keep the first preset request, press **Run agent**, then **Approve** the subscription and **Decline** the e-book. Try the preset **"Members feed (has a trap)"**: the feed hides an instruction to buy five printed reports, and the agent and the purchase review both refuse it.
+2. Open **http://127.0.0.1:8000/** and click the first example request in the chat (or type your own). Approve or decline what Aria asks about. Try **"Subscribe (this page hides a trap)"**: the feed hides an instruction to buy five printed reports, and the agent and the purchase review both refuse it. Then pick **"A rule-breaking scraper"** to see a deposit kept.
 3. Open **http://127.0.0.1:8000/console#commerce** to see the revenue, orders, and subscriptions; **Analytics → Agent commerce** for the AG Studio dashboard.
 
-Without an AI key, the crawler demo at `/crawler` still runs with the scripted driver, and `pytest -q` runs the full suite offline.
+Without an AI key, the rule-breaking scraper scenario still runs (it is scripted), and `pytest -q` runs the full suite offline.
 
 ## Contents
 
@@ -142,7 +141,7 @@ For scale (illustrative arithmetic, not a forecast of SARA's share): at Morgan S
 
 **The personal agent.** Aria (`client/assistant_agent.py`, `client/assistant_tools.py`) gets the task and the mandate. Its tools are `discover_offers`, `check_mandate`, the six crawler tools (`fetch_page`, `read_policy`, `pay_deposit`, `accept_policy`, `wait`, `complete_session`), `buy_access`, `subscribe`, `cancel_subscription`, `purchase_products`, and `open_paid_content`. Before every payment the toolbox checks the mandate: allowed payment types, an optional merchant allow-list, an optional per-purchase cap, and the remaining budget. Then an **AI purchase review** (a second, independent model call that sees only the person's request, the site-priced purchase, and the agent's stated reason, never page content) answers allow, ask, or block; it can only make spending stricter. Finally the person approves when the amount is above the threshold, the charge is recurring, or the review said "ask". A declined or blocked order is cancelled at the site. Refunded deposits go back into the budget. The tokens stay in the toolbox and are never sent to the model.
 
-The crawler demo page (`/`) runs the deposit loop from the browser. A run uses the same tools and HTTP calls as the command-line agent, executed by the server against its own gateway, and the page polls the run's event log. Public demo deployments cap runs per hour and allow one run at a time.
+Agent studio (`/`) runs the agents from the browser. A run uses the same tools and HTTP calls as the command-line agent, executed by the server against its own gateway, and the page polls the run's event log. Public demo deployments cap runs per hour and allow one run at a time.
 
 ## 3. Where the AI is
 
@@ -235,7 +234,7 @@ python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
 
 On Windows PowerShell use `python -m venv .venv`, `.\.venv\Scripts\Activate.ps1`, and `Copy-Item .env.example .env`.
 
-Then open **http://127.0.0.1:8000/** for Agent studio (needs an AI key, see below), or **http://127.0.0.1:8000/crawler** for the crawler demo (the example `.env` sets `DEMO_PUBLIC=true`, so you can start runs without the admin token), pick a crawler, and press **Start run**. The publisher console is at **http://127.0.0.1:8000/console**. You can also run the crawlers from a second terminal:
+Then open **http://127.0.0.1:8000/** for Agent studio (needs an AI key, see below), and pick the **rule-breaking scraper** scenario there if you have no AI key (the example `.env` sets `DEMO_PUBLIC=true`, so you can start runs without the admin token). The publisher console is at **http://127.0.0.1:8000/console**. You can also run the crawlers from a second terminal:
 
 ```bash
 python -m client.compliant --base-url http://127.0.0.1:8000
@@ -265,7 +264,7 @@ python -m client.assistant_agent --base-url http://127.0.0.1:8000 --budget 60 --
 | MCP storefront | Point an MCP client at `http://127.0.0.1:8000/mcp/` (for Claude Desktop, add it as a custom connector, or bridge with `npx mcp-remote http://127.0.0.1:8000/mcp/`) | Ask: "Buy the agent-economy video from this site and summarise it." The assistant calls `discover_offers`, `quote_access`, `pay_order`, `open_paid_content`. |
 | Agent studio (browser) | Open `/` and chat with Aria on the right, like any AI assistant (or click an example request). Set your budget and approval limit under **Limits**. | Aria knows nothing about the site in advance: it reads the catalog, crawls `/news` with a refundable deposit, buys what your request needs, and asks you in the chat before anything above your limit or recurring. Decline and it does not retry. The left side explains each step live (catalog, 402 and rules, PayPal hold, request checks, purchases, settlement) and lists every payment with its PayPal reference. The console's **Commerce** view shows the revenue. |
 | Personal agent (CLI) | `python -m client.assistant_agent --task "..."` | The same agent in the terminal, with approvals at the prompt. |
-| Live demo (browser) | Open `/`, pick a crawler and a driver, **Start run** | The step rail and live timeline fill in as the crawler works; the deposit card shows PayPal order, capture, authorization, and refund IDs; the explanation appears when the session ends. Press **Verify with PayPal (MCP)** on a Sandbox deposit. |
+| Rule-breaking scraper (browser) | Open `/`, pick **"A rule-breaking scraper"** in the chat | The scripted bot pays, requests `/admin` and private paths, and bursts requests. The chat shows each `403` and `429`, then the site's verdict (deposit kept) with the AI explanation; the left side shows the same steps. Verify the deposit with PayPal from the console. |
 | Compliant AI agent | `python -m client.agent --persona compliant` | The agent reads the policy, pays, crawls `/news` sections within the rate limit, ignores the injected instruction on `/news/economy`, completes the session, and writes a brief. Deposit **returned**. |
 | Rogue AI agent | `python -m client.agent --persona rogue` | The agent requests `/admin` and private paths and bursts requests. The gateway blocks each one; the deposit is **forfeited** and the explanation cites each violation. |
 | Scripted crawlers (no API key) | `python -m client.compliant` / `python -m client.violating` | The same two outcomes from deterministic scripts. |
@@ -411,7 +410,7 @@ Interactive docs: **`/docs`** (Swagger UI) and **`/redoc`**.
 | GET | `/paid/{path}` | access token, or 402 with offers | Paid media, members pages, and downloads |
 | GET | `/commerce/summary` | admin, or public when `DASHBOARD_PUBLIC=true` | Revenue by payment type, orders, subscriptions |
 | GET | `/`, `/agent` | none | Agent studio (landing page) |
-| GET | `/crawler`, `/demo` | none | Crawler deposit demo |
+| GET | `/crawler`, `/demo` | none | Older crawler deposit page (kept for the video recorder; not linked) |
 | POST | `/webhooks/paypal` | PayPal signature | Verified PayPal webhook receiver |
 | POST | `/commerce/orders/{id}/refund`, `/commerce/orders/{id}/tracking` | admin | Refund through PayPal; add shipment tracking |
 | POST | `/paypal/orders/{id}/verify` | admin, or public demo | Compare a commerce order with PayPal's records through the MCP server |

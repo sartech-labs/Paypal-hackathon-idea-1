@@ -136,7 +136,7 @@ python, fastapi, httpx, pydantic, paypal-rest-api, paypal-orders-v2, paypal-paym
 
 - [ ] Repository is public and the default branch contains this code and the MIT license
 - [ ] Demo video is public on YouTube and under 3 minutes ([`DEMO_SCRIPT.md`](DEMO_SCRIPT.md))
-- [ ] Testing instructions: point judges to the live URL (open `/`, **Run agent**, approve or decline its purchases; then `/crawler` for the crawler deposit and **Verify with PayPal**) and to README "Quick start" (mock mode needs no credentials)
+- [ ] Testing instructions: point judges to the live URL (open `/`, click an example request in the chat, approve or decline its purchases; then the rule-breaking scraper scenario, and the console's **Verify with PayPal**) and to README "Quick start" (mock mode needs no credentials)
 - [ ] Live demo deployed and warmed up before judging (free Render instances sleep when idle)
 - [ ] Prize categories selected: overall, Best Use of PayPal + AI, Best Use of Agentic Commerce, Best Demo Delivery, Most Impactful, plus the sponsor categories that apply (AG Grid; Render once deployed there). The rules allow at most one Grand Prize and one Sponsor Prize, or one Honorable Mention and one Sponsor Prize.
 - [ ] Deadline: Thursday 12 November 2026, 12:00 pm Pacific
