@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from typing import Optional
@@ -16,6 +17,7 @@ from client.common import (
     print_step,
     resolve_crawler_id,
 )
+from client.web_bot_auth import load_signer
 
 
 def run_compliant_crawler(
@@ -27,9 +29,9 @@ def run_compliant_crawler(
     non_interactive: bool = False,
 ) -> int:
     resolved_id = resolve_crawler_id(crawler_id, "crawler-compliant")
-    print_banner(f"AgentTrust Demo -- Client A: Compliant Crawler ({resolved_id})")
+    print_banner(f"SARA Demo -- Client A: Compliant Crawler ({resolved_id})")
 
-    with httpx.Client(base_url=base_url.rstrip("/"), timeout=20.0) as client:
+    with httpx.Client(base_url=base_url.rstrip("/"), timeout=20.0, auth=load_signer(os.getenv("SARA_AGENT_KEY"))) as client:
         # Step 1: Request protected news content without authentication
         print_step(1, "Requesting protected /gateway/news without credentials")
         initial_resp = client.get(
@@ -42,6 +44,11 @@ def run_compliant_crawler(
             return 1
 
         challenge = initial_resp.json()
+        # A signed agent (SARA_AGENT_KEY) gets its verified identity from the gateway.
+        resolved_id = challenge.get("crawler_id") or resolved_id
+        identity = challenge.get("identity") or {}
+        if identity.get("verified"):
+            print(f"  -> Verified agent : {identity.get('agent')} ({identity.get('standing')})")
         print(f"  -> Challenge ID   : {challenge['challenge_id']}")
         print(f"  -> Required Stake : ${challenge['deposit']['amount']} {challenge['deposit']['currency']}")
         print(f"  -> Policy Version : {challenge['policy_version']}")
@@ -115,8 +122,8 @@ def run_compliant_crawler(
             gateway_url = "/gateway" if path == "/" else f"/gateway{path}"
             resp = client.get(gateway_url, headers=auth_headers)
             window_counter += 1
-            rem_budget = resp.headers.get("X-AgentTrust-Remaining-Budget", "?")
-            rem_win = resp.headers.get("X-AgentTrust-Remaining-Window", "?")
+            rem_budget = resp.headers.get("X-SARA-Remaining-Budget", "?")
+            rem_win = resp.headers.get("X-SARA-Remaining-Window", "?")
             print(
                 f"  [{idx}/{len(paths_to_crawl)}] GET {gateway_url:<26} -> HTTP {resp.status_code} "
                 f"(len={len(resp.text)} bytes, rem_budget={rem_budget}, rem_window={rem_win})"
@@ -201,7 +208,7 @@ def run_compliant_crawler(
 
 def main() -> int:
     parser = build_arg_parser(
-        description="Run the AgentTrust compliant crawler demonstration (Client A).",
+        description="Run the SARA compliant crawler demonstration (Client A).",
         default_prefix="crawler-compliant",
     )
     args = parser.parse_args()

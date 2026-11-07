@@ -6,7 +6,11 @@ from typing import Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from client.web_bot_auth import WebBotAuth
 from server.config import Settings
+from server.core.agent_identity import AgentDirectory
 from server.core.identity import IdentityService
 from server.core.quotas import HourlyQuota
 from server.core.security import constant_time_equals
@@ -27,6 +31,8 @@ from server.services.payment_service import (
 from server.services.paypal_assistant import PayPalAssistant
 from server.services.paypal_mcp import PayPalMCPClient
 from server.services.policy_assistant import PolicyAssistant
+from server.services.origin_proxy import OriginProxy
+from server.services.payment_methods import PaymentMethodStore
 from server.services.policy_engine import PolicyEngine
 from server.services.pricing import PricingCatalog
 from server.services.rate_limiter import SlidingWindowRateLimiter
@@ -44,10 +50,17 @@ class AppContainer:
         paypal_mcp: Optional[PayPalMCPClient] = None,
         demo_http_factory: Optional[HttpFactory] = None,
         demo_llm_factory: Optional[LlmFactory] = None,
+        origin_proxy: Optional[OriginProxy] = None,
     ) -> None:
         self.settings = settings
         self.content_service = ContentService(settings)
         self.site_config = self.content_service.site_config
+        # Reverse-proxy mode: enforce the origin website's own robots.txt as well.
+        self.origin_proxy = origin_proxy or (
+            OriginProxy(settings.origin_url, settings.origin_timeout_seconds) if settings.origin_url else None
+        )
+        if self.origin_proxy is not None:
+            self.site_config = merge_origin_rules(self.site_config, self.origin_proxy.import_robots())
         # Central tier pricing (data/site_config.json -> pricing_tiers), shared by the 402
         # challenge, the policy engine, the demo, and the dashboards.
         self.pricing = PricingCatalog(self.site_config)
@@ -60,6 +73,7 @@ class AppContainer:
             rate_limiter=self.rate_limiter,
             known_allowed_pages=self.content_service.allowed_page_paths,
             pricing=self.pricing,
+            default_allow=self.origin_proxy is not None,
         )
         if payment_provider is not None:
             self.payment_provider = payment_provider
@@ -75,6 +89,9 @@ class AppContainer:
             audit_logger=self.audit_logger,
             settlement_mode=SettlementMode(settings.deposit_settlement),
         )
+        # Saved payment methods (PayPal vault tokens), kept next to the payments database.
+        self.payment_methods = PaymentMethodStore(settings.payments_db_path.with_name("payment_methods_db.json"))
+        self.deposit_manager.payment_methods = self.payment_methods
         # Agent commerce: pay-per-access items, PayPal subscriptions, and products.
         self.commerce = CommerceManager(
             db_path=settings.commerce_db_path,
@@ -82,6 +99,7 @@ class AppContainer:
             payment_provider=self.payment_provider,
             audit_logger=self.audit_logger,
         )
+        self.commerce.payment_methods = self.payment_methods
         self.session_manager = SessionManager(
             sessions_db_path=settings.sessions_db_path,
             site_config=self.site_config,
@@ -92,12 +110,18 @@ class AppContainer:
         self.paypal_mcp = paypal_mcp or PayPalMCPClient(settings)
         self.paypal_assistant = PayPalAssistant(self.ai_generator, self.paypal_mcp, self.deposit_manager, self.commerce)
         self.paypal_quota = HourlyQuota(settings.demo_max_questions_per_hour)
+        # Verified agents: the site's directory of known keys, plus a key for this server's own
+        # demo agents (generated at startup, never written to disk).
+        self.agent_directory = AgentDirectory.load(settings.agent_directory_path)
+        self.demo_agent_signer = WebBotAuth(Ed25519PrivateKey.generate())
+        self.agent_directory.add("SARA demo agent", "Sartech Labs (demo)", self.demo_agent_signer.jwk)
         self.demo_runner = DemoRunner(
             max_runs_per_hour=settings.demo_max_runs_per_hour,
             max_deposit=self.pricing.max_price(),
             http_factory=demo_http_factory,
             llm_factory=demo_llm_factory,
         )
+        self.demo_runner.agent_signer = self.demo_agent_signer
 
     def load_persisted_state(self) -> None:
         """Load audit log, payment/challenge records, and session snapshots from disk."""
@@ -105,6 +129,21 @@ class AppContainer:
         self.deposit_manager.load_from_disk()
         self.commerce.load_from_disk()
         self.session_manager.load_from_disk()
+
+
+def merge_origin_rules(site_config, rules):  # type: ignore[no-untyped-def]
+    """Add the origin's robots.txt rules to SARA's own, and honour its Crawl-delay."""
+    def merged(base: list[str], extra: list[str]) -> list[str]:
+        return list(dict.fromkeys([*base, *extra]))
+
+    update: dict = {
+        "disallowed_paths": merged(site_config.disallowed_paths, rules.disallow),
+        "allowed_paths": merged(site_config.allowed_paths, rules.allow),
+    }
+    delay = rules.crawl_delay_seconds
+    if delay and site_config.rate_limit_window_seconds / site_config.rate_limit_requests < delay:
+        update["rate_limit_window_seconds"] = float(site_config.rate_limit_requests * delay)
+    return site_config.model_copy(update=update)
 
 
 def get_container(request: Request) -> AppContainer:

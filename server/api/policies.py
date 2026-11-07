@@ -70,7 +70,14 @@ async def draft_policy(
 async def get_robots_txt(
     container: AppContainer = Depends(get_container),
 ) -> PlainTextResponse:
-    content = container.content_service.render_robots_txt()
+    if container.origin_proxy is not None:
+        cfg = container.site_config
+        content = container.origin_proxy.render_robots_txt(
+            cfg.allowed_paths, cfg.disallowed_paths,
+            "AI agents must open a SARA deposit session and accept the policy at /policies before crawling via /gateway.",
+        )
+    else:
+        content = container.content_service.render_robots_txt()
     return PlainTextResponse(content=content, media_type="text/plain; charset=utf-8")
 
 
@@ -83,7 +90,7 @@ async def health_check(
 ) -> dict[str, Any]:
     return {
         "status": "ok",
-        "service": "AgentTrust Gateway",
+        "service": "SARA Gateway",
         "site_id": container.site_config.site_id,
         "policy_version": container.site_config.policy_version,
         "payment_mode": container.payment_provider.mode.value,

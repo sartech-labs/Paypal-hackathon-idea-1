@@ -1,2 +1,2 @@
-"""Backend domain services for AgentTrust."""
+"""Backend domain services for SARA."""
 

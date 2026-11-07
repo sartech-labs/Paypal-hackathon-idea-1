@@ -5,7 +5,7 @@ from __future__ import annotations
 import abc
 import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 from urllib.parse import quote, urlencode
@@ -39,6 +39,9 @@ class OrderCreationResult:
     approval_url: Optional[str]
     simulated: bool
     raw_metadata: dict[str, Any] = field(default_factory=dict)
+    # Set when the order saved the payer's payment method with PayPal (vault):
+    # {"kind": "card" | "paypal", "token": <vault payment token>, "label": "Visa •••• 1111"}.
+    saved_method: Optional[dict[str, str]] = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,8 @@ class OrderVerifyResult:
     simulated: bool
     approval_url: Optional[str] = None
     failure_reason: Optional[str] = None
+    # Payment method PayPal saved (vault) with this capture, as in OrderCreationResult.
+    saved_method: Optional[dict[str, str]] = None
 
 
 @dataclass(frozen=True)
@@ -240,12 +245,36 @@ class PaymentProvider(abc.ABC):
         shipping: Decimal = Decimal("0.00"),
         callback_path: str = "/deposits/paypal",
         autopay: Optional[bool] = None,
+        save_method: bool = False,
+        payment_token: Optional[str] = None,
+        defer_payment: bool = False,
     ) -> OrderCreationResult:
         """Create an order with intent CAPTURE or AUTHORIZE.
 
         `deposit_id` becomes the order's custom_id (a deposit ID or a commerce order ID).
         `items` makes it an itemized order whose amount must equal items plus shipping.
+        `save_method` asks PayPal to save the payer's payment method on success (vault);
+        `payment_token` ("card:<vault id>" or "paypal:<vault id>") pays with a saved method,
+        so the order completes without anyone present.
+        `defer_payment` creates the order with no payment method, so nothing is charged
+        until `confirm_payment_source` and capture (agent orders: after the mandate check).
         """
+
+    async def confirm_payment_source(
+        self,
+        *,
+        order_id: str,
+        request_id: str,
+        payment_token: Optional[str] = None,
+        save_method: bool = False,
+    ) -> None:
+        """Attach the agent's payment method to a created order, just before capture.
+
+        Agent orders are created with no payment method, so nothing is charged while the
+        spending mandate and purchase review decide. Then this attaches the saved method
+        (`payment_token`) or, in the Sandbox, the test card (saving it when `save_method`).
+        """
+        return None
 
     @abc.abstractmethod
     async def authorize_order(
@@ -403,6 +432,9 @@ class MockPaymentProvider(PaymentProvider):
         shipping: Decimal = Decimal("0.00"),
         callback_path: str = "/deposits/paypal",
         autopay: Optional[bool] = None,
+        save_method: bool = False,
+        payment_token: Optional[str] = None,
+        defer_payment: bool = False,
     ) -> OrderCreationResult:
         if items:
             total, _ = build_amount_breakdown(items=items, shipping=shipping, currency=currency.upper())
@@ -436,13 +468,33 @@ class MockPaymentProvider(PaymentProvider):
             "description": description,
         }
         self._order_by_request_id[request_id] = order_id
+        if payment_token and not payment_token.startswith(("card:", "paypal:")):
+            raise PaymentProviderError("payment_token must be 'card:<vault id>' or 'paypal:<vault id>'")
         return OrderCreationResult(
             order_id=order_id,
             status="APPROVED",
-            approval_url=approval_url,
+            approval_url=None if payment_token else approval_url,
             simulated=True,
             raw_metadata={"simulated": True, "deposit_id": deposit_id},
+            saved_method=(
+                {"kind": "card", "token": f"mock_vault_{secrets.token_hex(6)}", "label": "Visa •••• 1111 (simulated)"}
+                if save_method and not payment_token
+                else None
+            ),
         )
+
+    async def confirm_payment_source(
+        self,
+        *,
+        order_id: str,
+        request_id: str,
+        payment_token: Optional[str] = None,
+        save_method: bool = False,
+    ) -> None:
+        order = self._orders.get(order_id)
+        if order is None:
+            raise PaymentProviderError(f"Mock order not found: {order_id}")
+        order["save_method"] = bool(save_method and not payment_token)
 
     async def capture_order(
         self,
@@ -461,11 +513,16 @@ class MockPaymentProvider(PaymentProvider):
             order["capture_status"] = "COMPLETED"
             order["status"] = "COMPLETED"
 
-        return await self.verify_order(
+        result = await self.verify_order(
             order_id=order_id,
             expected_amount=expected_amount,
             expected_currency=expected_currency,
         )
+        if order.pop("save_method", False) and result.verified:
+            result = replace(result, saved_method={
+                "kind": "card", "token": f"mock_vault_{secrets.token_hex(6)}", "label": "Visa •••• 1111 (simulated)",
+            })
+        return result
 
     async def verify_order(
         self,
@@ -774,15 +831,39 @@ class MockPaymentProvider(PaymentProvider):
 # Signature carried by simulated webhook events in mock mode (never accepted by the Sandbox provider).
 MOCK_WEBHOOK_SIGNATURE = "mock-webhook-signature"
 
+
+def extract_saved_method(payment_source: Any) -> Optional[dict[str, str]]:
+    """The vault token PayPal returned for a payment method saved with this order, if any."""
+    if not isinstance(payment_source, dict):
+        return None
+    for kind in ("card", "paypal"):
+        src = payment_source.get(kind)
+        vault = ((src or {}).get("attributes") or {}).get("vault") or {} if isinstance(src, dict) else {}
+        if vault.get("id") and vault.get("status", "VAULTED") in ("VAULTED", "APPROVED"):
+            if kind == "card":
+                label = f"{(src.get('brand') or 'Card').title()} •••• {src.get('last_digits') or '????'}"
+            else:
+                label = f"PayPal ({src.get('email_address') or 'account'})"
+            return {"kind": kind, "token": str(vault["id"]), "label": label}
+    return None
+
 # PayPal's published Sandbox test card. Used only when PAYPAL_SANDBOX_AUTOPAY=true, which
 # settings validation allows only against api-m.sandbox.paypal.com. With a card payment
 # source PayPal completes the order (capture or authorization) in the create call, and
 # the later capture/authorize step reconciles through the ORDER_ALREADY_* paths.
+# PayPal's published Sandbox test Visa, accepted for saving (vaulting) a card in the Sandbox.
+SANDBOX_VAULT_CARD: dict[str, str] = {
+    "number": "4111111111111111",
+    "expiry": "2030-12",
+    "security_code": "123",
+    "name": "SARA Sandbox Agent",
+}
+
 SANDBOX_TEST_CARD: dict[str, str] = {
     "number": "4032039317984658",
     "expiry": "2030-12",
     "security_code": "123",
-    "name": "AgentTrust Sandbox Agent",
+    "name": "SARA Sandbox Agent",
 }
 
 
@@ -1014,9 +1095,19 @@ class PayPalSandboxProvider(PaymentProvider):
         shipping: Decimal = Decimal("0.00"),
         callback_path: str = "/deposits/paypal",
         autopay: Optional[bool] = None,
+        save_method: bool = False,
+        payment_token: Optional[str] = None,
+        defer_payment: bool = False,
     ) -> OrderCreationResult:
         quantized = amount.quantize(Decimal("0.01"))
         use_card = self._autopay if autopay is None else (autopay and self._autopay)
+        saved_source: Optional[dict[str, Any]] = None
+        if payment_token:
+            kind, _, vault_id = payment_token.partition(":")
+            if kind not in ("card", "paypal") or not vault_id:
+                raise PaymentProviderError("payment_token must be 'card:<vault id>' or 'paypal:<vault id>'")
+            saved_source = {kind: {"vault_id": vault_id}}
+        vault_attr = {"vault": {"store_in_vault": "ON_SUCCESS"}}
         if intent.upper() not in ("CAPTURE", "AUTHORIZE"):
             raise PaymentProviderError(f"Unsupported PayPal order intent: {intent!r}")
         async with self._build_client() as client:
@@ -1049,11 +1140,18 @@ class PayPalSandboxProvider(PaymentProvider):
             body = {
                 "intent": intent.upper(),
                 "purchase_units": [unit],
-                "payment_source": (
-                    {"card": dict(SANDBOX_TEST_CARD)}
+            }
+            if not defer_payment:
+                body["payment_source"] = (
+                    saved_source
+                    if saved_source
+                    else {"card": {**SANDBOX_VAULT_CARD, "attributes": vault_attr}}
+                    if use_card and save_method
+                    else {"card": dict(SANDBOX_TEST_CARD)}
                     if use_card
                     else {
                         "paypal": {
+                            **({"attributes": {"vault": {"store_in_vault": "ON_SUCCESS", "usage_type": "MERCHANT"}}} if save_method else {}),
                             "experience_context": {
                                 "return_url": (
                                     f"{self._app_public_url}{callback_path}/return?"
@@ -1073,8 +1171,7 @@ class PayPalSandboxProvider(PaymentProvider):
                             }
                         }
                     }
-                ),
-            }
+                )
             try:
                 response = await client.post(
                     "/v2/checkout/orders",
@@ -1112,6 +1209,7 @@ class PayPalSandboxProvider(PaymentProvider):
                 approval_url=approval_url,
                 simulated=False,
                 raw_metadata={"id": order_id, "status": status},
+                saved_method=extract_saved_method(payload.get("payment_source")),
             )
 
     async def capture_order(
@@ -1146,8 +1244,9 @@ class PayPalSandboxProvider(PaymentProvider):
 
             if response.status_code in (200, 201):
                 payload = response.json()
-                return self._parse_order_verification(
-                    payload, expected_amount, expected_currency
+                return replace(
+                    self._parse_order_verification(payload, expected_amount, expected_currency),
+                    saved_method=extract_saved_method(payload.get("payment_source")),
                 )
 
             # Check if order was already captured or requires payer approval
@@ -1187,6 +1286,46 @@ class PayPalSandboxProvider(PaymentProvider):
             raise PaymentProviderError(
                 f"PayPal order capture failed with HTTP {response.status_code} ({error_details})"
             )
+
+    async def confirm_payment_source(
+        self,
+        *,
+        order_id: str,
+        request_id: str,
+        payment_token: Optional[str] = None,
+        save_method: bool = False,
+    ) -> None:
+        if payment_token:
+            kind, _, vault_id = payment_token.partition(":")
+            if kind not in ("card", "paypal") or not vault_id:
+                raise PaymentProviderError("payment_token must be 'card:<vault id>' or 'paypal:<vault id>'")
+            source: dict[str, Any] = {kind: {"vault_id": vault_id}}
+        elif self._autopay:
+            card = dict(SANDBOX_VAULT_CARD) if save_method else dict(SANDBOX_TEST_CARD)
+            if save_method:
+                card["attributes"] = {"vault": {"store_in_vault": "ON_SUCCESS"}}
+            source = {"card": card}
+        else:
+            return  # without a saved method the payer approves at PayPal instead
+        async with self._build_client() as client:
+            token = await self._get_access_token(client)
+            try:
+                response = await client.post(
+                    f"/v2/checkout/orders/{order_id}/confirm-payment-source",
+                    json={"payment_source": source},
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "PayPal-Request-Id": request_id,
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                )
+            except httpx.HTTPError as exc:
+                raise PaymentProviderError(f"HTTP error confirming the payment source for {order_id}: {exc}") from exc
+            if response.status_code not in (200, 201):
+                raise PaymentProviderError(
+                    f"PayPal confirm-payment-source failed with HTTP {response.status_code}: {response.text[:200]}"
+                )
 
     async def verify_order(
         self,
@@ -2440,7 +2579,7 @@ class PayPalSandboxProvider(PaymentProvider):
                 "plan_id": plan_id,
                 "custom_id": custom_id[:127],
                 "application_context": {
-                    "brand_name": "AgentTrust",
+                    "brand_name": "SARA",
                     "shipping_preference": "NO_SHIPPING",
                     "user_action": "SUBSCRIBE_NOW",
                     "return_url": f"{self._app_public_url}/commerce/paypal/return?{callback_query}",

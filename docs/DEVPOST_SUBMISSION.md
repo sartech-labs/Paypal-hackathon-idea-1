@@ -4,7 +4,7 @@ Draft text for the PayPal AI Hackathon 2026 project page. Replace every `[TODO: 
 
 ## Project name
 
-AgentTrust
+SARA (Safe And Responsible Agents), by Sartech Labs
 
 ## Tagline
 
@@ -16,7 +16,7 @@ AI agents and crawlers now read the web at machine speed. Publishers express the
 
 ## What it does
 
-AgentTrust is a gateway that sits in front of a website and makes it safe and profitable for AI agents to use. The website itself does not change. Every agent, whether a search crawler, a shopping assistant, or a rogue scraper, comes through the gateway, which:
+SARA is a gateway that sits in front of a website and makes it safe and profitable for AI agents to use. The website itself does not change. Every agent, whether a search crawler, a shopping assistant, or a rogue scraper, comes through the gateway, which:
 
 1. publishes the site's rules and prices (a crawling policy and `/.well-known/agent-commerce.json`),
 2. answers unpaid requests with `HTTP 402 Payment Required` and how to pay,
@@ -41,17 +41,25 @@ Unpaid requests get `HTTP 402` with the offers that unlock them. The site prices
 
 **For the person.** Aria, one AI agent with many tools: it reads the catalog, plans the cheapest way to do the task, and pays in whichever way fits. A spending mandate (budget, allowed payment types, merchant allow-list, per-purchase cap, approval threshold) is enforced in code. An independent AI purchase review, which never sees web content, checks each purchase against the person's own request and can block it or send it to the person. Anything above the threshold and every recurring charge comes to the person to approve, and a decline is final. Agent studio (`/agent`) runs it live in the browser.
 
-**What PayPal gets.** Every agent payment, whether deposit, refund, item sale, subscription, or product order, runs on PayPal's APIs. AgentTrust is a package PayPal could offer any website: "agent-ready" for content and traffic, not just checkout. That brings PayPal new merchants (publishers and content sites that cannot sell to agents today) and new volume from a customer that cannot pay at all today.
+**In front of a real website.** With `ORIGIN_URL` set, SARA sits in front of an existing site: it imports that site's own robots.txt and enforces it (Disallow lines become `403`s before anything reaches the site; Crawl-delay slows the rate limit), and forwards allowed requests to the site unchanged.
+
+**Verified agents.** Agents can sign their requests (HTTP Message Signatures in the Web Bot Auth profile, Ed25519). A verified agent gets a stable identity, so its record sets its price: half the deposit with a clean record, three times after a deposit was kept, refused after three. Unsigned agents always pay the full deposit (or can be refused outright).
+
+**Agents that pay with no one present.** With the person's consent, the agent's first payment saves the payment method with PayPal (vault); later payments use an opaque ID, never card details. Agent purchases are created with no payment method attached and charged only after the spending mandate and the AI review approve them, so a declined purchase is never charged (verified against PayPal).
+
+**What PayPal gets.** Every agent payment, whether deposit, refund, item sale, subscription, or product order, runs on PayPal's APIs. SARA is a package PayPal could offer any website: "agent-ready" for content and traffic, not just checkout. That brings PayPal new merchants (publishers and content sites that cannot sell to agents today) and new volume from a customer that cannot pay at all today. For scale: at Morgan Stanley's base case of $190 billion of US agent-driven e-commerce by 2030, each 1% that runs through SARA sites on PayPal is about $1.9 billion a year (illustrative arithmetic).
+
+**The evidence.** One AI bot hit a single site 39,000 times a minute (Fastly); 13.3% of AI bot scrapes ignored robots.txt in Q2 2025, up from 3.3% (TollBit); bots are 51% of web traffic, 37% bad bots (Imperva 2025); AI-referred shoppers to US retail sites rose 693% in the 2025 holidays (Adobe).
 
 **How it fits with what exists.**
 
-| | What it does | What AgentTrust adds |
+| | What it does | What SARA adds |
 | :--- | :--- | :--- |
 | [Cloudflare Pay Per Crawl](https://siliconangle.com/2025/07/01/ai-game-changer-cloudflare-lets-websites-charge-ai-developers-content-access/) | 402 with a flat price per crawl; Cloudflare is merchant of record | Prices *behaviour* with a refundable deposit, enforces rules on each request, and also sells items, subscriptions, and products, on PayPal |
 | [TollBit](https://pressgazette.co.uk/platforms/publishers-urged-to-embrace-future-where-bot-readers-provide-majority-of-revenue/) | Bot paywall, priced per 1,000 pages | Same as above, plus an agent can buy and subscribe, not only read |
 | [x402](https://www.spark.money/research/x402-protocol-ai-agent-payments) | Open 402 standard paid in stablecoins | 402 on PayPal: cards and wallets, buyer protection, refunds, disputes |
 | [RSL](https://rslstandard.org/press/rsl-standard) | Licensing terms declared in `robots.txt` | Terms that are enforced, with money at stake |
-| [PayPal Agent Ready and Store Sync](https://newsroom.paypal-corp.com/2025-10-28-PayPal-Launches-Agentic-Commerce-Services-to-Power-AI-Driven-Shopping) | Lets PayPal merchants accept payments from AI agents and list catalogs in AI apps | Complementary: Agent Ready handles the *checkout*; AgentTrust governs and monetises *agent traffic* to a site (crawling rules, deposits, pay-per-access) and could use Agent Ready as the agent's payment method |
+| [PayPal Agent Ready and Store Sync](https://newsroom.paypal-corp.com/2025-10-28-PayPal-Launches-Agentic-Commerce-Services-to-Power-AI-Driven-Shopping) | Lets PayPal merchants accept payments from AI agents and list catalogs in AI apps | Complementary: Agent Ready handles the *checkout*; SARA governs and monetises *agent traffic* to a site (crawling rules, deposits, pay-per-access) and could use Agent Ready as the agent's payment method |
 
 **Deposit economics.** A deposit covers a whole crawl session, not a single page. In authorization mode (`DEPOSIT_SETTLEMENT=authorization`, run end to end against the live Sandbox) the deposit is a PayPal hold: it is voided for an honest agent, so nothing is captured, and captured only when an agent breaks the rules. Capture-then-refund mode is simpler but leaves the publisher paying PayPal's transaction fees on refunded deposits, which are not fully returned, so authorization is the production setting.
 
@@ -105,11 +113,11 @@ Unpaid requests get `HTTP 402` with the offers that unlock them. The site prices
 - PayPal authorization holds model a deposit better than capture-and-refund: compliant agents never have funds captured.
 - Strict tool schemas, structured outputs, and code-side validation make model output dependable enough to build on.
 
-## What's next for AgentTrust
+## What's next for SARA
 
-- **Agents paying without a person present, in production.** Today agents pay automatically only in the Sandbox (PayPal's test card). Next: one-time buyer consent with a saved PayPal payment method, or PayPal Agent Ready, with the spending mandate attached.
-- **Verified agent identity.** Today a session token proves a paid session, not who the agent is, so a determined operator can start over with a new identity and a new deposit. Next: signed agent requests (HTTP Message Signatures, the basis of Cloudflare's Web Bot Auth), with deposits that fall as an agent builds a compliance history and rise for unknown agents.
-- **Drop-in deployment.** Package the gateway as a reverse proxy and an edge worker, so a site puts it in front of its existing pages without code changes.
+- **PayPal Agent Ready** as the agent's payment method, alongside saved PayPal wallets (the wallet path is built and tested with mocked PayPal responses; the card path ran live).
+- **Shared agent records.** Fetch agent keys from each agent's published key directory, and share records between sites, so a rule-breaker's record follows it across the web.
+- **An edge worker and CMS plugins** on top of reverse-proxy mode.
 - **Mandates issued and verified by PayPal**, so a merchant can check what an agent is allowed to spend before it pays.
 - An optional pay-per-page fee captured from the hold, so publishers also earn from good crawlers.
 - Running subscriptions and webhooks end to end against the live Sandbox (covered today by mocked-transport tests), and multi-instance storage (PostgreSQL, Redis) in place of JSON files.

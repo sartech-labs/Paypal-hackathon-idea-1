@@ -1,4 +1,4 @@
-"""Configuration management and validated settings for AgentTrust."""
+"""Configuration management and validated settings for SARA."""
 
 from __future__ import annotations
 
@@ -55,6 +55,18 @@ class Settings(BaseModel):
     # sessions; "authorization" places a hold that is voided for compliant
     # sessions and captured only on forfeiture.
     deposit_settlement: Literal["refund", "authorization"] = Field(default="refund")
+    # Reverse-proxy mode: put the gateway in front of an existing website. Its robots.txt
+    # rules are imported and enforced, and allowed requests are forwarded to it.
+    origin_url: str = Field(default="", max_length=500)
+    # Verified agent identity (signed requests, Web Bot Auth). Agents whose keys are in the
+    # directory get a stable identity; a clean record earns a deposit discount, a kept
+    # deposit gets the identity refused. Unsigned agents pay the full deposit.
+    agent_directory_path: Path = Field(default=Path("data/agent_directory.json"))
+    trusted_agent_discount: Decimal = Field(default=Decimal("0.50"), ge=Decimal("0"), le=Decimal("1"))
+    flagged_agent_multiplier: Decimal = Field(default=Decimal("3"), ge=Decimal("1"), le=Decimal("100"))
+    refuse_after_forfeits: int = Field(default=3, ge=1, le=1000)
+    require_signed_agents: bool = Field(default=False)
+    origin_timeout_seconds: float = Field(default=10.0, gt=0.0, le=120.0)
     session_ttl_seconds: int = Field(default=1800, ge=1, le=86400)
     challenge_ttl_seconds: int = Field(default=600, ge=1, le=86400)
 
@@ -123,6 +135,14 @@ class Settings(BaseModel):
     def tier_prices(self) -> list[Optional[Decimal]]:
         """Tier price overrides, most valuable tier first."""
         return [self.tier1_price, self.tier2_price, self.tier3_price]
+
+    @field_validator("origin_url")
+    @classmethod
+    def _validate_origin_url(cls, value: str) -> str:
+        value = (value or "").strip()
+        if value and not value.startswith(("http://", "https://")):
+            raise ValueError("ORIGIN_URL must start with http:// or https://")
+        return value
 
     @field_validator("paypal_currency")
     @classmethod
@@ -231,6 +251,13 @@ def load_settings_from_env() -> Settings:
         tier2_price=os.getenv("TIER2_PRICE") or None,  # type: ignore[arg-type]
         tier3_price=os.getenv("TIER3_PRICE") or None,  # type: ignore[arg-type]
         deposit_settlement=os.getenv("DEPOSIT_SETTLEMENT", "refund"),  # type: ignore[arg-type]
+        origin_url=os.getenv("ORIGIN_URL", ""),
+        agent_directory_path=Path(os.getenv("AGENT_DIRECTORY_PATH", "data/agent_directory.json")),
+        trusted_agent_discount=Decimal(os.getenv("TRUSTED_AGENT_DISCOUNT", "0.50")),
+        flagged_agent_multiplier=Decimal(os.getenv("FLAGGED_AGENT_MULTIPLIER", "3")),
+        refuse_after_forfeits=int(os.getenv("REFUSE_AFTER_FORFEITS", "3")),
+        require_signed_agents=_env_bool("REQUIRE_SIGNED_AGENTS", False),
+        origin_timeout_seconds=float(os.getenv("ORIGIN_TIMEOUT_SECONDS", "10")),
         session_ttl_seconds=int(os.getenv("SESSION_TTL_SECONDS", "1800")),
         challenge_ttl_seconds=int(os.getenv("CHALLENGE_TTL_SECONDS", "600")),
         max_requests_per_session=int(os.getenv("MAX_REQUESTS_PER_SESSION", "10")),

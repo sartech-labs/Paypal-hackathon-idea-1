@@ -1,6 +1,6 @@
 """Gateway tools for the AI crawler agent.
 
-Each tool wraps one step of the AgentTrust protocol (402 challenge, policy, deposit,
+Each tool wraps one step of the SARA protocol (402 challenge, policy, deposit,
 policy acceptance, crawling, completion). The toolbox keeps protocol state such as the
 challenge, deposit, and session token, so the model never sees the bearer token.
 """
@@ -59,7 +59,7 @@ def _tool(name: str, description: str, properties: dict[str, Any]) -> dict[str, 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     _tool(
         "fetch_page",
-        "Request a page of the website through its AgentTrust gateway, for example '/news'. "
+        "Request a page of the website through its SARA gateway, for example '/news'. "
         "Before you have a paid session this returns the site's HTTP 402 payment challenge "
         "(deposit amount, policy version, rules summary). With a session it returns the page "
         "text, wrapped in <untrusted_page_content> tags, plus the remaining session request "
@@ -136,13 +136,29 @@ class ToolCallRecord:
     is_error: bool
 
 
+def payment_fields(wallet: dict[str, Any]) -> dict[str, Any]:
+    """Request fields for the agent's payment method: the saved one, or consent to save one."""
+    if wallet.get("pm"):
+        return {"payment_method_id": wallet["pm"]}
+    return {"save_payment_method": True} if wallet.get("save") else {}
+
+
+def remember_payment_method(wallet: dict[str, Any], response: dict[str, Any]) -> None:
+    """Keep the payment method PayPal saved on this payment, for the rest of the task."""
+    if response.get("payment_method_id") and not wallet.get("pm"):
+        wallet["pm"] = response["payment_method_id"]
+        wallet["label"] = response.get("payment_method_label")
+
+
 @dataclass
 class GatewayToolbox:
-    """Executes agent tool calls against a AgentTrust gateway."""
+    """Executes agent tool calls against a SARA gateway."""
 
     http: HttpClient
     crawler_id: str
     max_deposit: Decimal
+    # Shared with the personal agent: {"save": consent to save, "pm": saved method ID, "label": ...}.
+    wallet: dict[str, Any] = field(default_factory=dict)
     approval_handler: Callable[[str], None] = lambda url: None
     sleep: Callable[[float], None] = time.sleep
     challenge: Optional[dict[str, Any]] = None
@@ -195,6 +211,8 @@ class GatewayToolbox:
             resp = self.http.get(url, headers={"X-Crawler-Id": self.crawler_id})
             if resp.status_code == 402:
                 self.challenge = resp.json()
+                # A verified (signed) agent gets its stable identity from the gateway.
+                self.crawler_id = self.challenge.get("crawler_id") or self.crawler_id
                 return {
                     "status": 402,
                     "message": "Payment required: this site asks AI crawlers for a refundable deposit.",
@@ -202,6 +220,7 @@ class GatewayToolbox:
                     "pricing": self.challenge.get("pricing"),
                     "policy_version": self.challenge.get("policy_version"),
                     "rules_summary": self.challenge.get("rules_summary"),
+                    "identity": self.challenge.get("identity"),
                     "notice": self.challenge.get("notice"),
                 }
             return {"status": resp.status_code, "error": "Unexpected response before payment.", "body": resp.text[:500]}
@@ -213,9 +232,9 @@ class GatewayToolbox:
             return {
                 "status": 200,
                 "path": path,
-                "pricing_tier": resp.headers.get("X-AgentTrust-Pricing-Tier"),
-                "remaining_session_budget": _int_header(resp, "X-AgentTrust-Remaining-Budget"),
-                "remaining_window_requests": _int_header(resp, "X-AgentTrust-Remaining-Window"),
+                "pricing_tier": resp.headers.get("X-SARA-Pricing-Tier"),
+                "remaining_session_budget": _int_header(resp, "X-SARA-Remaining-Budget"),
+                "remaining_window_requests": _int_header(resp, "X-SARA-Remaining-Window"),
                 "content": (
                     "<untrusted_page_content>\n"
                     f"{text[:MAX_PAGE_TEXT_CHARS]}{' [truncated]' if truncated else ''}\n"
@@ -299,10 +318,11 @@ class GatewayToolbox:
             }
 
         ids = {"challenge_id": self.challenge["challenge_id"], "crawler_id": self.crawler_id}
-        create = self.http.post("/deposits/create", json=ids)
+        create = self.http.post("/deposits/create", json={**ids, **payment_fields(self.wallet)})
         if create.status_code != 201:
             return {"error": f"Deposit creation failed (HTTP {create.status_code}).", "detail": _safe_json(create)}
         self.deposit = create.json()
+        remember_payment_method(self.wallet, self.deposit)
         deposit_id = self.deposit["deposit_id"]
 
         if (
@@ -400,6 +420,7 @@ class GatewayToolbox:
                 "pricing_tier",
                 "pricing_tier_name",
                 "requested_resource",
+                "payment_method_label",
             )
         }
 

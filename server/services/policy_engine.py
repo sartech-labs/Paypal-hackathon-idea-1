@@ -1,4 +1,4 @@
-"""Policy evaluation engine for AgentTrust."""
+"""Policy evaluation engine for SARA."""
 
 from __future__ import annotations
 
@@ -34,8 +34,11 @@ class PolicyEngine:
         rate_limiter: SlidingWindowRateLimiter,
         known_allowed_pages: set[str] | None = None,
         pricing: PricingCatalog | None = None,
+        default_allow: bool = False,
     ) -> None:
         self._site_config = site_config
+        # Reverse-proxy mode follows robots.txt semantics: anything not disallowed is allowed.
+        self._default_allow = default_allow
         self._rate_limiter = rate_limiter
         self._pricing = pricing or PricingCatalog(site_config)
         self._known_allowed_pages = (
@@ -97,6 +100,8 @@ class PolicyEngine:
 
         # To be served as ALLOWED, the path must match an allowed rule and exist in known allowed pages
         if best_allowed_rule >= 0 and normalized_path in self._known_allowed_pages:
+            return "ALLOWED"
+        if self._default_allow:
             return "ALLOWED"
 
         return "UNKNOWN"

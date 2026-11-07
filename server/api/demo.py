@@ -258,6 +258,7 @@ async def start_run(
             max_per_purchase=payload.max_per_purchase,
             allowed_merchants=payload.allowed_merchants,
             purchase_review=payload.purchase_review,
+            save_payment_method=payload.save_payment_method,
         )
     except DemoRunError as exc:
         raise HTTPException(

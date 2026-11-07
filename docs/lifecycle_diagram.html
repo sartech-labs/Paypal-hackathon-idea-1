@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AgentTrust — End-to-End Request Lifecycle</title>
+  <title>SARA — End-to-End Request Lifecycle</title>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <style>
     body {
@@ -64,7 +64,7 @@
   </style>
 </head>
 <body>
-  <h1>AgentTrust — End-to-End Request Lifecycle</h1>
+  <h1>SARA — End-to-End Request Lifecycle</h1>
   <p>Deposit-Backed Accountability Flow for AI Crawlers</p>
 
   <div class="toolbar">
@@ -164,7 +164,7 @@ sequenceDiagram
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "agenttrust-request-lifecycle.svg";
+      a.download = "sara-request-lifecycle.svg";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -196,7 +196,7 @@ sequenceDiagram
           const pngUrl = URL.createObjectURL(pngBlob);
           const a = document.createElement("a");
           a.href = pngUrl;
-          a.download = "agenttrust-request-lifecycle.png";
+          a.download = "sara-request-lifecycle.png";
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);

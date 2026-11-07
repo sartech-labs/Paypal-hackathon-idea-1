@@ -287,7 +287,7 @@ async def test_ask_uses_gateway_records_and_paypal_mcp_tools(test_settings: Sett
         provider="openai",
         model="gpt-5.5",
         tool_script=[
-            [("list_agenttrust_deposits", {"limit": 99})],
+            [("list_sara_deposits", {"limit": 99})],
             [("get_order", {"id": ORDER_ID}), ("list_disputes", {"dispute_state": "NOT_A_STATE"})],
             [("create_refund", {"capture_id": "3FD790762H6433444"})],
             "The last deposit matches PayPal.\n- Order 9XS27667T1928241W: COMPLETED, capture REFUNDED.",
@@ -297,7 +297,7 @@ async def test_ask_uses_gateway_records_and_paypal_mcp_tools(test_settings: Sett
     answer = await assistant.ask("Check the last deposit against PayPal.")
 
     loop = generator.tool_loops[0]
-    assert loop["tools"] == ["list_agenttrust_deposits", "list_agenttrust_orders", "get_order", "get_refund", "list_transactions", "list_disputes", "get_dispute"]
+    assert loop["tools"] == ["list_sara_deposits", "list_sara_orders", "get_order", "get_refund", "list_transactions", "list_disputes", "get_dispute"]
     assert "<publisher_question>" in loop["prompt"]
     listed = json.loads(loop["results"][0]["content"])
     assert listed["deposits"][0]["paypal_order_id"] == ORDER_ID
@@ -306,8 +306,8 @@ async def test_ask_uses_gateway_records_and_paypal_mcp_tools(test_settings: Sett
     # Invalid dispute states are dropped so PayPal applies its default; writes never reach MCP.
     assert raw.calls == [("get_order", {"id": ORDER_ID}), ("list_disputes", {})]
     assert answer.generated_by == "openai"
-    assert [c.tool for c in answer.calls] == ["list_agenttrust_deposits", "get_order", "list_disputes"]
-    assert answer.calls[0].source == "agenttrust" and answer.calls[0].arguments == {"limit": 25}
+    assert [c.tool for c in answer.calls] == ["list_sara_deposits", "get_order", "list_disputes"]
+    assert answer.calls[0].source == "sara" and answer.calls[0].arguments == {"limit": 25}
     assert "Read-only" in answer.notice
 
 

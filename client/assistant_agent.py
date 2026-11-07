@@ -1,4 +1,4 @@
-"""AgentTrust personal agent: one AI agent that crawls, buys access, subscribes, and shops.
+"""SARA personal agent: one AI agent that crawls, buys access, subscribes, and shops.
 
 The agent works for one person under a spending mandate and pays websites through
 PayPal in whichever way fits the request: a refundable crawl deposit, a pay-per-access
@@ -24,6 +24,7 @@ import httpx
 import openai
 from dotenv import load_dotenv
 
+from client.web_bot_auth import load_signer
 from client.agent import DEFAULT_MODELS, CrawlerAgent, Persona, _has_anthropic_credentials, _has_openai_key
 from client.assistant_tools import ASSISTANT_TOOL_DEFINITIONS, PAYMENT_TYPES, AssistantToolbox, SpendingMandate
 from client.purchase_critic import build_llm_critic
@@ -31,7 +32,7 @@ from client.common import print_banner, print_step, resolve_crawler_id
 
 ASSISTANT_SYSTEM = """\
 You are Aria, a personal AI agent acting for one person (your user). You work on websites \
-that are ready for AI agents through AgentTrust: they publish a machine-readable offer \
+that are ready for AI agents through SARA: they publish a machine-readable offer \
 catalog and accept payments through PayPal. A site can sell four kinds of offer:
 - a refundable crawl deposit, priced by content tier, to read protected pages under the \
 site's crawling policy (returned in full if you follow the rules, kept if you break them)
@@ -107,7 +108,7 @@ def _print_event(kind: str, payload: dict[str, Any]) -> None:
 
 def main(argv: Optional[list[str]] = None) -> int:
     load_dotenv()
-    parser = argparse.ArgumentParser(description="Run the AgentTrust personal agent.")
+    parser = argparse.ArgumentParser(description="Run the SARA personal agent.")
     parser.add_argument("--task", default=DEFAULT_TASK)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--agent-id", default=None)
@@ -151,7 +152,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     effort = args.effort or os.getenv("AI_EFFORT") or "medium"
     agent_id = resolve_crawler_id(args.agent_id, "aria")
 
-    print_banner("AgentTrust personal agent")
+    print_banner("SARA personal agent")
     print(f"  Agent ID : {agent_id}")
     print(f"  AI model : {model} ({provider}, effort {effort})")
     print(f"  Mandate  : budget {mandate.budget}, approval above {mandate.approval_threshold}, allowed {sorted(mandate.allowed_types)}")
@@ -172,7 +173,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         if sys.stdin.isatty():
             input("      Press [Enter] after approving...")
 
-    with httpx.Client(base_url=args.base_url.rstrip("/"), timeout=30.0) as http:
+    with httpx.Client(base_url=args.base_url.rstrip("/"), timeout=30.0, auth=load_signer(os.getenv("SARA_AGENT_KEY"))) as http:
         toolbox = AssistantToolbox(
             http=http,
             agent_id=agent_id,

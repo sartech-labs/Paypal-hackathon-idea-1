@@ -26,7 +26,7 @@ def run_violating_crawler(
     non_interactive: bool = False,
 ) -> int:
     resolved_id = resolve_crawler_id(crawler_id, "crawler-violating")
-    print_banner(f"AgentTrust Demo -- Client B: Violating Crawler ({resolved_id})")
+    print_banner(f"SARA Demo -- Client B: Violating Crawler ({resolved_id})")
 
     with httpx.Client(base_url=base_url.rstrip("/"), timeout=20.0) as client:
         # Step 1: Request protected content without credentials -> receive 402 challenge
@@ -176,7 +176,7 @@ def run_violating_crawler(
 
 def main() -> int:
     parser = build_arg_parser(
-        description="Run the AgentTrust violating crawler demonstration (Client B).",
+        description="Run the SARA violating crawler demonstration (Client B).",
         default_prefix="crawler-violating",
     )
     args = parser.parse_args()

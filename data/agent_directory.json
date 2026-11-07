@@ -1,0 +1,4 @@
+{
+  "_comment": "Agent keys this site recognises (Web Bot Auth). Each JWK is an Ed25519 public key; its RFC 7638 thumbprint is the keyid agents put in Signature-Input. The demo server also adds an in-memory key for its own demo agents at startup.",
+  "agents": []
+}

@@ -3,7 +3,7 @@
     "title": "Sentinel News — Home",
     "content_type": "text/html; charset=utf-8",
     "category": "index",
-    "body": "<!DOCTYPE html><html><head><title>Sentinel News — Home</title></head><body><h1>Sentinel News</h1><p>Welcome to the machine-readable news portal protected by AgentTrust deposit accountability.</p><ul><li><a href=\"/gateway/news\">Top Stories</a></li><li><a href=\"/gateway/news/technology\">Technology</a></li><li><a href=\"/gateway/news/economy\">Economy</a></li></ul></body></html>"
+    "body": "<!DOCTYPE html><html><head><title>Sentinel News — Home</title></head><body><h1>Sentinel News</h1><p>Welcome to the machine-readable news portal protected by SARA deposit accountability.</p><ul><li><a href=\"/gateway/news\">Top Stories</a></li><li><a href=\"/gateway/news/technology\">Technology</a></li><li><a href=\"/gateway/news/economy\">Economy</a></li></ul></body></html>"
   },
   "/news": {
     "title": "Top Headlines — Sentinel News",
@@ -69,7 +69,7 @@
     "title": "Public Announcements (Public tier) - Sentinel News",
     "content_type": "text/html; charset=utf-8",
     "category": "tier:public",
-    "body": "<!DOCTYPE html><html><head><title>Public Announcements (Public tier) - Sentinel News</title></head><body><h1>Public Announcements</h1><p><em>SYNTHETIC DEMO CONTENT.</em></p><article><h2>Newsroom Hours</h2><p>The Sentinel newsroom tip line is open weekdays from 8:00 to 18:00.</p></article><article><h2>New Accountable-Crawling Policy</h2><p>AI crawlers can now access tiered content through the AgentTrust gateway.</p></article></body></html>"
+    "body": "<!DOCTYPE html><html><head><title>Public Announcements (Public tier) - Sentinel News</title></head><body><h1>Public Announcements</h1><p><em>SYNTHETIC DEMO CONTENT.</em></p><article><h2>Newsroom Hours</h2><p>The Sentinel newsroom tip line is open weekdays from 8:00 to 18:00.</p></article><article><h2>New Accountable-Crawling Policy</h2><p>AI crawlers can now access tiered content through the SARA gateway.</p></article></body></html>"
   },
   "/content/public/basic-information": {
     "title": "Basic Information (Public tier) - Sentinel News",

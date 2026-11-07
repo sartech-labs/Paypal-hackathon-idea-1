@@ -1,4 +1,4 @@
-/* AgentTrust publisher console.
+/* SARA publisher console.
    All values that originate from crawlers (IDs, paths, reasons) are inserted with
    textContent, never innerHTML. Every number shown comes from the gateway's own endpoints:
    /dashboard/data, /demo/requests, /demo/config, and /policies. */
@@ -487,7 +487,7 @@
       pageSize: 10,
       autoHeight: true,
       flashNew: true,
-      exportName: "agenttrust-deposits",
+      exportName: "sara-deposits",
       search: "Search deposits...",
       noRows: "No deposits yet. Run a crawler from the live demo.",
       noExport: ["explain"],
@@ -557,7 +557,7 @@
       autoHeight: true,
       detail: sessionDetail,
       detailHeight: 176,
-      exportName: "agenttrust-sessions",
+      exportName: "sara-sessions",
       search: "Search sessions...",
       noRows: "No crawler sessions yet.",
       segments: {
@@ -592,7 +592,7 @@
       detail: requestDetail,
       detailHeight: 176,
       flashNew: true,
-      exportName: "agenttrust-requests",
+      exportName: "sara-requests",
       search: "Search requests...",
       noRows: "No gateway requests yet.",
       segments: {
@@ -619,7 +619,7 @@
       flashNew: true,
       pageSize: 10,
       autoHeight: true,
-      exportName: "agenttrust-violations",
+      exportName: "sara-violations",
       search: "Search violations...",
       noRows: "No policy violations recorded. Every crawler has behaved so far.",
       exportValues: { reason_code: (e) => humanize(e.reason_code) },
@@ -637,7 +637,7 @@
       detail: eventDetail,
       detailHeight: 160,
       flashNew: true,
-      exportName: "agenttrust-audit",
+      exportName: "sara-audit",
       search: "Search audit events...",
       noRows: "No audit events yet.",
       segments: {
@@ -1165,7 +1165,7 @@
       rowId: (o) => o.order_id,
       pageSize: 10,
       autoHeight: true,
-      exportName: "agenttrust-orders",
+      exportName: "sara-orders",
       search: "Search orders...",
       noRows: "No orders yet. Run the personal agent from the agent studio.",
       segments: {
@@ -1203,7 +1203,7 @@
       rowId: (s) => s.subscription_ref,
       pageSize: 10,
       autoHeight: true,
-      exportName: "agenttrust-subscriptions",
+      exportName: "sara-subscriptions",
       search: "Search subscriptions...",
       noRows: "No subscriptions yet.",
       columnDefs: [
@@ -1225,9 +1225,9 @@
     box.append(el("h3", { text: title }));
     if (rows) {
       box.append(el("table", null, [
-        el("thead", null, [el("tr", null, ["Check", "AgentTrust", "PayPal", ""].map((h) => el("th", { text: h })))]),
+        el("thead", null, [el("tr", null, ["Check", "SARA", "PayPal", ""].map((h) => el("th", { text: h })))]),
         el("tbody", null, rows.map((c) => el("tr", null, [
-          el("td", { text: c.label }), el("td", { className: "mono", text: c.agenttrust }), el("td", { className: "mono", text: c.paypal }),
+          el("td", { text: c.label }), el("td", { className: "mono", text: c.sara }), el("td", { className: "mono", text: c.paypal }),
           el("td", { className: c.status === "match" ? "ok" : c.status === "mismatch" ? "bad" : "", text: c.status }),
         ]))),
       ]));
@@ -1342,7 +1342,7 @@
       if (state.view === "operations") loadRequests(false);
       loadCommerce();
     } catch (_) {
-      showBanner("Cannot reach the AgentTrust gateway. Is the server running?");
+      showBanner("Cannot reach the SARA gateway. Is the server running?");
     } finally {
       clearTimeout(slowTimer);
       main.classList.remove("refreshing");

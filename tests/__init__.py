@@ -1,2 +1,2 @@
-"""Automated pytest test suite for AgentTrust."""
+"""Automated pytest test suite for SARA."""
 

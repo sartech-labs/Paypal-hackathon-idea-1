@@ -35,7 +35,7 @@ def _buy_video(client: TestClient, agent: str = "agent-alpha") -> dict[str, Any]
 def test_catalog_lists_every_offer_type(client: TestClient) -> None:
     catalog = client.get("/.well-known/agent-commerce.json").json()
     offers = catalog["offers"]
-    assert catalog["protocol"] == "agenttrust/1.0"
+    assert catalog["protocol"] == "sara/1.0"
     assert catalog["payments"]["processor"] == "PayPal"
     assert {t["tier_id"] for t in offers["crawl_deposits"]["tiers"]} == {"premium", "standard", "public"}
     assert {i["item_id"] for i in offers["pay_per_access"]} >= {"agent-economy-video", "agent-traffic-dataset"}

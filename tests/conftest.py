@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for AgentTrust tests."""
+"""Shared pytest fixtures for SARA tests."""
 
 from __future__ import annotations
 

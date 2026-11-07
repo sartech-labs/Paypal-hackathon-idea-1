@@ -1,6 +1,6 @@
 """Agent commerce: pay-per-access items, PayPal subscriptions, and product purchases.
 
-Next to the refundable crawl deposit, an AgentTrust site sells three more kinds of offer
+Next to the refundable crawl deposit, an SARA site sells three more kinds of offer
 to AI agents, all paid through PayPal:
 
 - access: a fixed, non-refundable charge that unlocks one resource (video, dataset, audio)
@@ -44,6 +44,7 @@ from server.schemas import (
     SubscriptionResponse,
 )
 from server.services.audit_logger import AuditLogger
+from server.services.payment_methods import record_payment_method, resolve_payment_token
 from server.services.payment_service import (
     OrderLineItem,
     PaymentApprovalRequiredError,
@@ -52,7 +53,7 @@ from server.services.payment_service import (
     PaymentProviderTimeoutError,
 )
 
-logger = logging.getLogger("agenttrust.commerce")
+logger = logging.getLogger("sara.commerce")
 
 CENT = Decimal("0.01")
 DB_KEYS = ("orders", "subscriptions", "tokens", "plans")
@@ -196,6 +197,8 @@ class CommerceManager:
         self._tokens: dict[str, dict[str, str]] = {}  # token hash -> {kind, ref}
         self._plans: dict[str, str] = {}  # plan key -> provider plan id
         self._webhooks: dict[str, dict[str, str]] = {}  # processed PayPal webhook event ids
+        # Set by the app: saved payment methods (PaymentMethodStore).
+        self.payment_methods: Any = None
 
     @property
     def payment_provider(self) -> PaymentProvider:
@@ -237,7 +240,7 @@ class CommerceManager:
 
     @staticmethod
     def order_response(record: CommerceOrderRecord, access_token: Optional[str] = None) -> CommerceOrderResponse:
-        data = record.model_dump(exclude={"access_token_hash", "purpose", "dispute_id"})
+        data = record.model_dump(exclude={"access_token_hash", "purpose", "dispute_id", "agent_pays", "save_payment_method"})
         return CommerceOrderResponse(**data, access_token=access_token)
 
     @staticmethod
@@ -326,9 +329,18 @@ class CommerceManager:
         items: list[tuple[str, int]],
         purpose: Optional[str],
         buyer: str = "agent",
+        save_payment_method: bool = False,
+        payment_method_id: Optional[str] = None,
     ) -> CommerceOrderRecord:
         lines, shipping, grants, _ships = self._price_order(offer_type, item_id, items)
         currency = self.catalog.currency
+        # An agent's order is created with no payment method attached, so nothing is charged
+        # while the agent's spending mandate and purchase review decide; the saved method (or
+        # the Sandbox test card) is attached at capture.
+        agent_pays = buyer == "agent" and (bool(payment_method_id) or self._provider.autopay)
+        if payment_method_id:
+            if self.payment_methods is None or self.payment_methods.label(payment_method_id) is None:
+                raise CommerceError("Unknown payment_method_id", status_code=404, code="payment_method_not_found")
         line_items = [
             OrderLineItem(name=l.name, unit_amount=_money(l.unit_price), quantity=l.quantity, sku=l.ref, category=l.category)
             for l in lines
@@ -351,7 +363,8 @@ class CommerceManager:
                 items=line_items,
                 shipping=shipping,
                 callback_path=COMMERCE_CALLBACK_PATH,
-                autopay=None if buyer == "agent" else False,
+                autopay=False,
+                defer_payment=agent_pays,
             )
         except PaymentProviderError as exc:
             raise CommerceError(f"PayPal order creation failed: {exc}", status_code=502, code="payment_provider_error") from exc
@@ -369,11 +382,16 @@ class CommerceManager:
             payment_mode=self._provider.mode,
             simulated=created.simulated,
             provider_order_id=created.order_id,
-            approval_url=created.approval_url if not created.simulated else None,
+            approval_url=created.approval_url if not created.simulated and not agent_pays else None,
             fulfillment_status="PENDING_PAYMENT",
             grants=grants,
             created_at=utc_now_iso(),
         )
+        record.agent_pays = agent_pays
+        record.save_payment_method = bool(save_payment_method and agent_pays and not payment_method_id)
+        if payment_method_id:
+            record.payment_method_id = payment_method_id
+            record.payment_method_label = self.payment_methods.label(payment_method_id)
         async with self._lock:
             self._orders[order_id] = record
             self._persist()
@@ -408,6 +426,15 @@ class CommerceManager:
             if record.status in ("CANCELLED", "REFUNDED"):
                 raise CommerceError(f"Order {order_id} is {record.status.lower()}.", status_code=409, code="order_closed")
         try:
+            if record.agent_pays:
+                # Now that the agent has decided to pay, attach its payment method.
+                token = resolve_payment_token(self.payment_methods, record.payment_method_id)
+                await self._provider.confirm_payment_source(
+                    order_id=str(record.provider_order_id),
+                    request_id=f"{order_id}-confirm",
+                    payment_token=token,
+                    save_method=record.save_payment_method,
+                )
             verified = await self._provider.capture_order(
                 order_id=str(record.provider_order_id),
                 request_id=f"{order_id}-capture",
@@ -440,6 +467,9 @@ class CommerceManager:
                 current = current.model_copy(
                     update={
                         "status": "PAID",
+                        **dict(zip(("payment_method_id", "payment_method_label"), record_payment_method(
+                            self.payment_methods, current.payment_method_id, verified.saved_method, agent_id, f"order {order_id}"
+                        ))),
                         "provider_capture_id": verified.capture_id,
                         "paid_at": utc_now_iso(),
                         "approval_url": None,

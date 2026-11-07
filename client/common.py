@@ -15,7 +15,7 @@ def build_arg_parser(description: str, default_prefix: str) -> argparse.Argument
     parser.add_argument(
         "--base-url",
         default="http://127.0.0.1:8000",
-        help="Base URL of the AgentTrust FastAPI gateway (default: http://127.0.0.1:8000)",
+        help="Base URL of the SARA FastAPI gateway (default: http://127.0.0.1:8000)",
     )
     parser.add_argument(
         "--crawler-id",

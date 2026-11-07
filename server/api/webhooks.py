@@ -25,7 +25,7 @@ from server.dependencies import AppContainer, get_container
 from server.services.payment_service import PaymentProviderError
 
 router = APIRouter(tags=["PayPal webhooks"])
-logger = logging.getLogger("agenttrust.webhooks")
+logger = logging.getLogger("sara.webhooks")
 
 MAX_BODY_BYTES = 256_000
 _CAPTURE_IN_LINK = re.compile(r"/captures/([A-Za-z0-9_-]+)")

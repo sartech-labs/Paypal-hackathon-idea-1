@@ -51,7 +51,7 @@ def build_offer_catalog(container: AppContainer) -> dict[str, Any]:
     site = container.site_config
     commerce = container.commerce
     return {
-        "protocol": "agenttrust/1.0",
+        "protocol": "sara/1.0",
         "merchant": commerce.catalog.merchant_name,
         "site_id": site.site_id,
         "currency": site.currency,
@@ -130,6 +130,8 @@ async def checkout(payload: CheckoutRequest, container: AppContainer = Depends(g
             items=[(line.sku, line.quantity) for line in payload.items],
             purpose=payload.purpose,
             buyer=payload.buyer,
+            save_payment_method=payload.save_payment_method,
+            payment_method_id=payload.payment_method_id,
         )
     except CommerceError as exc:
         _raise(exc)
@@ -317,7 +319,7 @@ async def paid_content(
     return Response(
         content=page.body,
         media_type=page.content_type.split(";")[0],
-        headers={"X-AgentTrust-Grant": grant.kind if grant else "", "Cache-Control": "no-store"},
+        headers={"X-SARA-Grant": grant.kind if grant else "", "Cache-Control": "no-store"},
     )
 
 

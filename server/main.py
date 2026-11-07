@@ -1,4 +1,4 @@
-"""FastAPI application entrypoint for AgentTrust."""
+"""FastAPI application entrypoint for SARA."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from server.services.origin_proxy import OriginProxy
 from server.api import audit, commerce, dashboard, webhooks, deposits, demo, gateway, paypal, policies, sessions
 from server.config import Settings, load_settings_from_env
 from server.dependencies import AppContainer
@@ -21,7 +22,7 @@ from server.services.paypal_mcp import PayPalMCPClient
 from server.services.rate_limiter import SlidingWindowRateLimiter
 from server.services.storefront_mcp import Storefront
 
-logger = logging.getLogger("agenttrust")
+logger = logging.getLogger("sara")
 
 
 def create_app(
@@ -32,8 +33,9 @@ def create_app(
     paypal_mcp: Optional[PayPalMCPClient] = None,
     demo_http_factory: Optional[HttpFactory] = None,
     demo_llm_factory: Optional[LlmFactory] = None,
+    origin_proxy: Optional[OriginProxy] = None,
 ) -> FastAPI:
-    """Create and configure the AgentTrust FastAPI application."""
+    """Create and configure the SARA FastAPI application."""
     resolved_settings = settings or load_settings_from_env()
     logging.basicConfig(
         level=getattr(logging, resolved_settings.log_level.upper(), logging.INFO),
@@ -48,6 +50,7 @@ def create_app(
         paypal_mcp=paypal_mcp,
         demo_http_factory=demo_http_factory,
         demo_llm_factory=demo_llm_factory,
+        origin_proxy=origin_proxy,
     )
     container.load_persisted_state()
 
@@ -58,17 +61,17 @@ def create_app(
         app_instance.state.container = container
         container.load_persisted_state()
         logger.info(
-            "AgentTrust Gateway started (site_id=%s, payment_mode=%s)",
+            "SARA Gateway started (site_id=%s, payment_mode=%s)",
             container.site_config.site_id,
             container.payment_provider.mode.value,
         )
         # The MCP storefront's session manager runs for the app's lifetime.
         async with storefront_holder["storefront"].server.session_manager.run():
             yield
-        logger.info("AgentTrust Gateway shutting down")
+        logger.info("SARA Gateway shutting down")
 
     app = FastAPI(
-        title="AgentTrust — Deposit-Based Accountability Gateway for AI Crawlers",
+        title="SARA — Deposit-Based Accountability Gateway for AI Crawlers",
         version="0.1.0",
         description=(
             "Enforces website crawling policies, rate limits, and path restrictions using "

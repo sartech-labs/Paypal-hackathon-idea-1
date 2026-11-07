@@ -1,10 +1,10 @@
-"""Build the AgentTrust explainer video (1920x1080, 30 fps).
+"""Build the SARA explainer video (1920x1080, 30 fps).
 
 Steps (each cached under video-out/build/):
   voice    OpenAI text-to-speech per scene (wav), then Whisper word timestamps
   frames   recording scenes: frames cut from the screen recordings, sped to fit the voice
   render   every frame drawn by engine.html in Chromium and piped to ffmpeg (H.264)
-  mux      narration track (with -14 LUFS loudness) + video -> agenttrust-explainer.mp4, .srt
+  mux      narration track (with -14 LUFS loudness) + video -> sara-explainer.mp4, .srt
 
 Usage:  python scripts/explainer_video/build.py [--only-preview s03,d03] [--force-voice]
 """
@@ -155,6 +155,7 @@ def render(sb: dict, tl: list[dict], only: list[str] | None) -> Path:
     for sc, info in zip(data["scenes"], tl):
         sc["words"] = info["words"]
         sc["lead"] = LEAD
+        sc["dur"] = info["frames"] / FPS
     preview_dir = OUT / "preview"
     preview_dir.mkdir(parents=True, exist_ok=True)
     video_path = BUILD / "video.mp4"
@@ -179,6 +180,7 @@ def render(sb: dict, tl: list[dict], only: list[str] | None) -> Path:
         page.wait_for_timeout(1500)
         page.evaluate("(sb) => window.__load(sb)", data)
         page.evaluate("document.fonts.ready")
+        (BUILD / "events.json").write_text(json.dumps(page.evaluate("window.__events()")), encoding="utf-8")
 
         def frame_src(sc: dict, f: int) -> str | None:
             if sc["visual"].get("type") != "rec":
@@ -193,7 +195,7 @@ def render(sb: dict, tl: list[dict], only: list[str] | None) -> Path:
             for i, (sc, info) in enumerate(zip(data["scenes"], tl)):
                 if sc["id"] not in only:
                     continue
-                for frac in (0.35, 0.92):
+                for frac in (0.04, 0.35, 0.92):
                     f = int(info["frames"] * frac)
                     page.evaluate("([i, t, src]) => window.__render(i, t, src)", [i, f / FPS, frame_src(sc, f)])
                     page.screenshot(path=str(preview_dir / f"{sc['id']}_{int(frac*100)}.jpg"), type="jpeg", quality=85)
@@ -220,6 +222,127 @@ def render(sb: dict, tl: list[dict], only: list[str] | None) -> Path:
     return video_path
 
 
+# --- sound design (synthesized: no third-party audio) -------------------------------------
+
+SR = 48000
+
+
+def _write_wav(path: Path, x) -> Path:
+    import numpy as np
+
+    x = np.clip(x, -1, 1)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SR)
+        w.writeframes((x * 32767).astype("<i2").tobytes())
+    return path
+
+
+def _sfx_bank() -> dict:
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+
+    def t(d):
+        return np.arange(int(d * SR)) / SR
+
+    def smooth(x, n):
+        k = np.ones(n) / n
+        return np.convolve(x, k, mode="same")
+
+    tt = t(0.07)
+    tick = 0.22 * np.sin(2 * np.pi * (1500 - 4000 * tt) * tt) * np.exp(-tt * 70)
+    tt = t(0.35)
+    thud = (0.6 * np.sin(2 * np.pi * 85 * tt) * np.exp(-tt * 14)
+            + 0.25 * smooth(rng.standard_normal(tt.size), 40) * np.exp(-tt * 30))
+    tt = t(1.6)
+    boom = (0.7 * np.sin(2 * np.pi * (58 - 18 * tt) * tt) * np.exp(-tt * 3.2)
+            + 0.18 * smooth(rng.standard_normal(tt.size), 25) * np.exp(-tt * 6))
+    tt = t(0.55)
+    env = np.sin(np.pi * np.clip(tt / 0.55, 0, 1)) ** 2
+    noise = rng.standard_normal(tt.size)
+    whoosh = 0.32 * (smooth(noise, 9) - smooth(noise, 60)) * env
+    tt = t(0.9)
+    env = (tt / 0.9) ** 2 * np.exp(-np.clip(tt - 0.8, 0, None) * 30)
+    riser = 0.22 * (smooth(rng.standard_normal(tt.size), 6) * env + 0.5 * np.sin(2 * np.pi * (180 + 500 * tt) * tt) * env)
+    return {"tick": tick, "thud": thud, "impact": boom, "whoosh": whoosh, "riser": riser}
+
+
+def make_sfx(sb: dict, tl: list[dict], total_s: float) -> Path:
+    import numpy as np
+
+    events = json.loads((BUILD / "events.json").read_text())
+    bank = _sfx_bank()
+    out = np.zeros(int(total_s * SR) + SR)
+    last_tick = -1.0
+    offset = {"whoosh": -0.12, "riser": -0.75}
+    for evs, info in zip(events, tl):
+        for e in sorted(evs, key=lambda e: e["t"]):
+            g = info["start"] + e["t"] + offset.get(e["k"], 0)
+            if e["k"] == "tick":
+                if g - last_tick < 0.11:
+                    continue
+                last_tick = g
+            s = bank[e["k"]]
+            i = max(0, int(g * SR))
+            out[i:i + s.size] += s[: out.size - i]
+    return _write_wav(BUILD / "sfx.wav", out * 0.8)
+
+
+NOTE = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+
+
+def _chord(name: str) -> list[float]:
+    root = NOTE[name[0]]
+    third = 3 if name.endswith("m") else 4
+    base = 220 * 2 ** ((root - 9) / 12)          # octave around A3
+    return [base * 2 ** (s / 12) for s in (0, third, 7, 12)]
+
+
+def make_music(sb: dict, tl: list[dict], total_s: float) -> Path:
+    """A quiet pad: tense minor chords for the problem, brighter major ones from the turn onwards."""
+    import numpy as np
+
+    n = int(total_s * SR) + SR
+    out = np.zeros(n)
+    turn = next((i["start"] for sc, i in zip(sb["scenes"], tl) if sc.get("act", 0) >= 1), total_s)
+    tense, bright = ["Am", "F", "Dm", "E"], ["C", "G", "Am", "F"]
+    bar = 3.2
+    t0 = 0.0
+    k = 0
+    while t0 < total_s:
+        prog = tense if t0 < turn else bright
+        freqs = _chord(prog[k % 4])
+        d = bar + 1.2
+        tt = np.arange(int(d * SR)) / SR
+        env = np.minimum(1, tt / 0.9) * np.minimum(1, np.clip(d - tt, 0, None) / 1.2)
+        seg = np.zeros(tt.size)
+        for f in freqs:
+            seg += np.sin(2 * np.pi * f * tt) + 0.3 * np.sin(2 * np.pi * 2.003 * f * tt) + 0.12 * np.sin(2 * np.pi * 0.5 * f * tt)
+        seg += 0.8 * np.sin(2 * np.pi * freqs[0] / 2 * tt)                     # bass
+        if t0 >= turn:                                                           # soft plucked pulse in the solution
+            for j in range(int(bar / 0.4)):
+                p0 = int(j * 0.4 * SR)
+                pt = tt[: int(0.4 * SR)]
+                f = freqs[(j * 2) % 4] * 2
+                pl = 0.6 * np.sin(2 * np.pi * f * pt) * np.exp(-pt * 9)
+                seg[p0:p0 + pl.size] += pl[: seg.size - p0]
+        i = int(t0 * SR)
+        m = min(seg.size, n - i)
+        out[i:i + m] += (seg * env)[:m]
+        t0 += bar
+        k = 0 if (t0 >= turn and t0 - bar < turn) else k + 1
+    # fade in/out, then a modest level so it sits well under the voice
+    fade = int(2 * SR)
+    out[:fade] *= np.linspace(0, 1, fade)
+    end = int(total_s * SR)
+    out[end - 3 * SR:end] *= np.linspace(1, 0, 3 * SR)
+    out[end:] = 0
+    out *= 0.09 / (np.max(np.abs(out)) + 1e-9)
+    return _write_wav(BUILD / "music.wav", out)
+
+
 # --- audio + mux --------------------------------------------------------------------------
 
 def mux(sb: dict, tl: list[dict], video: Path) -> Path:
@@ -237,9 +360,16 @@ def mux(sb: dict, tl: list[dict], video: Path) -> Path:
             body = b"\x00" * lead + pcm
             body = body[:total] + b"\x00" * max(0, total - len(body))
             out.writeframes(body)
-    final = OUT / "agenttrust-explainer.mp4"
-    run([FF, "-y", "-v", "error", "-i", str(video), "-i", str(track), "-map", "0:v", "-map", "1:a", "-c:v", "copy",
-         "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-ar", "48000", "-c:a", "aac", "-b:a", "192k", "-shortest", str(final)])
+    final = OUT / sb.get("output", "sara-explainer.mp4")
+    total_s = sum(i["frames"] for i in tl) / FPS
+    sfx_path, music_path = make_sfx(sb, tl, total_s), make_music(sb, tl, total_s)
+    # Voice on top; music ducks under the voice (sidechain); effects mixed in; then loudness to -14 LUFS.
+    mix = ("[1:a]aresample=48000,asplit=2[v][vsc];"
+           "[2:a][vsc]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=350:makeup=1[md];"
+           "[v][md][3:a]amix=inputs=3:normalize=0:duration=first,loudnorm=I=-14:TP=-1.5:LRA=11[a]")
+    run([FF, "-y", "-v", "error", "-i", str(video), "-i", str(track), "-i", str(music_path), "-i", str(sfx_path),
+         "-filter_complex", mix, "-map", "0:v", "-map", "[a]", "-c:v", "copy",
+         "-ar", "48000", "-c:a", "aac", "-b:a", "192k", "-shortest", str(final)])
     # SRT from the caption pages (by spoken words).
     lines = []
     n = 1
@@ -256,7 +386,7 @@ def mux(sb: dict, tl: list[dict], video: Path) -> Path:
 
         lines.append(f"{n}\n{ts(a)} --> {ts(b)}\n{text}\n")
         n += 1
-    (OUT / "agenttrust-explainer.srt").write_text("\n".join(lines), encoding="utf-8")
+    (OUT / sb.get("output", "sara-explainer.mp4")).with_suffix(".srt").write_text("\n".join(lines), encoding="utf-8")
     return final
 
 

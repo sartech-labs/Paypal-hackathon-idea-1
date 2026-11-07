@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
 
+from server.core.agent_identity import verify_request
 from server.dependencies import AppContainer, get_container
 from server.schemas import SessionStatus
+from server.services.origin_proxy import OriginError
 
 router = APIRouter(tags=["Gateway"])
 
@@ -43,7 +46,47 @@ async def _handle_gateway_request(
 
     # 1. No Authorization header -> Issue HTTP 402 Payment Required challenge
     if authorization is None:
-        candidate_crawler_id = x_crawler_id or crawler_id_query
+        settings = container.settings
+        identity = verify_request(
+            request.headers, request.method, request.headers.get("host", ""), request.url.path, container.agent_directory
+        )
+        identity_error = None
+        if identity.signed and not identity.verified:
+            identity_error = ("INVALID_SIGNATURE", identity.error or "The request signature did not verify.")
+        elif not identity.verified and settings.require_signed_agents:
+            identity_error = ("SIGNATURE_REQUIRED", "This site only admits agents that sign their requests (Web Bot Auth).")
+        if identity_error:
+            await container.audit_logger.log_event(
+                event_type="AGENT_IDENTITY_REJECTED", crawler_id=x_crawler_id or crawler_id_query, path=raw_subpath,
+                method=request.method, allowed=False, reason_code=identity_error[0],
+                policy_version=container.site_config.policy_version, payment_mode=container.payment_provider.mode.value,
+                details={"keyid": identity.keyid, "http_status": 401},
+            )
+            return JSONResponse(status_code=401, content={"error": "invalid_agent_identity", "reason_code": identity_error[0], "message": identity_error[1]})
+
+        multiplier = None
+        identity_info = identity.public()
+        identity_info["standing"] = "unverified"
+        candidate_crawler_id = identity.crawler_id or x_crawler_id or crawler_id_query
+        if identity.verified:
+            record = await container.deposit_manager.agent_record(identity.crawler_id or "")
+            identity_info["record"] = record
+            if record["forfeited"] >= settings.refuse_after_forfeits:
+                await container.audit_logger.log_event(
+                    event_type="AGENT_REFUSED", crawler_id=identity.crawler_id, path=raw_subpath, method=request.method,
+                    allowed=False, reason_code="AGENT_REFUSED", policy_version=container.site_config.policy_version,
+                    payment_mode=container.payment_provider.mode.value, details={**record, "http_status": 403},
+                )
+                return JSONResponse(status_code=403, content={
+                    "error": "agent_refused", "reason_code": "AGENT_REFUSED",
+                    "message": f"This agent has had {record['forfeited']} deposits kept for breaking the rules and is no longer admitted.",
+                })
+            if record["forfeited"]:
+                identity_info["standing"], multiplier = "flagged", settings.flagged_agent_multiplier
+            elif record["clean"]:
+                identity_info["standing"], multiplier = "trusted", Decimal("1") - settings.trusted_agent_discount
+            else:
+                identity_info["standing"] = "verified"
         try:
             resolved_crawler_id = container.identity_service.resolve_or_generate_crawler_id(
                 candidate_crawler_id
@@ -61,6 +104,8 @@ async def _handle_gateway_request(
             crawler_id=resolved_crawler_id,
             requested_path=raw_subpath,
             challenge_ttl_seconds=container.site_config.challenge_ttl_seconds,
+            multiplier=multiplier,
+            identity=identity_info,
         )
         await container.deposit_manager.register_challenge(challenge_record)
         await container.audit_logger.log_event(
@@ -78,6 +123,8 @@ async def _handle_gateway_request(
                 "currency": challenge_record.currency,
                 "pricing_tier": challenge_record.pricing_tier,
                 "http_status": 402,
+                "agent_standing": identity_info["standing"],
+                "verified_agent": identity_info.get("agent"),
             },
         )
         return JSONResponse(
@@ -217,23 +264,38 @@ async def _handle_gateway_request(
             },
         )
 
-    # 7. Serve authorized content from ContentService
+    sara_headers = {
+        "X-SARA-Session-Id": session.session_id,
+        "X-SARA-Policy-Version": decision.policy_version,
+        "X-SARA-Remaining-Budget": str(decision.remaining_session_budget),
+        "X-SARA-Remaining-Window": str(decision.remaining_window_requests),
+        **({"X-SARA-Pricing-Tier": resource_tier.tier_id} if resource_tier else {}),
+    }
+
+    # 7a. Reverse-proxy mode: forward the allowed request to the origin website.
+    if container.origin_proxy is not None:
+        try:
+            origin = await container.origin_proxy.fetch(decision.normalized_path, request.url.query)
+        except OriginError as exc:
+            return JSONResponse(status_code=502, content={"error": "origin_unavailable", "message": str(exc)})
+        return Response(
+            content=origin.body,
+            status_code=origin.status_code,
+            media_type=origin.content_type,
+            headers={**origin.headers, **sara_headers},
+        )
+
+    # 7b. Serve authorized content from ContentService
     page = container.content_service.get_authorized_content(decision)
     return Response(
         content=page.body,
         status_code=200,
         media_type=page.content_type,
-        headers={
-            "X-AgentTrust-Session-Id": session.session_id,
-            "X-AgentTrust-Policy-Version": decision.policy_version,
-            "X-AgentTrust-Remaining-Budget": str(decision.remaining_session_budget),
-            "X-AgentTrust-Remaining-Window": str(decision.remaining_window_requests),
-            **({"X-AgentTrust-Pricing-Tier": resource_tier.tier_id} if resource_tier else {}),
-        },
+        headers=sara_headers,
     )
 
 
-@router.get("/gateway", summary="Access root protected content through the AgentTrust gateway")
+@router.get("/gateway", summary="Access root protected content through the SARA gateway")
 async def gateway_root(
     request: Request,
     container: AppContainer = Depends(get_container),
@@ -253,7 +315,7 @@ async def gateway_root(
 
 @router.get(
     "/gateway/{path:path}",
-    summary="Access protected website paths through the AgentTrust gateway",
+    summary="Access protected website paths through the SARA gateway",
 )
 async def gateway_path(
     path: str,

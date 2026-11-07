@@ -1,4 +1,4 @@
-"""Record the live AgentTrust demo for the explainer video.
+"""Record the live SARA demo for the explainer video.
 
 Drives a real browser (Playwright, 1536x864) against a running gateway, answers the
 agent's approval prompts like a person would, and writes:

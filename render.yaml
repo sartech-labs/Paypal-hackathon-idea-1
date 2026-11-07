@@ -1,4 +1,4 @@
-# Render Blueprint for a public AgentTrust demo (https://render.com/docs/blueprint-spec).
+# Render Blueprint for a public SARA demo (https://render.com/docs/blueprint-spec).
 # Render prompts for the `sync: false` secrets when the Blueprint is first created.
 # APP_PUBLIC_URL is not needed: the app falls back to Render's RENDER_EXTERNAL_URL.
 services:
@@ -36,7 +36,8 @@ services:
       - key: PAYPAL_SANDBOX_AUTOPAY
         value: "true"
       - key: DEPOSIT_SETTLEMENT
-        value: refund
+        # Holds are voided for honest agents, so they cost no PayPal fee.
+        value: authorization
       - key: PAYPAL_CLIENT_ID
         sync: false
       - key: PAYPAL_CLIENT_SECRET

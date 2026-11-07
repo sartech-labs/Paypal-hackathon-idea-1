@@ -1,4 +1,4 @@
-# AgentTrust gateway: FastAPI app, live demo, publisher console, crawler CLIs, and
+# SARA gateway: FastAPI app, live demo, publisher console, crawler CLIs, and
 # PayPal's MCP server (Node.js) for the read-only PayPal assistant.
 
 # PayPal MCP server (@paypal/mcp), installed from the pinned lockfile.

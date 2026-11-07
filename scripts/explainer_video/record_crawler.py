@@ -1,4 +1,4 @@
-"""Record the crawler demo page: a rogue scraper hits the AgentTrust gateway live.
+"""Record the crawler demo page: a rogue scraper hits the SARA gateway live.
 
 It pays the refundable deposit through PayPal, then tries /admin, private data, a path trick and
 request bursts; the gateway answers 403/429, and the deposit is kept at the end.

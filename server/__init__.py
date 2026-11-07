@@ -1,4 +1,4 @@
-"""AgentTrust backend package."""
+"""SARA backend package."""
 
 __version__ = "0.1.0"
 

@@ -1,204 +1,254 @@
 {
-  "title": "AgentTrust: a gateway that gets websites ready for AI agents",
+  "title": "SARA: good agents in, bad agents pay",
   "voice": "marin",
-  "instructions": "Voice: a confident, warm product-launch narrator. Pace: brisk and energetic but clear, like a polished startup demo video. Short natural pauses at full stops. Slight emphasis on the numbers and on the product name AgentTrust.",
+  "instructions": "Voice: a confident, warm product-launch narrator. Pace: brisk and energetic but clear, like a polished startup demo video. Short natural pauses at full stops. Slight emphasis on the numbers and on the product name SARA.",
   "scenes": [
     {
-      "id": "s01",
+      "id": "h01",
       "theme": "paper",
-      "chapter": "// 00 — the agentic era",
-      "vo": "Your website has new visitors: AI agents. They crawl, shop, and subscribe for people. But your site was built for humans.",
-      "caption": "Your website has new visitors: *AI agents.* / They crawl, shop, and subscribe for people. / But your site was built for *humans.*",
+      "chapter": "// 00 — the agentic web",
+      "vo": "One AI bot hit a single website 39,000 times in one minute. That's 650 requests every second.",
+      "caption": "One AI bot hit a single website *39,000 times* in one minute. / That's *650 requests* every second.",
       "visual": {
-        "type": "orbit",
-        "core": "your<br>website",
-        "chips": [
-          {
-            "text": "🕷️ crawl",
-            "cue": "crawl"
-          },
-          {
-            "text": "🛒 shop",
-            "cue": "shop"
-          },
-          {
-            "text": "🔁 subscribe",
-            "cue": "subscribe"
-          },
-          {
-            "text": "🚧 built for humans",
-            "cue": "humans"
-          }
-        ]
-      }
-    },
-    {
-      "id": "s02",
-      "theme": "paper",
-      "chapter": "// 01 — the website's problem",
-      "counter": {
-        "label": "PROBLEMS",
-        "value": "1"
+        "type": "flood",
+        "value": 39000,
+        "cue": "39,000",
+        "countDur": 2.4,
+        "unit": "requests in *one minute*",
+        "botLabel": "One AI bot",
+        "siteLabel": "One website",
+        "source": "Source: Fastly, reported by The Register, August 2025"
       },
-      "vo": "Problem one: agents take, but don't pay. OpenAI crawls about 1,700 pages for every visitor it sends back. Anthropic: 73,000.",
-      "caption": "Problem one: agents *take, but don't pay.* / OpenAI crawls about 1,700 pages for every visitor it sends back. Anthropic: *73,000.*",
-      "visual": {
-        "type": "bars",
-        "title": "Pages crawled for every visitor sent back",
-        "source": "Source: Cloudflare crawl-to-referral data, 2025",
-        "items": [
-          {
-            "text": "Google",
-            "value": 14,
-            "cue": "take"
-          },
-          {
-            "text": "OpenAI",
-            "value": 1700,
-            "cue": "OpenAI"
-          },
-          {
-            "text": "Anthropic",
-            "value": 73000,
-            "cue": "Anthropic"
-          }
-        ]
-      }
+      "act": 0
     },
     {
-      "id": "s03",
+      "id": "h02",
       "theme": "paper",
-      "chapter": "// 01 — the website's problem",
-      "counter": {
-        "label": "PROBLEMS",
-        "value": "2"
-      },
-      "vo": "Two: they don't have to follow your rules. Robots.txt is only a request. Bots probe admin pages and private data, and burst requests that load your servers.",
-      "caption": "Two: they don't have to *follow your rules.* Robots.txt is only a *request.* / Bots probe admin pages and private data, and burst requests that load your servers.",
-      "visual": {
-        "type": "walls",
-        "no": "✕ nothing stops it",
-        "items": [
-          {
-            "icon": "📜",
-            "text": "robots.txt ignored",
-            "sub": "a polite request, not a rule",
-            "cue": "request"
-          },
-          {
-            "icon": "🔓",
-            "text": "/admin, private data",
-            "sub": "probed by scrapers",
-            "cue": "admin"
-          },
-          {
-            "icon": "🌊",
-            "text": "Request bursts",
-            "sub": "your servers pay the bill",
-            "cue": "burst"
-          }
-        ]
-      }
-    },
-    {
-      "id": "s04",
-      "theme": "paper",
-      "chapter": "// 01 — the website's problem",
-      "counter": {
-        "label": "PROBLEMS",
-        "value": "3"
-      },
-      "vo": "Three: good agents can't pay you. Logins, CAPTCHAs, and checkout forms are built for people.",
-      "caption": "Three: good agents *can't pay you.* / Logins, CAPTCHAs, and checkout forms are built for *people.*",
-      "visual": {
-        "type": "walls",
-        "no": "✕ no sale",
-        "items": [
-          {
-            "icon": "🔐",
-            "text": "Logins",
-            "sub": "accounts for people",
-            "cue": "Logins"
-          },
-          {
-            "icon": "🧩",
-            "text": "CAPTCHAs",
-            "sub": "prove you're human",
-            "cue": "CAPTCHAs"
-          },
-          {
-            "icon": "🧾",
-            "text": "Checkout forms",
-            "sub": "built for eyes and clicks",
-            "cue": "checkout"
-          }
-        ]
-      }
-    },
-    {
-      "id": "s05",
-      "theme": "paper",
-      "chapter": "// 01 — the website's problem",
-      "vo": "So today, you block every agent and lose the good ones, or let them all in, and get scraped.",
-      "caption": "So today, you *block every agent* and lose the good ones, / or *let them all in,* and get scraped.",
+      "chapter": "// 00 — the agentic web",
+      "vo": "AI agents are now your website's busiest visitors. Most are good. Some are not.",
+      "caption": "AI agents are now your website's *busiest visitors.* / Most are *good.* Some are *not.*",
       "visual": {
         "type": "compare",
         "left": {
-          "title": "🚫 Block them all",
-          "cue": "block",
-          "stamp": "LOST SALES",
-          "stampCue": "lose",
+          "title": "✓ Good agents",
+          "mark": "ok",
+          "cue": "good",
           "items": [
             {
-              "text": "CAPTCHAs and IP blocks",
-              "cue": "block"
+              "text": "Search crawler: sends you visitors",
+              "ok": true,
+              "cue": "good"
             },
             {
-              "text": "Good agents locked out",
-              "cue": "good"
+              "text": "Shopping assistant: wants to buy",
+              "ok": true,
+              "cue": "Some"
+            },
+            {
+              "text": "Research agent: reads and cites you",
+              "ok": true,
+              "cue": "are"
             }
           ]
         },
         "right": {
-          "title": "😬 Let them all in",
-          "cue": "let",
-          "stamp": "SCRAPED",
-          "stampCue": "scraped",
+          "title": "✕ Bad agents",
+          "cue": "not",
           "items": [
             {
-              "text": "Content taken for free",
-              "cue": "let"
+              "text": "Flood your servers",
+              "cue": "not"
             },
             {
-              "text": "Rules ignored",
-              "cue": "all"
+              "text": "Probe /admin and private data",
+              "cue": 3.6
+            },
+            {
+              "text": "Ignore your rules",
+              "cue": 3.9
             }
           ]
         }
-      }
+      },
+      "act": 0
+    },
+    {
+      "id": "h03",
+      "theme": "paper",
+      "chapter": "// 01 — bad agents ignore your rules",
+      "counter": {
+        "label": "PROBLEMS",
+        "value": "1"
+      },
+      "vo": "Bad agents ignore your rules. Sites list them in robots.txt, the web's standard rule file, but nothing enforces it.",
+      "caption": "Bad agents *ignore your rules.* Sites list them in robots.txt, the web's standard rule file, / but *nothing enforces it.*",
+      "visual": {
+        "type": "walls",
+        "items": [
+          {
+            "icon": "📜",
+            "text": "Disallow: /admin",
+            "sub": "your robots.txt says",
+            "no": "✕ probed anyway",
+            "cue": "robots.txt"
+          },
+          {
+            "icon": "🔒",
+            "text": "Disallow: /private",
+            "sub": "customer data",
+            "no": "✕ probed anyway",
+            "cue": "standard"
+          },
+          {
+            "icon": "⏱️",
+            "text": "Crawl-delay: 4s",
+            "sub": "slow down, please",
+            "no": "✕ ignored",
+            "cue": "nothing"
+          }
+        ]
+      },
+      "act": 0
+    },
+    {
+      "id": "h04",
+      "theme": "paper",
+      "chapter": "// 02 — bad agents flood your servers",
+      "counter": {
+        "label": "PROBLEMS",
+        "value": "2"
+      },
+      "vo": "They flood your servers. Wikimedia's bandwidth for media jumped 50 percent. Read the Docs paid over 5,000 dollars for one crawler's traffic.",
+      "caption": "They *flood your servers.* Wikimedia's bandwidth for media jumped *50 percent.* / Read the Docs paid over *5,000 dollars* for one crawler's traffic.",
+      "visual": {
+        "type": "tiles",
+        "title": "What bad agents cost real websites",
+        "note": "Sources: Fastly (Aug 2025), Wikimedia Foundation (Apr 2025), Read the Docs (Jul 2024)",
+        "items": [
+          {
+            "icon": "🌊",
+            "value": "39,000/min",
+            "label": "requests from one AI bot to one site",
+            "api": "Fastly",
+            "cue": "flood"
+          },
+          {
+            "icon": "📈",
+            "value": "+50%",
+            "label": "Wikimedia media bandwidth, driven by bots",
+            "api": "Wikimedia",
+            "cue": "Wikimedia"
+          },
+          {
+            "icon": "💸",
+            "value": "$5,000+",
+            "label": "bandwidth bill from one crawler (73 TB)",
+            "api": "Read the Docs",
+            "cue": "Read"
+          }
+        ]
+      },
+      "act": 0
+    },
+    {
+      "id": "h05",
+      "theme": "paper",
+      "chapter": "// 03 — you can't tell them apart",
+      "counter": {
+        "label": "PROBLEMS",
+        "value": "3"
+      },
+      "vo": "And here's the real problem. To your website, a good agent and a bad agent look exactly the same.",
+      "caption": "And here's the *real problem.* / To your website, a good agent and a bad agent look *exactly the same.*",
+      "visual": {
+        "type": "lineup",
+        "title": "Which of these will behave?",
+        "items": [
+          {
+            "inCue": "real"
+          },
+          {
+            "inCue": "problem"
+          },
+          {
+            "inCue": "good"
+          },
+          {
+            "inCue": "bad"
+          }
+        ]
+      },
+      "act": 0
+    },
+    {
+      "id": "h06",
+      "theme": "paper",
+      "chapter": "// 03 — you can't tell them apart",
+      "vo": "So sites block them all, and lose the good ones too: the search traffic, the shoppers, the sales.",
+      "caption": "So sites *block them all,* and lose the *good ones too:* / the search traffic, the shoppers, the sales.",
+      "visual": {
+        "type": "walls",
+        "no": "✕ blocked too",
+        "items": [
+          {
+            "icon": "🔎",
+            "text": "Search crawler",
+            "sub": "your visitors",
+            "cue": "search"
+          },
+          {
+            "icon": "🛒",
+            "text": "Shopping assistant",
+            "sub": "your customers",
+            "cue": "shoppers"
+          },
+          {
+            "icon": "💰",
+            "text": "Agent purchases",
+            "sub": "your sales",
+            "cue": "sales"
+          }
+        ]
+      },
+      "act": 0
+    },
+    {
+      "id": "h07",
+      "theme": "midnight",
+      "chapter": "// 04 — what if",
+      "counter": null,
+      "vo": "What if every agent had to prove it would behave, with its own money on the line?",
+      "caption": "What if every agent had to *prove it would behave,* / with its *own money* on the line?",
+      "visual": {
+        "type": "headline",
+        "meta": "THE IDEA",
+        "title": "Make every agent put <mark>money on the line</mark>. Behave, get it back. Break the rules, lose it.",
+        "cue": "What"
+      },
+      "act": 1
     },
     {
       "id": "s06",
       "theme": "midnight",
-      "chapter": "// 02 — the solution",
-      "counter": null,
-      "vo": "AgentTrust is a third option: a gateway in front of your website, backed by PayPal.",
-      "caption": "AgentTrust is a *third option:* / a *gateway* in front of your website, *backed by PayPal.*",
+      "chapter": "// 05 — the solution",
+      "vo": "That's SARA: Safe And Responsible Agents. A gateway in front of your website, backed by PayPal.",
+      "caption": "That's *SARA:* Safe And Responsible Agents. / A *gateway* in front of your website, *backed by PayPal.*",
       "visual": {
         "type": "reveal",
-        "title": "Agent*Trust*",
-        "sub": "The agent gateway for websites",
-        "pill": "💳 Backed by PayPal",
-        "cue": "AgentTrust",
+        "title": "*SARA*",
+        "sub": "*S*afe *A*nd *R*esponsible *A*gents",
+        "pill": "💳 Backed by PayPal · by Sartech Labs",
+        "cue": "SARA",
         "pillCue": "backed"
-      }
+      },
+      "act": 1
     },
     {
       "id": "s07",
       "theme": "midnight",
-      "chapter": "// 02 — how the gateway works",
-      "vo": "Every agent comes through it. It publishes your rules and prices, answers with a four-oh-two, takes a refundable PayPal deposit, checks every request, then refunds or keeps the deposit. Your site doesn't change.",
-      "caption": "Every agent comes *through it.* It publishes your *rules and prices,* answers with a 402, / takes a *refundable PayPal deposit,* checks *every request,* / then refunds or keeps the deposit. Your site *doesn't change.*",
+      "chapter": "// 05 — how the gateway works",
+      "vo": "Every agent comes through it. The gateway shows your rules, takes a small refundable deposit through PayPal, and checks every single request. Your site doesn't change.",
+      "caption": "Every agent comes *through it.* The gateway shows your *rules,* / takes a small *refundable deposit* through PayPal, and checks *every single request.* Your site doesn't change.",
       "visual": {
         "type": "gateway",
         "cue": "through",
@@ -210,33 +260,33 @@
             "cue": "Every"
           },
           {
-            "text": "🧑‍💻 Shopping assistant",
+            "text": "🛒 Shopping assistant",
             "cue": "agent"
           },
           {
-            "text": "🧪 AI researcher",
+            "text": "🧪 Research agent",
             "cue": "comes"
           },
           {
             "text": "🏴 Rogue scraper",
             "bad": true,
-            "cue": 1.3
+            "cue": 1.1
           }
         ],
         "steps": [
           {
-            "text": "Publishes rules + prices",
-            "sub": "policy · agent catalog",
-            "cue": "publishes"
+            "text": "Shows your rules + prices",
+            "sub": "robots.txt · agent catalog",
+            "cue": "rules"
           },
           {
-            "text": "HTTP 402: how to pay",
+            "text": "HTTP 402: pay to enter",
             "sub": "before any content",
-            "cue": "402"
+            "cue": "takes"
           },
           {
             "text": "Refundable PayPal deposit",
-            "sub": "tiered $1–5",
+            "sub": "$1–5, by content tier",
             "cue": "refundable"
           },
           {
@@ -247,73 +297,95 @@
           {
             "text": "Refund it, or keep it",
             "sub": "decided by behaviour",
-            "cue": "refunds"
+            "cue": "single"
           }
         ],
         "siteTitle": "Your website",
-        "siteSub": "pages, media, members, store: unchanged"
-      }
+        "siteSub": "pages, media, members, store: unchanged",
+        "title": "*SARA* gateway"
+      },
+      "act": 1
     },
     {
       "id": "s08",
       "theme": "midnight",
-      "chapter": "// 02 — how the gateway works",
-      "vo": "Honest agents get the deposit back, so following your rules costs them nothing. Rule-breakers are blocked on the spot, and lose it.",
-      "caption": "Honest agents get the deposit back, so following your rules *costs them nothing.* / Rule-breakers are *blocked on the spot,* and lose it.",
+      "chapter": "// 05 — now you can tell them apart",
+      "vo": "Now behaviour tells them apart. Good agents follow the rules and get every cent back. Bad agents are blocked, and lose it.",
+      "caption": "Now *behaviour* tells them apart. Good agents follow the rules and get *every cent back.* / Bad agents are *blocked,* and lose it.",
       "visual": {
-        "type": "compare",
-        "left": {
-          "title": "✓ Honest agent",
-          "mark": "ok",
-          "cue": "Honest",
-          "items": [
-            {
-              "text": "Allowed pages, polite pace",
-              "ok": true,
-              "cue": "following"
-            },
-            {
-              "text": "Deposit refunded in full",
-              "ok": true,
-              "cue": "costs"
-            }
-          ]
-        },
-        "right": {
-          "title": "✕ Rogue scraper",
-          "cue": "Rule-breakers",
-          "items": [
-            {
-              "text": "403 / 429: blocked on the spot",
-              "cue": "blocked"
-            },
-            {
-              "text": "Deposit kept by the site",
-              "cue": "lose"
-            }
-          ]
-        }
-      }
+        "type": "lineup",
+        "reveal": true,
+        "items": [
+          {
+            "good": true,
+            "label": "Search crawler",
+            "sub": "followed the rules",
+            "badge": "$1 BACK",
+            "cue": "Good"
+          },
+          {
+            "good": true,
+            "label": "Shopping assistant",
+            "sub": "followed the rules",
+            "badge": "$1 BACK",
+            "cue": "follow"
+          },
+          {
+            "good": true,
+            "label": "Research agent",
+            "sub": "followed the rules",
+            "badge": "$1 BACK",
+            "cue": "every"
+          },
+          {
+            "good": false,
+            "label": "Rogue scraper",
+            "sub": "/admin, private data",
+            "badge": "403 · KEPT",
+            "cue": "Bad"
+          }
+        ]
+      },
+      "act": 1
+    },
+    {
+      "id": "s08b",
+      "theme": "midnight",
+      "chapter": "// 05 — and the flood?",
+      "vo": "And that flood of 39,000 requests a minute? Cut off at the rate limit, and it costs the bot its deposit.",
+      "caption": "And that flood of *39,000 requests* a minute? / *Cut off* at the rate limit, and it *costs the bot* its deposit.",
+      "visual": {
+        "type": "flood",
+        "blocked": true,
+        "value": 39000,
+        "cue": "flood",
+        "countDur": 1.0,
+        "shieldCue": "Cut",
+        "unit": "requests a minute",
+        "botLabel": "The same bot",
+        "siteLabel": "Your website"
+      },
+      "act": 1
     },
     {
       "id": "g01",
       "theme": "midnight",
-      "chapter": "// 02 — live: a rogue scraper vs the gateway",
-      "vo": "A rogue scraper, live on the PayPal Sandbox. It pays the deposit, then goes for admin pages and floods requests. Forbidden. Too many requests.",
-      "caption": "A rogue scraper, live on the *PayPal Sandbox.* It pays the deposit, / then goes for admin pages and floods requests. *Forbidden.* *Too many requests.*",
+      "chapter": "// 05 — live: a bad agent vs the gateway",
+      "vo": "A bad agent, live on the PayPal Sandbox. It pays, then goes for admin pages and floods requests. Forbidden. Too many requests.",
+      "caption": "A bad agent, live on the *PayPal Sandbox.* It pays, / then goes for admin pages and floods requests. *Forbidden.* *Too many requests.*",
       "visual": {
         "type": "rec",
         "src": "rec_crawler/crawler.webm",
-        "from": 5.4,
-        "to": 28.4,
-        "url": "agenttrust.local / Crawler demo · the gateway's view",
+        "from": 8.08,
+        "to": 31.15,
+        "url": "sentinel-news.demo / Crawler demo · the gateway's view",
         "callouts": [
           {
             "text": "402 → $1 PayPal deposit",
             "x": 1150,
             "y": 330,
             "cue": "pays",
-            "until": 6.5
+            "until": 7.0
           },
           {
             "text": "403 /admin · 429 bursts",
@@ -321,21 +393,36 @@
             "y": 330,
             "cue": "Forbidden"
           }
+        ],
+        "cam": [
+          {
+            "cue": "pays",
+            "x": 0.3,
+            "y": 0.4,
+            "s": 1.3
+          },
+          {
+            "cue": "Forbidden",
+            "x": 0.3,
+            "y": 0.72,
+            "s": 1.45
+          }
         ]
-      }
+      },
+      "act": 1
     },
     {
       "id": "g02",
       "theme": "midnight",
-      "chapter": "// 02 — live: a rogue scraper vs the gateway",
-      "vo": "When it's done, the site keeps the deposit, and AI explains why, from the audit log.",
-      "caption": "When it's done, the site *keeps the deposit,* and AI explains why, from the *audit log.*",
+      "chapter": "// 05 — live: a bad agent vs the gateway",
+      "vo": "The site keeps its deposit, and AI explains why, from the audit log.",
+      "caption": "The site *keeps its deposit,* and AI explains why, from the *audit log.*",
       "visual": {
         "type": "rec",
         "src": "rec_crawler/crawler.webm",
-        "from": 28.4,
-        "to": 36.4,
-        "url": "agenttrust.local / Crawler demo · the gateway's view",
+        "from": 31.15,
+        "to": 39.21,
+        "url": "sentinel-news.demo / Crawler demo · the gateway's view",
         "callouts": [
           {
             "text": "$1 deposit kept",
@@ -343,15 +430,24 @@
             "y": 330,
             "cue": "keeps"
           }
+        ],
+        "cam": [
+          {
+            "cue": "keeps",
+            "x": 0.8,
+            "y": 0.35,
+            "s": 1.45
+          }
         ]
-      }
+      },
+      "act": 1
     },
     {
       "id": "s09",
       "theme": "midnight",
-      "chapter": "// 02 — sell to agents, too",
-      "vo": "The same gateway lets you sell to agents: pay-per-access content, subscriptions, and products, through PayPal.",
-      "caption": "The same gateway lets you *sell to agents:* / pay-per-access content, subscriptions, and products, through *PayPal.*",
+      "chapter": "// 05 — then, sell to good agents",
+      "vo": "And once you can trust agents, you can sell to them: pay-per-access content, subscriptions, and products, through PayPal.",
+      "caption": "And once you can *trust agents,* you can *sell to them:* / pay-per-access content, subscriptions, and products, through *PayPal.*",
       "visual": {
         "type": "offers",
         "items": [
@@ -361,7 +457,7 @@
             "sub": "refundable, tiered",
             "price": "$1–5",
             "api": "Orders v2 + refunds",
-            "cue": "gateway"
+            "cue": "trust"
           },
           {
             "icon": "▶",
@@ -385,23 +481,24 @@
             "sub": "digital and shipped goods",
             "price": "$12–25",
             "api": "Itemized orders",
-            "cue": "product"
+            "cue": "products"
           }
         ]
-      }
+      },
+      "act": 1
     },
     {
       "id": "wd1",
       "theme": "midnight",
-      "chapter": "// 03 — the owner's dashboard",
+      "chapter": "// 06 — the owner's dashboard",
       "vo": "The owner sees it all in one dashboard. Every deposit, returned or kept, with the reason.",
       "caption": "The owner sees it all in *one dashboard.* / Every deposit, *returned or kept,* with the reason.",
       "visual": {
         "type": "rec",
         "src": "rec_owner/owner.webm",
-        "from": 3.0,
-        "to": 10.6,
-        "url": "agenttrust.local / Publisher console · Overview",
+        "from": 2.79,
+        "to": 10.25,
+        "url": "sentinel-news.demo / Publisher console · Overview",
         "badge": "LIVE · owner's view",
         "callouts": [
           {
@@ -410,21 +507,30 @@
             "y": 470,
             "cue": "returned"
           }
+        ],
+        "cam": [
+          {
+            "cue": "returned",
+            "x": 0.32,
+            "y": 0.62,
+            "s": 1.45
+          }
         ]
-      }
+      },
+      "act": 2
     },
     {
       "id": "wd2",
       "theme": "midnight",
-      "chapter": "// 03 — the owner's dashboard",
+      "chapter": "// 06 — the owner's dashboard",
       "vo": "Every blocked request, in a security log: disallowed paths, path tricks, and rate-limit bursts.",
       "caption": "Every *blocked request,* in a security log: / disallowed paths, path tricks, and rate-limit bursts.",
       "visual": {
         "type": "rec",
         "src": "rec_owner/owner.webm",
-        "from": 11.2,
-        "to": 22.3,
-        "url": "agenttrust.local / Publisher console · Security",
+        "from": 10.85,
+        "to": 22.36,
+        "url": "sentinel-news.demo / Publisher console · Security",
         "badge": "LIVE · owner's view",
         "callouts": [
           {
@@ -433,21 +539,30 @@
             "y": 330,
             "cue": "security"
           }
+        ],
+        "cam": [
+          {
+            "cue": "Every",
+            "x": 0.5,
+            "y": 0.42,
+            "s": 1.3
+          }
         ]
-      }
+      },
+      "act": 2
     },
     {
       "id": "wd3",
       "theme": "midnight",
-      "chapter": "// 03 — the owner's dashboard",
+      "chapter": "// 06 — the owner's dashboard",
       "vo": "Every session and every sale, in AG Grid tables to filter, sort, and export, with revenue by payment type.",
       "caption": "Every session and every sale, in *AG Grid* tables to filter, sort, and export, / with *revenue by payment type.*",
       "visual": {
         "type": "rec",
         "src": "rec_owner/owner.webm",
-        "from": 23.6,
-        "to": 40.4,
-        "url": "agenttrust.local / Publisher console · Operations, Commerce",
+        "from": 23.66,
+        "to": 40.25,
+        "url": "sentinel-news.demo / Publisher console · Operations, Commerce",
         "badge": "LIVE · owner's view",
         "callouts": [
           {
@@ -457,20 +572,21 @@
             "cue": "revenue"
           }
         ]
-      }
+      },
+      "act": 2
     },
     {
       "id": "wd4",
       "theme": "midnight",
-      "chapter": "// 03 — the owner's dashboard",
+      "chapter": "// 06 — the owner's dashboard",
       "vo": "Any payment can be checked against PayPal's own records, through PayPal's MCP server. Every field matches.",
       "caption": "Any payment can be checked against *PayPal's own records,* through PayPal's MCP server. *Every field matches.*",
       "visual": {
         "type": "rec",
         "src": "rec_owner/owner.webm",
-        "from": 40.4,
-        "to": 65.0,
-        "url": "agenttrust.local / Publisher console · Verify with PayPal",
+        "from": 40.25,
+        "to": 63.32,
+        "url": "sentinel-news.demo / Publisher console · Verify with PayPal",
         "badge": "LIVE · PayPal MCP",
         "callouts": [
           {
@@ -479,70 +595,83 @@
             "y": 330,
             "cue": "Every"
           }
+        ],
+        "cam": [
+          {
+            "cue": "Every",
+            "x": 0.42,
+            "y": 0.4,
+            "s": 1.5
+          }
         ]
-      }
+      },
+      "act": 2
     },
     {
       "id": "wd5",
       "theme": "midnight",
-      "chapter": "// 03 — the owner's dashboard",
+      "chapter": "// 06 — the owner's dashboard",
       "vo": "And AG Studio dashboards on all agent activity.",
       "caption": "And *AG Studio* dashboards on all agent activity.",
       "visual": {
         "type": "rec",
         "src": "rec_owner/owner.webm",
-        "from": 68.0,
-        "to": 77.3,
-        "url": "agenttrust.local / Publisher console · Analytics",
+        "from": 66.6,
+        "to": 75.96,
+        "url": "sentinel-news.demo / Publisher console · Analytics",
         "badge": "LIVE · owner's view"
-      }
+      },
+      "act": 2
     },
     {
       "id": "ud1",
       "theme": "midnight",
-      "chapter": "// 04 — using an agent on these sites",
+      "chapter": "// 07 — using an agent on these sites",
       "vo": "Now, the person using an agent. I give mine a task, and a sixty-dollar budget.",
       "caption": "Now, the *person using an agent.* I give mine a *task,* and a $60 *budget.*",
       "visual": {
         "type": "rec",
         "src": "rec/demo.webm",
-        "from": 14.0,
-        "to": 29.5,
-        "url": "agenttrust.local / Agent studio · the person's view"
-      }
+        "from": 11.37,
+        "to": 19.56,
+        "url": "sentinel-news.demo / Agent studio · the person's view"
+      },
+      "act": 3
     },
     {
       "id": "ud2",
       "theme": "midnight",
-      "chapter": "// 04 — using an agent on these sites",
+      "chapter": "// 07 — using an agent on these sites",
       "vo": "It reads the site's rules, pays the one-dollar deposit through PayPal, and crawls within them.",
       "caption": "It reads the site's *rules,* pays the *$1 deposit* through PayPal, and crawls *within them.*",
       "visual": {
         "type": "rec",
         "src": "rec/demo.webm",
-        "from": 30.5,
-        "to": 72.0,
-        "url": "agenttrust.local / Agent studio · the person's view"
-      }
+        "from": 30.56,
+        "to": 75.31,
+        "url": "sentinel-news.demo / Agent studio · the person's view"
+      },
+      "act": 3
     },
     {
       "id": "ud3",
       "theme": "midnight",
-      "chapter": "// 04 — using an agent on these sites",
+      "chapter": "// 07 — using an agent on these sites",
       "vo": "Purchases stay inside my mandate. A two-dollar video goes through. A subscription asks me: I decline. The twelve-dollar e-book: I approve.",
       "caption": "Purchases stay inside *my mandate.* A $2 video goes through. / A subscription asks me: I *decline.* The $12 e-book: I *approve.*",
       "visual": {
         "type": "rec",
         "src": "rec/demo.webm",
-        "from": 78.5,
-        "to": 112.5,
-        "url": "agenttrust.local / Agent studio · the person's view"
-      }
+        "from": 82.02,
+        "to": 118.8,
+        "url": "sentinel-news.demo / Agent studio · the person's view"
+      },
+      "act": 3
     },
     {
       "id": "u04",
       "theme": "midnight",
-      "chapter": "// 04 — using an agent on these sites",
+      "chapter": "// 07 — using an agent on these sites",
       "vo": "A second AI checks every purchase against my request, so a hidden line on a page can't make it overspend.",
       "caption": "A second AI *checks every purchase* against my request, / so a *hidden line* on a page can't make it overspend.",
       "visual": {
@@ -572,177 +701,96 @@
           }
         ]
       },
-      "hold": 0
-    },
-    {
-      "id": "ud4",
-      "theme": "midnight",
-      "chapter": "// 04 — using an agent on these sites",
-      "vo": "My deposit comes back, with a PayPal reference for every payment.",
-      "caption": "My *deposit comes back,* with a *PayPal reference* for every payment.",
-      "visual": {
-        "type": "rec",
-        "src": "rec/demo.webm",
-        "from": 136.0,
-        "to": 153.5,
-        "url": "agenttrust.local / Agent studio · the person's view"
-      }
-    },
-    {
-      "id": "u05",
-      "theme": "midnight",
-      "chapter": "// 04 — any AI assistant",
-      "vo": "Any AI assistant can do the same, through the site's MCP storefront.",
-      "caption": "*Any AI assistant* can do the same, through the site's *MCP storefront.*",
-      "visual": {
-        "type": "term",
-        "rows": [
-          {
-            "fn": "discover_offers()",
-            "res": "Sentinel News · 3 items · 3 products · deposits",
-            "cue": "Any"
-          },
-          {
-            "fn": "quote_access(dataset)",
-            "res": "$4.00 · PayPal order 7XV82205GD233874T",
-            "cue": "assistant"
-          },
-          {
-            "fn": "pay_order(…)",
-            "res": "<span class=\"ok\">PAID</span> · capture 57T4671337494060N",
-            "cue": "same"
-          },
-          {
-            "fn": "open_paid_content(…)",
-            "res": "<span class=\"ok\">200</span> · agent_traffic_q3.csv unlocked",
-            "cue": "MCP"
-          }
-        ]
-      }
-    },
-    {
-      "id": "p01",
-      "theme": "midnight",
-      "chapter": "// 05 — why it's good for PayPal",
-      "vo": "For PayPal, every agent payment runs on PayPal: deposits, item sales, subscriptions, and orders.",
-      "caption": "For *PayPal,* every agent payment *runs on PayPal:* / deposits, item sales, subscriptions, and orders.",
-      "visual": {
-        "type": "tiles",
-        "title": "Every agent payment, on PayPal",
-        "note": "Live in the PayPal Sandbox today · webhooks verified · checked through the PayPal MCP server",
-        "items": [
-          {
-            "icon": "↺",
-            "value": "Deposits",
-            "label": "captured, then refunded or kept",
-            "api": "Orders v2 · Payments v2",
-            "cue": "deposits"
-          },
-          {
-            "icon": "▶",
-            "value": "Item sales",
-            "label": "pay-per-access for agents",
-            "api": "Orders v2",
-            "cue": "item"
-          },
-          {
-            "icon": "∞",
-            "value": "Subscriptions",
-            "label": "recurring, approved by a person",
-            "api": "Subscriptions v1",
-            "cue": "subscriptions"
-          },
-          {
-            "icon": "◫",
-            "value": "Products",
-            "label": "itemized orders, tracking",
-            "api": "Orders v2 · track",
-            "cue": "orders"
-          }
-        ]
-      }
+      "hold": 0,
+      "act": 3
     },
     {
       "id": "p02",
       "theme": "midnight",
-      "chapter": "// 05 — why it's good for PayPal",
-      "vo": "PayPal can offer AgentTrust as a package to every website: new merchants, and new volume from agents.",
-      "caption": "PayPal can offer AgentTrust as a *package* to every website: / *new merchants,* and *new volume* from agents.",
+      "chapter": "// 08 — why it's good for PayPal",
+      "vo": "For PayPal, every agent payment runs on PayPal. Agent Ready handles checkout; SARA handles the traffic. A package PayPal can offer every website.",
+      "caption": "For *PayPal,* every agent payment *runs on PayPal.* / *Agent Ready* handles checkout; SARA handles the *traffic.* / A *package* PayPal can offer every website.",
       "visual": {
         "type": "big3",
         "items": [
           {
+            "title": "💳 Every agent payment",
+            "sub": "deposits, items, subscriptions, orders: on PayPal",
+            "cue": "every"
+          },
+          {
+            "title": "🤝 With Agent Ready",
+            "sub": "Agent Ready: checkout · SARA: agent traffic",
+            "cue": "Agent"
+          },
+          {
             "title": "📦 A package",
-            "sub": "\"Agent-ready\" for any website, with PayPal built in",
+            "sub": "\"agent-ready\" for every website, PayPal built in",
             "cue": "package"
-          },
-          {
-            "title": "🏪 New merchants",
-            "sub": "every site that wants to sell to agents",
-            "cue": "merchants"
-          },
-          {
-            "title": "📈 New volume",
-            "sub": "payments from AI agents, a brand-new customer",
-            "cue": "volume"
           }
         ]
-      }
+      },
+      "act": 4
     },
     {
       "id": "c01",
       "theme": "midnight",
-      "chapter": "// one gateway, three winners",
-      "vo": "Websites stay in control, and get paid. Agents shop safely. And PayPal powers it.",
-      "caption": "*Websites* stay in control, and get paid. *Agents* shop safely. / And *PayPal* powers it.",
+      "chapter": "// good agents in, bad agents pay",
+      "vo": "Good agents get in. Bad agents pay. Websites stay in control.",
+      "caption": "*Good agents* get in. *Bad agents* pay. *Websites* stay in control.",
       "visual": {
-        "type": "triad",
-        "hub": "Agent*Trust*",
+        "type": "big3",
         "items": [
           {
-            "icon": "🌐",
-            "title": "Website owners",
-            "sub": "the gateway in front of the site",
-            "gets": "Rules enforced, revenue, one dashboard",
+            "title": "✓ Good agents",
+            "sub": "follow the rules, crawl for free, buy what they need",
+            "cue": "Good"
+          },
+          {
+            "title": "✕ Bad agents",
+            "sub": "blocked on the spot, lose their deposit",
+            "cue": "Bad"
+          },
+          {
+            "title": "🌐 Websites",
+            "sub": "in control, paid, every payment on PayPal",
             "cue": "Websites"
-          },
-          {
-            "icon": "🧑‍💻",
-            "title": "People",
-            "sub": "and their agents",
-            "gets": "Shop safely within a mandate",
-            "cue": "Agents"
-          },
-          {
-            "icon": "💳",
-            "title": "PayPal",
-            "sub": "the payment network",
-            "gets": "A new package and new volume",
-            "cue": "PayPal"
           }
         ]
-      }
+      },
+      "act": 4
     },
     {
       "id": "c02",
       "theme": "midnight",
-      "chapter": "// AgentTrust",
+      "chapter": "// SARA · Sartech Labs",
       "hold": 0.8,
-      "vo": "AgentTrust. Websites, ready for the agentic era. Backed by PayPal.",
+      "vo": "SARA, by Sartech Labs. Safe and responsible agents, backed by PayPal.",
       "caption": "",
       "visual": {
         "type": "end",
-        "title": "Agent*Trust*",
-        "sub": "The agent gateway for websites · backed by PayPal",
+        "title": "*SARA*",
+        "sub": "Safe And Responsible Agents · by Sartech Labs · backed by PayPal",
         "pills": [
           "Rules enforced",
-          "Paid by agents",
+          "Good agents in",
+          "Bad agents pay",
           "Owner dashboard",
-          "Safe agents",
           "PayPal inside"
         ],
         "repo": "github.com/sartech-labs/Paypal-hackathon-idea-1"
-      }
+      },
+      "act": 4
     }
+  ],
+  "brand": "SARA",
+  "brandPatch": false,
+  "output": "sara-explainer.mp4",
+  "acts": [
+    "The problem",
+    "The solution",
+    "Owner dashboard",
+    "Using agents",
+    "PayPal"
   ]
 }

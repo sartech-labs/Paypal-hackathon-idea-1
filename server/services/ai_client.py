@@ -1,4 +1,4 @@
-"""AI client wrappers shared by AgentTrust's publisher-side AI features.
+"""AI client wrappers shared by SARA's publisher-side AI features.
 
 Two providers implement the same TextGenerator interface:
 - Claude, through the Anthropic Python SDK (Messages API with structured outputs)
@@ -18,7 +18,7 @@ import openai
 
 from server.config import Settings
 
-logger = logging.getLogger("agenttrust.ai")
+logger = logging.getLogger("sara.ai")
 
 # Server-side refusal fallback: when the primary Claude model declines, the API re-runs
 # the request on Anthropic's recommended fallback model inside the same call.
@@ -364,7 +364,7 @@ class OpenAITextGenerator:
             request["text"] = {
                 "format": {
                     "type": "json_schema",
-                    "name": "agenttrust_output",
+                    "name": "sara_output",
                     "schema": json_schema,
                     "strict": True,
                 }

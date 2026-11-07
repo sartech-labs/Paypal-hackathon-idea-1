@@ -33,7 +33,7 @@ from server.core.quotas import HourlyQuota
 from server.core.security import utc_now_iso
 from server.schemas import DemoRunEvent, DemoRunResponse, PricingTier
 
-logger = logging.getLogger("agenttrust.demo")
+logger = logging.getLogger("sara.demo")
 
 # Default operator spending limit enforced by the crawler's toolbox. The gateway raises it
 # to its highest published price so every configured tier stays payable.
@@ -217,6 +217,8 @@ class DemoRunner:
         self._max_deposit = max_deposit
         self._critic_factory = critic_factory or build_llm_critic
         self._http_factory = http_factory or _default_http_factory
+        # Set by the app: signs the demo's well-behaved agents' requests (verified identity).
+        self.agent_signer: Optional[Any] = None
         self._llm_factory = llm_factory or _default_llm_factory
         self._sleep = sleep  # tests skip real waits; runs otherwise wait (interruptibly)
         self._quota = HourlyQuota(max_runs_per_hour)
@@ -260,6 +262,7 @@ class DemoRunner:
         max_per_purchase: Optional[str] = None,
         allowed_merchants: Optional[list[str]] = None,
         purchase_review: bool = True,
+        save_payment_method: bool = False,
     ) -> DemoRun:
         mandate_config: Optional[dict[str, Any]] = None
         if persona == "assistant":
@@ -281,6 +284,7 @@ class DemoRunner:
                 "max_per_purchase": f"{cap:.2f}" if cap is not None else None,
                 "allowed_merchants": merchants,
                 "purchase_review": bool(purchase_review),
+                "save_payment_method": bool(save_payment_method),
             }
             task = " ".join((task or DEFAULT_TASK).split())
         elif persona not in PERSONAS:
@@ -383,6 +387,8 @@ class DemoRunner:
         )
         try:
             with self._http_factory(base_url) as http:
+                if self.agent_signer is not None and run.persona != "rogue" and hasattr(http, "auth"):
+                    http.auth = self.agent_signer
                 toolbox = GatewayToolbox(
                     http=http,
                     crawler_id=run.crawler_id,
@@ -473,6 +479,7 @@ class DemoRunner:
             allowed_types=frozenset(config.get("allowed_types") or PAYMENT_TYPES),
             max_per_purchase=Decimal(config["max_per_purchase"]) if config.get("max_per_purchase") else None,
             allowed_merchants=frozenset(config.get("allowed_merchants") or []),
+            save_payment_method=bool(config.get("save_payment_method")),
         )
         run.update(mandate=mandate.snapshot())
         run.emit(
@@ -490,6 +497,8 @@ class DemoRunner:
         )
         try:
             with self._http_factory(base_url) as http:
+                if self.agent_signer is not None and hasattr(http, "auth"):
+                    http.auth = self.agent_signer
                 assert run.provider is not None
                 llm = self._llm_factory(run.provider)
                 toolbox = AssistantToolbox(

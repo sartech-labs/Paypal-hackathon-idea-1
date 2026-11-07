@@ -1,6 +1,6 @@
 # Explainer video pipeline (16:9, 1920x1080)
 
-Builds the Devpost video. It is website-first: the problems websites face from AI agents, the AgentTrust gateway that fixes them (with a live rogue scraper hitting it), the owner's AG Grid dashboard, then how a person uses an agent on such sites, and what PayPal gains. Real screen recordings from the live PayPal Sandbox demo, word-synced captions, and an OpenAI TTS narration.
+Builds the Devpost video. It is website-first: the problems websites face from AI agents, the SARA gateway that fixes them (with a live rogue scraper hitting it), the owner's AG Grid dashboard, then how a person uses an agent on such sites, and what PayPal gains. Real screen recordings from the live PayPal Sandbox demo, word-synced captions, and an OpenAI TTS narration.
 
 | File | What it does |
 | :--- | :--- |
@@ -11,12 +11,13 @@ Builds the Devpost video. It is website-first: the problems websites face from A
 | `record_owner.py` | Records the website owner's console: Overview (a kept deposit and its AI explanation), Security, Operations, Commerce in AG Grid, Verify with PayPal (MCP), AG Studio. Run a rogue crawler first so there is something to block. |
 | `record_console.py` | Older, shorter console recording (Commerce, Verify, AG Studio); not used by the current storyboard. |
 | `capture_mcp.py` | Runs a real MCP storefront session (official MCP client) and saves the calls shown in the MCP scene. |
+| `sync_ranges.py` | After re-recording, points every recording scene at the right moments of the new clips, using each recorder's `marks.json`. |
 | `build.py` | TTS per scene (`gpt-4o-mini-tts`, voice `marin`) and Whisper word timestamps, recording frames cut and sped to fit each line, every frame rendered in Chromium and piped to ffmpeg, then the narration mixed to -14 LUFS. |
 
 ## Rebuild
 
 ```bash
-pip install imageio-ffmpeg playwright && python -m playwright install chromium
+pip install imageio-ffmpeg playwright numpy && python -m playwright install chromium
 ```
 
 ```bash
@@ -24,9 +25,9 @@ pip install imageio-ffmpeg playwright && python -m playwright install chromium
 PAYMENT_MODE=paypal_sandbox PAYPAL_SANDBOX_AUTOPAY=true python -m uvicorn server.main:app --port 8011
 python scripts/explainer_video/record_demo.py --base http://127.0.0.1:8011 --out video-out/rec
 python scripts/explainer_video/record_crawler.py --base http://127.0.0.1:8011 --out video-out/rec_crawler   # also leaves a rogue run for the owner view
-curl -X POST http://127.0.0.1:8011/demo/runs -H 'content-type: application/json' -d '{"driver":"scripted","persona":"rogue"}'
 python scripts/explainer_video/record_owner.py --base http://127.0.0.1:8011 --out video-out/rec_owner
 python scripts/explainer_video/capture_mcp.py http://127.0.0.1:8011/mcp/ video-out/mcp_session.json
+python scripts/explainer_video/sync_ranges.py
 ```
 
 ```bash
@@ -35,7 +36,7 @@ python scripts/explainer_video/build.py --only-preview s03,d03
 python scripts/explainer_video/build.py
 ```
 
-Output: `video-out/agenttrust-explainer.mp4` and `.srt`. Recording scene time ranges in `storyboard.json` refer to `video-out/rec/marks.json`, `video-out/rec_crawler/marks.json` and `video-out/rec_owner/marks.json`; after a new recording, update them. The build re-generates a scene's narration if Whisper hears less than 80% of its words (the TTS occasionally drops a sentence).
+Output: `video-out/sara-explainer.mp4` and `.srt`. Recording scene time ranges in `storyboard.json` refer to `video-out/rec/marks.json`, `video-out/rec_crawler/marks.json` and `video-out/rec_owner/marks.json`; after a new recording, update them. The build re-generates a scene's narration if Whisper hears less than 80% of its words (the TTS occasionally drops a sentence).
 
 ## Sources for on-screen facts
 

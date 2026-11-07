@@ -6,7 +6,7 @@ import asyncio
 import uuid
 from decimal import Decimal
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import ValidationError
 
@@ -36,6 +36,7 @@ from server.schemas import (
     SiteConfig,
 )
 from server.services.audit_logger import AuditLogger
+from server.services.payment_methods import record_payment_method, resolve_payment_token
 from server.services.payment_service import (
     AuthorizationResult,
     OrderVerifyResult,
@@ -69,6 +70,8 @@ class DepositManager:
         # Applies to new deposits; each record keeps the mode it was created with.
         self._settlement_mode = settlement_mode
         self._lock = asyncio.Lock()
+        # Set by the app: saved payment methods (PaymentMethodStore).
+        self.payment_methods: Any = None
         self._challenges: dict[str, ChallengeRecord] = {}
         self._deposits: dict[str, DepositRecord] = {}
         self._active_refunds: set[str] = set()
@@ -209,6 +212,8 @@ class DepositManager:
             pricing_tier=record.pricing_tier,
             pricing_tier_name=record.pricing_tier_name,
             requested_resource=record.requested_resource,
+            payment_method_id=record.payment_method_id,
+            payment_method_label=record.payment_method_label,
         )
 
     async def register_challenge(self, challenge: ChallengeRecord) -> None:
@@ -226,6 +231,15 @@ class DepositManager:
         async with self._lock:
             rec = self._deposits.get(deposit_id)
             return rec.model_copy(deep=True) if rec else None
+
+    async def agent_record(self, crawler_id: str) -> dict[str, int]:
+        """A crawler's settled history: deposits returned (clean) and deposits kept (forfeited)."""
+        async with self._lock:
+            mine = [rec for rec in self._deposits.values() if rec.crawler_id == crawler_id]
+        return {
+            "clean": sum(1 for r in mine if r.deposit_state in (DepositState.REFUNDED, DepositState.RELEASED)),
+            "forfeited": sum(1 for r in mine if r.deposit_state == DepositState.FORFEITED),
+        }
 
     async def list_deposits(self) -> list[DepositRecord]:
         async with self._lock:
@@ -385,6 +399,8 @@ class DepositManager:
         *,
         challenge_id: str,
         crawler_id: str,
+        save_payment_method: bool = False,
+        payment_method_id: Optional[str] = None,
     ) -> DepositRecord:
         """
         Validate the challenge, mark it consumed (single-use), create a pending
@@ -392,6 +408,7 @@ class DepositManager:
         order via the configured payment provider.
         """
         valid_crawler = validate_crawler_id(crawler_id)
+        payment_token = resolve_payment_token(self.payment_methods, payment_method_id)
 
         async with self._lock:
             challenge = self._challenges.get(challenge_id)
@@ -445,7 +462,7 @@ class DepositManager:
                 currency=record.currency,
                 request_id=record.order_request_id,
                 description=(
-                    f"AgentTrust refundable deposit for {record.site_id} "
+                    f"SARA refundable deposit for {record.site_id} "
                     + (f"[{record.pricing_tier_name} tier] " if record.pricing_tier_name else "")
                     + f"(crawler={record.crawler_id})"
                 ),
@@ -454,6 +471,8 @@ class DepositManager:
                     if record.settlement_mode == SettlementMode.AUTHORIZATION
                     else "CAPTURE"
                 ),
+                save_method=save_payment_method and payment_token is None,
+                payment_token=payment_token,
             )
         except PaymentProviderError as exc:
             async with self._lock:
@@ -482,6 +501,9 @@ class DepositManager:
             stored.provider_order_id = order_res.order_id
             stored.provider_order_status = order_res.status
             stored.approval_url = order_res.approval_url
+            stored.payment_method_id, stored.payment_method_label = record_payment_method(
+                self.payment_methods, payment_method_id, order_res.saved_method, valid_crawler, f"deposit {record.deposit_id}"
+            )
             if order_res.status == "APPROVED":
                 self._transition_payment(stored, PaymentStatus.APPROVED)
                 stored.deposit_state = DepositState.APPROVED
@@ -1037,7 +1059,7 @@ class DepositManager:
                 amount=refund_amt,
                 currency=currency,
                 request_id=refund_req_id,
-                reason=f"AgentTrust compliant session refund ({session.session_id})",
+                reason=f"SARA compliant session refund ({session.session_id})",
                 reconcile_before_refund=reconcile_before_refund,
             )
         except (Exception, asyncio.CancelledError):
@@ -1247,7 +1269,7 @@ class DepositManager:
                     amount=amount,
                     currency=currency,
                     request_id=capture_request_id,
-                    note=f"AgentTrust deposit forfeited under site policy ({session.session_id})",
+                    note=f"SARA deposit forfeited under site policy ({session.session_id})",
                 )
             else:
                 result = await self._payment_provider.void_authorization(

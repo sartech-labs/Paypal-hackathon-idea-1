@@ -1,8 +1,10 @@
-# AgentTrust — get your website ready for the agentic era, backed by PayPal
+# SARA: Safe And Responsible Agents
+
+**The agent gateway for websites, by [Sartech Labs](https://github.com/sartech-labs) (Safe And Responsible Technology), backed by PayPal.** Good agents get in; bad agents pay.
 
 [![CI](https://github.com/sartech-labs/Paypal-hackathon-idea-1/actions/workflows/ci.yml/badge.svg)](https://github.com/sartech-labs/Paypal-hackathon-idea-1/actions/workflows/ci.yml) ![PayPal Sandbox](https://img.shields.io/badge/PayPal-Sandbox-003087) ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
-AI agents are starting to browse, read, subscribe, and shop for people. Most websites can only block them or get scraped by them. **AgentTrust is a gateway in front of a website that lets it do business with AI agents instead, backed by PayPal.** The site itself does not change. Every agent comes through the gateway, which publishes the site's rules and prices, answers with `HTTP 402`, takes a refundable PayPal deposit, checks every request (`403` for forbidden paths, `429` for bursts), and at the end releases the deposit to an agent that followed the rules or keeps it from one that did not. The owner sees every deposit, blocked request, session, and sale in an AG Grid dashboard.
+AI agents are starting to browse, read, subscribe, and shop for people. Most websites can only block them or get scraped by them. **SARA is a gateway in front of a website that lets it do business with AI agents instead, backed by PayPal.** The site itself does not change. Every agent comes through the gateway, which publishes the site's rules and prices, answers with `HTTP 402`, takes a refundable PayPal deposit, checks every request (`403` for forbidden paths, `429` for bursts), and at the end releases the deposit to an agent that followed the rules or keeps it from one that did not. The owner sees every deposit, blocked request, session, and sale in an AG Grid dashboard.
 
 A site publishes one machine-readable offer catalog (`/.well-known/agent-commerce.json`) and answers unpaid requests with `HTTP 402 Payment Required` and a way to pay. An agent can then pay it through PayPal in four ways:
 
@@ -15,7 +17,7 @@ A site publishes one machine-readable offer catalog (`/.well-known/agent-commerc
 
 On the user's side, **one AI agent** (Aria) has a toolbox that covers all four. Give it a task in plain English and a **spending mandate** (budget, allowed payment types, an approval threshold) and it decides what to pay for. The mandate is enforced in code, not left to the model. Anything above the threshold, and every recurring charge, goes to the person for approval.
 
-**Positioning in one line:** HTTP 402 schemes such as Cloudflare Pay Per Crawl and x402 charge agents for *access*. AgentTrust gives websites the whole agent-commerce surface (refundable deposits that price *misbehaviour*, one-off access, subscriptions, and checkout) on PayPal's rails, which already carry buyer and merchant identity, disputes, and refunds. It complements PayPal's own Agent Ready, which handles agent *checkout*: AgentTrust governs and monetises agent *traffic* to a site. See [how it fits with existing work](#how-agenttrust-fits-with-existing-work).
+**Positioning in one line:** HTTP 402 schemes such as Cloudflare Pay Per Crawl and x402 charge agents for *access*. SARA gives websites the whole agent-commerce surface (refundable deposits that price *misbehaviour*, one-off access, subscriptions, and checkout) on PayPal's rails, which already carry buyer and merchant identity, disputes, and refunds. It complements PayPal's own Agent Ready, which handles agent *checkout*: SARA governs and monetises agent *traffic* to a site. See [how it fits with existing work](#how-sara-fits-with-existing-work).
 
 > **Prototype notice.** Built for the PayPal AI Hackathon 2026. Payments run in mock mode or against the PayPal **Sandbox** with test funds; no real money moves.
 
@@ -65,32 +67,47 @@ Also: [AI tools used](#ai-tools-used)
 - `robots.txt` is advisory, and blanket IP blocks and CAPTCHAs shut out well-behaved agents along with abusive scrapers. Publishers carry the cost of scraping and have no recourse.
 - People will only let agents spend if spending is bounded and visible: a budget, approval for large or recurring charges, and payment records the merchant can verify.
 
-The pressure is already visible. Cloudflare's 2025 data put AI crawling far ahead of the traffic it sends back (roughly 1,700 pages crawled per referral for OpenAI and 73,000 for Anthropic), and Cloudflare now answers AI crawlers with `HTTP 402` through Pay Per Crawl. On the shopping side, eBay changed its user agreement in January 2026 to exclude autonomous shopping agents. Sites are choosing between blocking agents and being scraped by them; AgentTrust gives them a third option: sell to them, with PayPal handling the money and the trust.
+**The evidence** (sources linked; each is the publisher's own measurement):
+
+| Signal | Number |
+| :--- | :--- |
+| One AI bot against one website ([Fastly, via The Register, Aug 2025](https://www.theregister.com/2025/08/21/ai_crawler_traffic/)) | up to **39,000 requests a minute** |
+| AI bot scrapes that ignored `robots.txt` ([TollBit State of the Bots, Q2 2025](https://tollbit.com/bots/25q2)) | **13.3%**, up from 3.3% two quarters earlier |
+| Automated share of all web traffic ([Imperva Bad Bot Report 2025](https://www.businesswire.com/news/home/20250415432215/en/Artificial-Intelligence-Fuels-Rise-of-Hard-to-Detect-Bots-That-Now-Make-up-More-Than-Half-of-Global-Internet-Traffic-According-to-the-2025-Imperva-Bad-Bot-Report)) | **51%**, of which bad bots **37%** |
+| Wikimedia media bandwidth, driven by bots ([The Register, Apr 2025](https://www.theregister.com/2025/04/03/wikimedia_foundation_bemoans_bot_bandwidth/)) | **+50%** since January 2024 |
+| Shoppers arriving at US retail sites from AI assistants ([Adobe, 2025 holiday season](https://business.adobe.com/blog/ai-driven-traffic-surges-across-industries)) | **+693%** year on year |
+| US e-commerce done by AI agents by 2030 ([Morgan Stanley, Dec 2025](https://www.digitalcommerce360.com/2025/12/09/morgan-stanley-ai-agentic-shoppers-385-billion-online-sales/amp/)) | **$190-385 billion** (10-20% of online retail) |
+
+So the harm is measured today and the buyers are arriving: sites need to tell good agents from bad ones now, and to be able to sell to the good ones.
+
+The pressure is already visible. Cloudflare's 2025 data put AI crawling far ahead of the traffic it sends back (roughly 1,700 pages crawled per referral for OpenAI and 73,000 for Anthropic), and Cloudflare now answers AI crawlers with `HTTP 402` through Pay Per Crawl. On the shopping side, eBay changed its user agreement in January 2026 to exclude autonomous shopping agents. Sites are choosing between blocking agents and being scraped by them; SARA gives them a third option: sell to them, with PayPal handling the money and the trust.
 
 **Who it is for.** Publishers and online merchants who want revenue from AI agents instead of scraping costs, and people who want an agent that can pay for things without being able to overspend or be talked into purchases.
 
-AgentTrust answers all three with PayPal: a machine-readable catalog of offers, `402` responses that say how to pay, payments the site verifies with PayPal before granting anything, and a refundable deposit that makes honest crawling free and abusive crawling expensive.
+SARA answers all three with PayPal: a machine-readable catalog of offers, `402` responses that say how to pay, payments the site verifies with PayPal before granting anything, and a refundable deposit that makes honest crawling free and abusive crawling expensive.
 
-### How AgentTrust fits with existing work
+### How SARA fits with existing work
 
-| | What it does | What AgentTrust adds |
+| | What it does | What SARA adds |
 | :--- | :--- | :--- |
 | [Cloudflare Pay Per Crawl](https://siliconangle.com/2025/07/01/ai-game-changer-cloudflare-lets-websites-charge-ai-developers-content-access/) | `402` with a flat price per crawl; Cloudflare is merchant of record | Prices *behaviour* with a refundable deposit, enforces the rules on each request, and also sells items, subscriptions, and products, on PayPal |
 | [TollBit](https://pressgazette.co.uk/platforms/publishers-urged-to-embrace-future-where-bot-readers-provide-majority-of-revenue/) | Bot paywall for publishers, priced per 1,000 pages | As above; agents can also buy and subscribe, not only read |
 | [x402](https://www.spark.money/research/x402-protocol-ai-agent-payments) | Open `402` standard paid in stablecoins | `402` on PayPal: cards and wallets, buyer protection, refunds, disputes |
 | [RSL](https://rslstandard.org/press/rsl-standard) | Licensing terms declared in `robots.txt`; compliance is voluntary | Terms enforced by the gateway, with money at stake |
-| [PayPal Agent Ready and Store Sync](https://newsroom.paypal-corp.com/2025-10-28-PayPal-Launches-Agentic-Commerce-Services-to-Power-AI-Driven-Shopping) | PayPal merchants accept payments from AI agents; catalogs listed in AI apps | Complementary. Agent Ready handles checkout; AgentTrust governs agent traffic (crawling rules, deposits, pay-per-access) and could use Agent Ready as the agent's payment method |
-| Agent identity: [Visa Trusted Agent Protocol](https://hapakenya.com/2025/10/23/visa-launches-trusted-agent-protocol-to-secure-ai-driven-commerce/), [Skyfire KYAPay](https://www.businesswire.com/news/home/20251218520399/en/Skyfire-Demonstrates-Secure-Agentic-Commerce-Purchase-Using-the-KYAPay-Protocol-and-Visa-Intelligent-Commerce) | Verify who an agent is and what it may spend | Not built yet: on the [roadmap](#17-limitations-and-roadmap). AgentTrust would accept such identities to lower deposits for known agents |
+| [PayPal Agent Ready and Store Sync](https://newsroom.paypal-corp.com/2025-10-28-PayPal-Launches-Agentic-Commerce-Services-to-Power-AI-Driven-Shopping) | PayPal merchants accept payments from AI agents; catalogs listed in AI apps | Complementary. Agent Ready handles checkout; SARA governs agent traffic (crawling rules, deposits, pay-per-access) and could use Agent Ready as the agent's payment method |
+| Agent identity: [Visa Trusted Agent Protocol](https://hapakenya.com/2025/10/23/visa-launches-trusted-agent-protocol-to-secure-ai-driven-commerce/), [Skyfire KYAPay](https://www.businesswire.com/news/home/20251218520399/en/Skyfire-Demonstrates-Secure-Agentic-Commerce-Purchase-Using-the-KYAPay-Protocol-and-Visa-Intelligent-Commerce) | Verify who an agent is and what it may spend | SARA verifies signed agent requests the same way (HTTP Message Signatures, the Web Bot Auth profile) and turns a verified identity's record into its price: see [verified agents](#verified-agents) |
 
 ### What PayPal gets
 
-Every agent payment, whether deposit, refund, item sale, subscription, or product order, runs on PayPal's APIs (Orders v2, Payments v2, Subscriptions v1, Webhooks). AgentTrust is a package PayPal could offer any website: agent-ready for *content and traffic*, not only checkout. That brings PayPal merchants it does not reach today (publishers and content sites that cannot sell to agents) and volume from a customer that cannot pay at all today. This is the business case, not a shipped PayPal product: no PayPal pricing or merchant package exists in this code.
+Every agent payment, whether deposit, refund, item sale, subscription, or product order, runs on PayPal's APIs (Orders v2, Payments v2, Subscriptions v1, Webhooks). SARA is a package PayPal could offer any website: agent-ready for *content and traffic*, not only checkout. That brings PayPal merchants it does not reach today (publishers and content sites that cannot sell to agents) and volume from a customer that cannot pay at all today. This is the business case, not a shipped PayPal product: no PayPal pricing or merchant package exists in this code.
+
+For scale (illustrative arithmetic, not a forecast of SARA's share): at Morgan Stanley's base case of $190 billion of US agent-driven e-commerce in 2030, every 1% of it that runs through sites using SARA on PayPal is about **$1.9 billion** of payment volume a year, before deposits and pay-per-access, which no one processes today.
 
 ### Deposit economics
 
 - A deposit covers a whole crawl session (up to `MAX_REQUESTS_PER_SESSION` requests), not a single page.
 - **Authorization mode** (`DEPOSIT_SETTLEMENT=authorization`, run end to end against the live Sandbox) makes the deposit a PayPal hold. It is voided for an honest agent, so nothing is captured and no money moves. It is captured only when an agent breaks the rules. This is the production setting.
-- **Refund mode** (the default, simpler to demo) captures the deposit and refunds it. PayPal charges a fixed fee per captured transaction that is large next to a $1 deposit, and the fees on a refunded payment are not fully returned ([PayPal fees](https://www.paypal.com/us/business/paypal-business-fees)), so in this mode the publisher absorbs that cost for every honest agent.
+- **Refund mode** (the code default, simpler to demo) captures the deposit and refunds it. PayPal charges a fixed fee per captured transaction that is large next to a $1 deposit (a $2.00 Sandbox capture in our tests carried a $0.54 PayPal fee), and the fees on a refunded payment are not fully returned ([PayPal fees](https://www.paypal.com/us/business/paypal-business-fees)), so in this mode the publisher absorbs that cost for every honest agent. The Render Blueprint therefore deploys authorization mode.
 - Pay-per-access items are small payments too. Pricing them well depends on the merchant's PayPal rate; PayPal offers a micropayments rate on request.
 
 ## 2. How it works
@@ -198,7 +215,7 @@ The PayPal assistant reads PayPal through **PayPal's own MCP server** instead of
 Two features use it:
 
 - **Verify with PayPal** (no AI): reads the deposit's order (and refund) and compares order ID, `custom_id` (the deposit ID), amount, capture or authorization status, and refund status with the gateway's record. A refunded deposit should show the capture `REFUNDED`; a released hold, the authorization `VOIDED`; a forfeited hold, the authorization `CAPTURED`.
-- **Ask the PayPal assistant** (AI, OpenAI or Claude): a tool loop over the read tools plus `list_agenttrust_deposits`.
+- **Ask the PayPal assistant** (AI, OpenAI or Claude): a tool loop over the read tools plus `list_sara_deposits`.
 
 Why MCP is used only on the publisher side: the deposit flow needs deterministic, idempotent calls, and the MCP tools have no authorization, void, or authorization-capture operations; and the MCP server acts as the merchant, so giving it to the crawler would let the crawler refund itself.
 
@@ -268,23 +285,55 @@ Useful agent flags: `--max-deposit 1.00` (spending limit), `--effort medium`, `-
 
 Without autopay, a new deposit's response includes the PayPal `approval_url`. The demo page shows an **Open PayPal checkout** button and continues once the payment is approved; the CLIs and the agent print the URL and pause. PayPal redirects the browser to `GET /deposits/paypal/return`, which checks that the returned order ID matches the deposit before capturing or authorizing (the redirect itself is never treated as proof of payment) and shows a short confirmation page.
 
-If a refund completed at PayPal but AgentTrust conservatively left it pending, an administrator can call `POST /deposits/{id}/reconcile-refund` with `X-Admin-Token`. It only reads `GET /v2/payments/refunds/{refund_id}` and never submits another refund.
+If a refund completed at PayPal but SARA conservatively left it pending, an administrator can call `POST /deposits/{id}/reconcile-refund` with `X-Admin-Token`. It only reads `GET /v2/payments/refunds/{refund_id}` and never submits another refund.
 
 ## 8. Deploy (Docker and Render)
 
 **Docker:**
 
 ```bash
-docker build -t agenttrust .
+docker build -t sara .
 ```
 
 ```bash
-docker run --rm -p 8000:8000 --env-file .env agenttrust
+docker run --rm -p 8000:8000 --env-file .env sara
 ```
 
 The image runs as a non-root user, binds to `$PORT` (default 8000), exposes a health check on `/health`, and always runs **one** uvicorn worker, because deposits, sessions, rate limits, and demo runs live in one process. It also contains Node.js 22 and PayPal's MCP server (`@paypal/mcp`, installed from the lockfile in `deploy/paypal-mcp/`) for the PayPal assistant.
 
 **Render:** `render.yaml` is a Blueprint for a Docker web service. In the Render dashboard choose **New > Blueprint**, select this repository, and enter the prompted secrets: `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` (the Blueprint runs real Sandbox payments with test-card autopay; set `PAYMENT_MODE=mock` if you have no PayPal app), `OPENAI_API_KEY` (the Blueprint's AI provider), and optionally `ANTHROPIC_API_KEY`. Render generates `ADMIN_API_TOKEN`; copy it from the service's environment settings for admin features. The Blueprint sets `DEMO_PUBLIC=true` and `DASHBOARD_PUBLIC=true` so judges can run the demo and browse the console, with hourly caps on runs and assistant questions. Storage on the free plan is ephemeral and the service sleeps when idle, so open the URL a minute before a demo.
+
+### Put SARA in front of an existing website (reverse-proxy mode)
+
+Set `ORIGIN_URL` to the website's address and SARA serves agents on its behalf, with no change to the site:
+
+```bash
+ORIGIN_URL=https://www.example.com python -m uvicorn server.main:app --port 8000
+```
+
+- At startup SARA fetches the origin's own `robots.txt` and enforces its `User-agent: *` rules: every `Disallow` line becomes a blocked path (`403`, counted as a violation), and `Crawl-delay` slows the rate limit. SARA's own rules from `data/site_config.json` still apply on top.
+- Anything the rules do not disallow is allowed (robots.txt semantics). A paid, compliant request to `/gateway/<path>` is forwarded to `ORIGIN_URL/<path>`; the origin's status, body, and caching headers come back, cookies do not. Disallowed paths never reach the origin.
+- Route agent traffic to SARA, for example an `agents.example.com` subdomain, or a CDN or nginx rule that sends known AI user agents to SARA's `402`. Browsers keep using the site directly.
+
+### Verified agents
+
+Agents can sign their requests with an Ed25519 key, in the Web Bot Auth profile of HTTP Message Signatures (RFC 9421): `Signature-Input` covers `@method`, `@authority`, and `@path`, with `created`, `expires`, a `keyid` (the key's RFC 7638 thumbprint), and `tag="web-bot-auth"`. SARA checks the signature against `data/agent_directory.json`, the list of agent keys the site recognises, and gives a verified agent a stable identity (`verified:<name>`) so its record follows it:
+
+| Agent | Deposit |
+| :--- | :--- |
+| Unsigned, or signed with an unknown key | Standard price (`REQUIRE_SIGNED_AGENTS=true` refuses it instead) |
+| Verified, no record yet | Standard price |
+| Verified, clean record (deposits returned) | Discounted (`TRUSTED_AGENT_DISCOUNT`, default 50%) |
+| Verified, a deposit kept for breaking the rules | Higher (`FLAGGED_AGENT_MULTIPLIER`, default 3x) |
+| Verified, `REFUSE_AFTER_FORFEITS` deposits kept (default 3) | Refused (`403 AGENT_REFUSED`) |
+
+A bad signature gets `401 INVALID_SIGNATURE`. A rogue operator can still make a fresh unsigned identity per visit, but it then always pays the full deposit and never earns the discount; a known identity cannot shed its record. To give an agent a key, `python -m client.web_bot_auth new-key agent.pem "My agent" "My company"` prints the directory entry to add, and the CLI agents sign with it when `SARA_AGENT_KEY=agent.pem` is set. The demo server signs its own well-behaved agents with a key generated at startup (`SARA demo agent`); the rogue demo crawler is unsigned.
+
+### Saved payment methods (agents paying with no one present)
+
+With the person's consent (`save_payment_method`, the "Save my payment method" box in Agent studio), the agent's first payment asks PayPal to save the payment method (Orders v2 `attributes.vault.store_in_vault = ON_SUCCESS`). PayPal returns a vault token; SARA keeps it server-side and gives the agent only an opaque `payment_method_id`, which it sends with later payments in the task. The model never sees card details or the token. In production the first payment is approved by the person at PayPal; in the Sandbox, PayPal's test card stands in. Verified live: the card saved on the deposit (`Visa •••• 1111`) paid the agent's later purchase with no checkout, in both settlement modes.
+
+Agent purchases are created with **no payment method attached**, so nothing is charged while the spending mandate and the AI purchase review decide. Only an approved purchase gets its payment method (`confirm-payment-source`) and is captured; a declined or blocked one is cancelled having never been charged (checked against PayPal: the declined orders stay `CREATED` with no capture).
 
 ## 9. Configuration reference
 
@@ -396,7 +445,7 @@ flowchart TD
     DEMO -->|/paypal/*| PA
     PUB -->|/paypal/*| PA
 
-    subgraph Gateway ["AgentTrust gateway (FastAPI)"]
+    subgraph Gateway ["SARA gateway (FastAPI)"]
         GW["Gateway and routers\n(server/api/*)"] --> PE["Policy engine + rate limiter"]
         GW --> SM["Sessions and identity"]
         GW --> DM["Deposit manager\n(refund or authorization settlement)"]
@@ -441,7 +490,7 @@ The end-to-end request sequence is also available as an exportable diagram in [`
 
 ## 12. Deposit and session state machines
 
-AgentTrust keeps **payment status**, **policy decision**, and **refund status** separate, so a policy violation is never confused with a money movement and a failed provider call never overwrites a confirmed payment.
+SARA keeps **payment status**, **policy decision**, and **refund status** separate, so a policy violation is never confused with a money movement and a failed provider call never overwrites a confirmed payment.
 
 - **`payment_status`:** `PENDING` → `APPROVED` → `CAPTURED` (refund mode) or `AUTHORIZED` → `VOIDED` / `CAPTURED` (authorization mode); `FAILED` on order, capture, or verification errors.
 - **`policy_decision`:** `UNDECIDED` → `ELIGIBLE_FOR_REFUND` or `FORFEITED_BY_POLICY`. The decision is recorded before any provider call and never changes afterwards.
@@ -556,10 +605,10 @@ The suite (289 tests) needs no network access or credentials; PayPal, OpenAI, Cl
 
 **Known limitations**
 
-- A bearer token proves continuity of a paid session, not the real-world identity of an agent. A determined operator can start over with a new crawler ID and a new deposit, so the deposit deters abuse in proportion to its price; it does not identify repeat offenders.
-- The gateway runs as its own FastAPI app in front of the demo site. There is no drop-in package (reverse proxy, CDN or edge worker, CMS plugin) for an existing website yet.
+- Unsigned agents are identified only by their paid session: a determined operator can start over with a new unsigned identity and a new deposit (it always pays the full price). Verified identity depends on the site's own key directory; fetching keys from agents' published directories (`Signature-Agent`) is not built yet.
+- Reverse-proxy mode forwards `GET` requests only and reads the origin's `robots.txt` once at startup. There is no CDN edge worker or CMS plugin yet.
 - JSON persistence and in-memory rate limits support a single process only.
-- Autonomous agent payment exists only in the Sandbox (`PAYPAL_SANDBOX_AUTOPAY`, PayPal's test card). In production a buyer would approve once and save a PayPal payment method; that is not built yet, so without autopay a person approves each deposit.
+- Saving a payment method was run live with PayPal's test card. Saving a PayPal wallet (the production path, where the person approves the first payment at PayPal) uses the same order fields but reads the vault token from the capture, and is covered by mocked-transport tests only; PayPal's standalone vault setup tokens are not enabled for our Sandbox app.
 - The buyer-approval checkout path has been run against the live Sandbox up to the approval step (the demo shows the real checkout URL); completing it needs a Sandbox buyer login, so the capture after approval is covered by mocked-transport tests.
 - PayPal's hosted MCP server failed every tool call in testing (2026-11-05); the bundled local server is used instead.
 - AI agent behaviour depends on the model; the scripted crawlers give deterministic results for rehearsals. The Claude path, and the PayPal assistant's AI question path, have not been run against a live model in this version (the assistant's tool execution was run against the live MCP server with a scripted stand-in model).
@@ -571,13 +620,12 @@ The suite (289 tests) needs no network access or credentials; PayPal, OpenAI, Cl
 
 **Roadmap**
 
-1. One-time buyer consent with a saved PayPal payment method (vaulting), or PayPal Agent Ready, with the spending mandate stored with it, so agents pay autonomously outside the Sandbox too.
+1. PayPal Agent Ready as the agent's payment method, alongside saved PayPal wallets.
 2. Mandates issued and verified by PayPal (budget, merchant allow-list, approval rules) instead of the agent's own toolbox, so merchants can trust them.
-3. Reputation-based deposits: a compliance history lowers an agent's future deposit.
 4. Optional pay-per-page fee captured from the hold, so publishers also earn from good crawlers.
 5. PostgreSQL and Redis for multi-instance deployments.
-6. Cryptographic agent identity (HTTP Message Signatures, RFC 9421, the basis of Cloudflare's Web Bot Auth) bound to deposit sessions, so deposits can rise for unknown agents and fall for known ones.
-7. Drop-in deployment: the gateway packaged as a reverse proxy and an edge worker that sits in front of an existing site without code changes.
+6. Agent keys fetched from each agent's published key directory (`Signature-Agent`), and records shared between sites.
+7. A CDN edge worker and CMS plugins on top of reverse-proxy mode.
 
 ## AI tools used
 

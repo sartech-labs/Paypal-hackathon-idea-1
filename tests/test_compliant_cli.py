@@ -66,8 +66,8 @@ def _run_cli(
                     200,
                     text="news",
                     headers={
-                        "X-AgentTrust-Remaining-Budget": "9",
-                        "X-AgentTrust-Remaining-Window": "2",
+                        "X-SARA-Remaining-Budget": "9",
+                        "X-SARA-Remaining-Window": "2",
                     },
                 )
             return httpx.Response(

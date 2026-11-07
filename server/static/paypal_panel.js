@@ -220,7 +220,7 @@
             el("thead", null, [el("tr", null, [el("th", { text: "Check" }), el("th", { text: "Gateway" }), el("th", { text: "PayPal (via MCP)" }), el("th", { text: "" })])]),
             el("tbody", null, v.checks.map((c) => el("tr", null, [
               el("td", { text: c.label }),
-              el("td", { className: "mono", text: c.agenttrust }),
+              el("td", { className: "mono", text: c.sara }),
               el("td", { className: "mono", text: c.paypal }),
               el("td", null, [c.status === "match" ? chip("good", "✓", "Match") : c.status === "mismatch" ? chip("critical", "✕", "Differs") : chip("neutral", "i", "Info")]),
             ]))),

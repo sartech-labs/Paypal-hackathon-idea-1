@@ -1,4 +1,4 @@
-"""Pydantic models, enums, and state transition definitions for AgentTrust."""
+"""Pydantic models, enums, and state transition definitions for SARA."""
 
 from __future__ import annotations
 
@@ -240,6 +240,8 @@ class ChallengeResponse(BaseModel):
     policy_version: str
     deposit: ChallengeDepositInfo
     pricing: Optional[ChallengePricingInfo] = None
+    # Who the gateway believes the agent is (signed requests), and how that set the price.
+    identity: Optional[dict[str, Any]] = None
     rules_summary: RulesSummary
     policy_url: str = "/policies"
     payment_url: str = "/deposits/create"
@@ -274,6 +276,10 @@ class DepositCreateRequest(BaseModel):
 
     challenge_id: str = Field(..., min_length=8, max_length=128)
     crawler_id: str = Field(..., min_length=2, max_length=128)
+    # With the person's consent, save the payment method with PayPal on this payment...
+    save_payment_method: bool = False
+    # ...or pay with a method saved earlier (an opaque pm_ ID; card details never reach the agent).
+    payment_method_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class DepositRecord(BaseModel):
@@ -318,6 +324,8 @@ class DepositRecord(BaseModel):
     pricing_tier: Optional[str] = None
     pricing_tier_name: Optional[str] = None
     requested_resource: Optional[str] = None
+    payment_method_id: Optional[str] = None
+    payment_method_label: Optional[str] = None
 
     @property
     def is_funded(self) -> bool:
@@ -373,6 +381,8 @@ class DepositResponse(BaseModel):
     pricing_tier: Optional[str] = None
     pricing_tier_name: Optional[str] = None
     requested_resource: Optional[str] = None
+    payment_method_id: Optional[str] = None
+    payment_method_label: Optional[str] = None
 
 
 class PayPalApprovalCallbackResponse(BaseModel):
@@ -694,7 +704,7 @@ class AuditSummaryResponse(BaseModel):
 
 
 class PayPalToolCallTrace(BaseModel):
-    source: Literal["paypal_mcp", "agenttrust"]
+    source: Literal["paypal_mcp", "sara"]
     tool: str
     arguments: dict[str, Any] = Field(default_factory=dict)
     ok: bool
@@ -706,7 +716,7 @@ class PayPalToolCallTrace(BaseModel):
 
 class PayPalVerificationCheck(BaseModel):
     label: str
-    agenttrust: str
+    sara: str
     paypal: str
     status: Literal["match", "mismatch", "info"]
 
@@ -790,6 +800,9 @@ class DemoRunRequest(BaseModel):
     allowed_merchants: Optional[list[str]] = Field(default=None, max_length=10)
     # A second AI call reviews every purchase against the person's request (never looser).
     purchase_review: bool = True
+    # The person consents to PayPal saving their payment method on the agent's first payment,
+    # so later payments in the task need no one present.
+    save_payment_method: bool = False
 
 
 class DemoDecisionRequest(BaseModel):
@@ -981,6 +994,11 @@ class CommerceOrderRecord(BaseModel):
     dispute_status: Optional[str] = None
     # Set when a verified PayPal webhook confirmed the payment (not only the agent's own call).
     confirmed_by_webhook: bool = False
+    payment_method_id: Optional[str] = None
+    payment_method_label: Optional[str] = None
+    # The agent pays with a saved method or the Sandbox test card, attached at capture.
+    agent_pays: bool = False
+    save_payment_method: bool = False
 
 
 class SubscriptionRecord(BaseModel):
@@ -1027,6 +1045,8 @@ class CheckoutRequest(BaseModel):
     purpose: Optional[str] = Field(default=None, max_length=300)
     # "human": a person pays with PayPal's buttons and approves at PayPal (no test-card autopay).
     buyer: Literal["agent", "human"] = "agent"
+    save_payment_method: bool = False
+    payment_method_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class AgentActionRequest(BaseModel):
@@ -1080,6 +1100,8 @@ class CommerceOrderResponse(BaseModel):
     tracking: list[dict[str, str]] = Field(default_factory=list)
     dispute_status: Optional[str] = None
     confirmed_by_webhook: bool = False
+    payment_method_id: Optional[str] = None
+    payment_method_label: Optional[str] = None
     # Returned once, on the call that first confirms payment. Stored only as a hash.
     access_token: Optional[str] = None
 

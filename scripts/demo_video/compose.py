@@ -9,7 +9,7 @@ render anyway, for example to review a failed take).
 
 With OPENAI_API_KEY set, narration is spoken with OpenAI text-to-speech; otherwise
 scene timing comes from estimated reading time and the video carries captions only.
-Output: <work-dir>/agenttrust-demo.mp4 and agenttrust-demo.srt.
+Output: <work-dir>/sara-demo.mp4 and sara-demo.srt.
 """
 
 from __future__ import annotations
@@ -79,8 +79,8 @@ def build_scenes(facts: dict[str, Any]) -> list[Scene]:
     scenes = [
         Scene(
             "title",
-            "AI crawlers read the web at machine speed, and robots.txt is only a polite request. AgentTrust backs a site's crawling rules with a refundable PayPal deposit.",
-            "AI crawlers read the web at machine speed, and robots dot T X T is only a polite request. AgentTrust backs a site's crawling rules with a refundable PayPal deposit.",
+            "AI crawlers read the web at machine speed, and robots.txt is only a polite request. SARA backs a site's crawling rules with a refundable PayPal deposit.",
+            "AI crawlers read the web at machine speed, and robots dot T X T is only a polite request. SARA backs a site's crawling rules with a refundable PayPal deposit.",
             6.0,
             card="card-title.png",
         ),
@@ -135,8 +135,8 @@ def build_scenes(facts: dict[str, Any]) -> list[Scene]:
         Scene("console", "The publisher console tracks every session, deposit and violation in real time.", "The publisher console tracks every session, deposit and violation in real time.", 5.0),
         Scene(
             "closing",
-            "Other 402 schemes charge for access. AgentTrust charges for misbehaviour. Good agents crawl free.",
-            "Other four-oh-two schemes charge for access. AgentTrust charges for misbehaviour. Good agents crawl free.",
+            "Other 402 schemes charge for access. SARA charges for misbehaviour. Good agents crawl free.",
+            "Other four-oh-two schemes charge for access. SARA charges for misbehaviour. Good agents crawl free.",
             7.0,
             card="card-closing.png",
         ),
@@ -371,9 +371,9 @@ def main() -> int:
             ass.append(f"Dialogue: 0,{ts(start, False)},{ts(end, False)},Caption,,0,0,0,,{text}")
             srt += [str(len(srt) // 4 + 1), f"{ts(start, True)} --> {ts(end, True)}", line, ""]
     (work / "captions.ass").write_text("\n".join(ass) + "\n")
-    (work / "agenttrust-demo.srt").write_text("\n".join(srt))
+    (work / "sara-demo.srt").write_text("\n".join(srt))
 
-    final = work / "agenttrust-demo.mp4"
+    final = work / "sara-demo.mp4"
     run(["ffmpeg", "-y", "-i", str(video), "-i", str(narration), "-vf", f"ass={work / 'captions.ass'}",
          "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
          "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-shortest", str(final)])

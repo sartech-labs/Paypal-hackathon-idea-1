@@ -1,4 +1,4 @@
-/* AgentTrust agent studio: start the personal agent, answer its approval requests, and
+/* SARA agent studio: start the personal agent, answer its approval requests, and
    follow what it pays for. Talks to /demo/* (runs) and /.well-known/agent-commerce.json. */
 (() => {
   "use strict";
@@ -251,7 +251,7 @@
     try {
       const maxPer = $("max-per").value.trim();
       const merchants = $("merchants").value.split(",").map((m) => m.trim()).filter(Boolean);
-      const body = { driver: "ai", persona: "assistant", task, budget, approval_threshold: threshold, allowed_types: types, purchase_review: $("purchase-review").checked };
+      const body = { driver: "ai", persona: "assistant", task, budget, approval_threshold: threshold, allowed_types: types, purchase_review: $("purchase-review").checked, save_payment_method: $("save-payment-method").checked };
       if (maxPer !== "" && Number(maxPer) > 0) body.max_per_purchase = Math.min(200, Number(maxPer)).toFixed(2);
       if (merchants.length) body.allowed_merchants = merchants;
       const run = await api("/demo/runs", { method: "POST", body: JSON.stringify(body) });

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>AgentTrust explainer engine</title>
+<title>Explainer engine</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
@@ -176,6 +176,61 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:#000}
 .who.dim b,.who.dim span,.who.dim .gets{opacity:.45}
 .who.on{border-color:var(--accent)!important;box-shadow:0 0 0 3px var(--accent),0 30px 80px rgba(91,140,255,.25)}
 .paper .who.on{box-shadow:0 0 0 3px var(--accent),8px 8px 0 #111}
+/* act progress */
+.prog{position:absolute;left:84px;right:84px;bottom:14px;display:flex;gap:10px;z-index:5}
+.prog .seg{flex:1;position:relative;height:5px;border-radius:3px;background:rgba(127,127,127,.25);overflow:visible}
+.prog .seg i{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:3px;background:var(--accent)}
+.prog .seg span{display:none}
+/* recordings: camera wrapper and brand patch over the app's header logo */
+.rec .view{width:1340px;height:754px;overflow:hidden;position:relative}
+.rec .cam{width:1340px;height:754px;position:relative;will-change:transform}
+.bpatch{position:absolute;left:46px;top:7px;height:30px;padding:0 10px 0 6px;display:flex;align-items:center;gap:7px;background:#0B1120;border-radius:6px;font:800 17px Inter;color:#F2F5FF}
+.bpatch svg{width:20px;height:20px}
+/* request flood */
+.flood{width:1560px;text-align:center}
+.flood .fhead{font:900 150px/1 Inter;letter-spacing:-.05em;color:var(--accent)}
+.flood .fhead .u{font:800 44px Inter;letter-spacing:0;color:var(--ink);margin-left:16px}
+.flood .lane{position:relative;height:300px;margin-top:26px}
+.flood .bot,.flood .srv{position:absolute;top:30px;width:270px;height:240px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center}
+.flood .bot{left:0;font-size:80px}.flood .bot b,.flood .srv b{font:800 28px Inter}
+.flood .srv{right:0}.flood .sico{font-size:70px;line-height:1}
+.flood .meter{width:190px;height:16px;border-radius:8px;background:rgba(127,127,127,.25);overflow:hidden}
+.flood .meter i{display:block;height:100%;width:0;background:#3DDC84}
+.flood .st{font:800 20px 'JetBrains Mono',monospace}
+.flood .pk{position:absolute;left:0;right:0;top:0;bottom:0;pointer-events:none}
+.flood .p{position:absolute;top:0;font:800 17px 'JetBrains Mono',monospace;padding:4px 8px;border-radius:7px;background:var(--accent);color:#fff;white-space:nowrap}
+.flood .p.blk{background:#FF5D5D}
+.flood .shield{position:absolute;left:50%;top:10px;width:150px;height:280px;margin-left:-75px;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;border:2px solid var(--accent);background:rgba(91,140,255,.12);box-shadow:0 0 60px rgba(91,140,255,.35)}
+.flood .shield svg{width:70px;height:70px}.flood .shield b{font:800 24px Inter}
+.flood .src{margin-top:8px}
+/* gateway packets */
+.gw{position:relative}
+.gdot{position:absolute;width:18px;height:18px;border-radius:50%;background:var(--good);box-shadow:0 0 14px var(--good);margin:-9px 0 0 -9px;z-index:3}
+.gdot.bad{background:var(--bad);box-shadow:0 0 14px var(--bad)}
+.statx{text-align:center;position:relative}
+.statx .num{font:900 230px/1 Inter;letter-spacing:-.05em;color:var(--accent)}
+.statx .suf{font:800 90px Inter;margin-left:12px;color:var(--ink)}
+.statx .lab{font:700 46px/1.25 Inter;margin-top:18px;max-width:1300px;margin-left:auto;margin-right:auto}
+.statx .sub2{font:600 34px Inter;color:var(--muted);margin-top:18px}
+.statx .src{margin-top:22px}
+.statx .stamp{position:absolute;right:-40px;top:-10px}
+.lineup{text-align:center}
+.lineup h3{font:800 46px Inter;margin-bottom:40px}
+.lrow{display:flex;gap:28px;justify-content:center}
+.agentc{width:330px;height:330px;position:relative;padding:0!important;perspective:800px}
+.agentc .face,.agentc .back{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;text-align:center;border-radius:inherit}
+.agentc .bot{font-size:84px;line-height:1}
+.agentc b{font:800 34px Inter}
+.agentc .q{font:900 56px Inter;color:var(--muted)}
+.agentc .back{opacity:0}
+.agentc .back span{font:500 22px/1.3 Inter;color:var(--muted)}
+.agentc .back em{font:800 22px 'JetBrains Mono',monospace;font-style:normal;padding:6px 12px;border-radius:9px}
+.agentc .back.good{box-shadow:inset 0 0 0 3px var(--good)}
+.agentc .back.good .bot,.agentc .back.good em{color:var(--good)}
+.agentc .back.good em{background:rgba(61,220,132,.15)}
+.agentc .back.bad{box-shadow:inset 0 0 0 3px var(--bad)}
+.agentc .back.bad .bot,.agentc .back.bad em{color:var(--bad)}
+.agentc .back.bad em{background:rgba(255,93,93,.15)}
 .gw{display:flex;align-items:center;gap:0;width:1720px;justify-content:center}
 .gcol{display:flex;flex-direction:column;gap:16px;width:330px}
 .gh{font:700 22px 'JetBrains Mono',monospace;color:var(--muted);margin-bottom:4px}
@@ -357,7 +412,7 @@ V.chat = (v, s, cue, A) => {
 V.reveal = (v, s, cue, A) => {
   const el = h(`<div class="reveal"><div class="orb it">${SHIELD_W}</div><h2 class="it">${rich(v.title)}</h2><p class="it">${rich(v.sub)}</p>${v.pill ? `<div class="pp it">${esc(v.pill)}</div>` : ''}</div>`);
   const at = cue(v.cue, 0.1);
-  anim(A, el.querySelector('.orb'), at, 'pop', 0.7); anim(A, el.querySelector('h2'), at + 0.25, 'rise', 0.5);
+  anim(A, el.querySelector('.orb'), at, 'pop', 0.7, { sfx: 'impact' }); anim(A, el.querySelector('h2'), at + 0.25, 'rise', 0.5);
   anim(A, el.querySelector('p'), at + 0.6, 'rise', 0.5); if (v.pill) anim(A, el.querySelector('.pp'), cue(v.pillCue, at + 1.0), 'pop', 0.5);
   return el;
 };
@@ -421,9 +476,9 @@ V.big3 = (v, s, cue, A) => {
   return el;
 };
 
-// Three stakeholders around AgentTrust; `active` (0-2) highlights one and dims the others.
+// Three stakeholders around SARA; `active` (0-2) highlights one and dims the others.
 V.triad = (v, s, cue, A) => {
-  const el = h(`<div class="triad"><div class="hub it">${SHIELD}<span>${rich(v.hub || 'Agent*Trust*')}</span></div><div class="row3"></div></div>`);
+  const el = h(`<div class="triad"><div class="hub it">${SHIELD}<span>${rich(v.hub || '*SARA*')}</span></div><div class="row3"></div></div>`);
   anim(A, el.querySelector('.hub'), cue(v.hubCue, 0.05), 'pop', 0.5);
   v.items.forEach((x, i) => {
     const on = v.active === undefined || v.active === i;
@@ -436,9 +491,11 @@ V.triad = (v, s, cue, A) => {
   return el;
 };
 
-// The mechanism: agents -> AgentTrust gateway (rules, 402, deposit, checks) -> the website.
+function gateAt(v, cue) { return 1.2; }
+
+// The mechanism: agents -> SARA gateway (rules, 402, deposit, checks) -> the website.
 V.gateway = (v, s, cue, A) => {
-  const el = h(`<div class="gw"><div class="gcol agents"><div class="gh">${esc(v.leftTitle || 'Any AI agent')}</div></div><div class="garrow a1"></div><div class="card gate it"><div class="gtop">${SHIELD}<b>${rich(v.title || 'Agent*Trust* gateway')}</b></div><div class="gsub">${esc(v.sub || '')}</div><ol></ol></div><div class="garrow a2"></div><div class="card site it"><div class="ico">🌐</div><b>${esc(v.siteTitle || 'Your website')}</b><span>${esc(v.siteSub || '')}</span></div></div>`);
+  const el = h(`<div class="gw"><div class="gcol agents"><div class="gh">${esc(v.leftTitle || 'Any AI agent')}</div></div><div class="garrow a1"></div><div class="card gate it"><div class="gtop">${SHIELD}<b>${rich(v.title || '*SARA* gateway')}</b></div><div class="gsub">${esc(v.sub || '')}</div><ol></ol></div><div class="garrow a2"></div><div class="card site it"><div class="ico">🌐</div><b>${esc(v.siteTitle || 'Your website')}</b><span>${esc(v.siteSub || '')}</span></div></div>`);
   v.agents.forEach((x, i) => { const c = h(`<div class="gagent it ${x.bad ? 'bad' : ''}">${esc(x.text)}</div>`); el.querySelector('.agents').append(c); anim(A, c, cue(x.cue, 0.2 + i * 0.25), 'pop', 0.4); });
   const gate = el.querySelector('.gate');
   anim(A, gate, cue(v.cue, 0.4), 'pop', 0.5);
@@ -447,6 +504,99 @@ V.gateway = (v, s, cue, A) => {
   const site = el.querySelector('.site');
   const st = cue(v.siteCue, 0.6);
   anim(A, site, st, 'pop', 0.5); anim(A, el.querySelector('.a2'), st - 0.15, 'growx', 0.3);
+  // Packets: green ones pass through the gateway to the site; red ones (the rogue scraper) stop at the gate.
+  const dots = [];
+  for (let j = 0; j < 8; j++) { const d = h(`<div class="gdot ${j % 4 === 3 ? 'bad' : ''}"></div>`); el.append(d); dots.push(d); }
+  const go = cue(v.flowCue, Math.max(gateAt(v, cue), 1.2));
+  anim(A, el, 0, 'fn', 1, { fn: (t) => {
+    const g = el.getBoundingClientRect(), gate = el.querySelector('.gate').getBoundingClientRect(), siteR = site.getBoundingClientRect(), ag = el.querySelector('.agents').getBoundingClientRect();
+    const sx = g.width / el.offsetWidth || 1;
+    const X = (px) => (px - g.left) / sx, y = (gate.top + gate.height / 2 - g.top) / sx;
+    const xa = X(ag.right), xg0 = X(gate.left), xg1 = X(gate.right), xsite = X(siteR.left + 20);
+    dots.forEach((d, j) => {
+      if (t < go) { d.style.opacity = 0; return; }
+      const ph = ((t - go) * 0.45 + j / dots.length) % 1;
+      const bad = d.classList.contains('bad');
+      let x, op = 1;
+      if (ph < 0.35) x = xa + (xg0 - xa) * (ph / 0.35);
+      else if (bad) { x = xg0; op = Math.max(0, 1 - (ph - 0.35) * 5); }
+      else if (ph < 0.65) { x = xg0 + (xg1 - xg0) * ((ph - 0.35) / 0.3); op = 0.35; }
+      else x = xg1 + (xsite - xg1) * ((ph - 0.65) / 0.35);
+      d.style.opacity = op * clamp((t - go) / 0.4);
+      d.style.left = x + 'px'; d.style.top = (y + (bad ? 0 : (j % 3 - 1) * 10)) + 'px';
+    });
+  } });
+  return el;
+};
+
+// A bot firing requests at a website. Unblocked: the server's load meter fills and it shakes.
+// Blocked: a shield in the middle stops the flood (429) and the server stays calm.
+V.flood = (v, s, cue, A) => {
+  const blocked = !!v.blocked;
+  const el = h(`<div class="flood"><div class="fhead it"><span class="n">0</span><span class="u">${rich(v.unit || 'requests / minute')}</span></div><div class="lane"><div class="card bot it">🤖<b>${esc(v.botLabel || 'One AI bot')}</b></div><div class="pk"></div>${blocked ? `<div class="shield it">${SHIELD}<b>${esc((SB && SB.brand) || 'Gateway')}</b></div>` : ''}<div class="card srv it"><div class="sico">🖥️</div><b>${esc(v.siteLabel || 'One website')}</b><div class="meter"><i></i></div><span class="st">OK</span></div></div>${v.source ? `<div class="src it">${esc(v.source)}</div>` : ''}</div>`);
+  const t0 = cue(v.cue, 0.3);
+  const shieldT = blocked ? cue(v.shieldCue, t0 + 0.6) : 1e9;
+  anim(A, el.querySelector('.bot'), 0.05, 'pop', 0.4);
+  anim(A, el.querySelector('.srv'), 0.2, 'pop', 0.4);
+  if (blocked) anim(A, el.querySelector('.shield'), shieldT, 'pop', 0.5, { sfx: 'impact' });
+  anim(A, el.querySelector('.fhead'), t0, 'pop', 0.4, { sfx: 'impact' });
+  anim(A, el.querySelector('.n'), t0, 'count', v.countDur || 2.2, { to: v.value || 39000, suffix: '' });
+  if (v.source) anim(A, el.querySelector('.src'), t0 + 1, 'fade', 0.5);
+  const pk = el.querySelector('.pk'), N = 34, P = [];
+  for (let j = 0; j < N; j++) { const p = h(`<div class="p">GET</div>`); pk.append(p); P.push(p); }
+  const srv = el.querySelector('.srv'), meter = el.querySelector('.meter i'), st = el.querySelector('.st');
+  anim(A, el, 0, 'fn', 1, { fn: (t) => {
+    const W = 1560, x0 = 280, x1 = W - 330, xs = W / 2 - 110;
+    const run = Math.max(0, t - t0);
+    const rate = 0.9 + Math.min(2.6, run * 0.9);            // the flood accelerates
+    P.forEach((p, j) => {
+      if (t < t0) { p.style.opacity = 0; return; }
+      const ph = (run * rate * 0.55 + j / N) % 1;
+      const lane = 30 + ((j * 53) % 220);
+      let x = x0 + (x1 - x0) * ph, op = 1, blk = false;
+      if (t > shieldT && x > xs) { blk = true; x = xs + Math.min(30, (x - xs) * 0.15); op = Math.max(0, 1 - (ph - (xs - x0) / (x1 - x0)) * 4); p.textContent = '429'; }
+      else p.textContent = 'GET';
+      p.classList.toggle('blk', blk);
+      p.style.opacity = op * (run < 0.3 ? run / 0.3 : 1);
+      p.style.transform = `translate(${x}px, ${lane}px)`;
+    });
+    let load = blocked ? (t > shieldT ? 0.12 : Math.min(0.5, run * 0.4)) : Math.min(1, run / 2.6);
+    meter.style.width = (load * 100) + '%';
+    meter.style.background = load > 0.8 ? '#FF5D5D' : load > 0.5 ? '#FFC24B' : '#3DDC84';
+    st.textContent = load > 0.85 ? 'OVERLOADED' : load > 0.5 ? 'SLOWING' : 'OK';
+    st.style.color = load > 0.85 ? '#E0352B' : '';
+    srv.style.transform = load > 0.85 ? `translateX(${Math.sin(t * 60) * 6}px) rotate(${Math.sin(t * 47) * 1.2}deg)` : '';
+  } });
+  return el;
+};
+
+// One huge number counting up, with a label, an optional second line, source, and a stamp.
+V.stat = (v, s, cue, A) => {
+  const el = h(`<div class="statx"><div class="num it"><span class="n">0</span>${v.suffix ? `<span class="suf">${esc(v.suffix)}</span>` : ''}</div><div class="lab it">${rich(v.label)}</div>${v.sub ? `<div class="sub2 it">${rich(v.sub)}</div>` : ''}${v.source ? `<div class="src it">${esc(v.source)}</div>` : ''}${v.stamp ? `<div class="stamp">${esc(v.stamp)}</div>` : ''}</div>`);
+  const at = cue(v.cue, 0.15);
+  anim(A, el.querySelector('.num'), at, 'pop', 0.4, { sfx: 'impact' });
+  anim(A, el.querySelector('.n'), at, 'count', v.countDur || 1.6, { to: v.value, suffix: '' });
+  anim(A, el.querySelector('.lab'), cue(v.labelCue, at + 0.5), 'rise', 0.4);
+  if (v.sub) anim(A, el.querySelector('.sub2'), cue(v.subCue, at + 1.4), 'rise', 0.4);
+  if (v.source) anim(A, el.querySelector('.src'), at + 0.8, 'fade', 0.5);
+  if (v.stamp) anim(A, el.querySelector('.stamp'), cue(v.stampCue, at + 1.8), 'slam', 0.35);
+  return el;
+};
+
+// A row of identical "AI agent?" cards. With reveal, each flips at its cue to show good (green) or bad (red).
+V.lineup = (v, s, cue, A) => {
+  const el = h(`<div class="lineup">${v.title ? `<h3 class="it">${rich(v.title)}</h3>` : ''}<div class="lrow"></div></div>`);
+  if (v.title) anim(A, el.querySelector('h3'), 0.05, 'rise', 0.4);
+  v.items.forEach((x, i) => {
+    const c = h(`<div class="card agentc it"><div class="face"><div class="bot">🤖</div><b>AI agent</b><span class="q">?</span></div>${v.reveal ? `<div class="back ${x.good ? 'good' : 'bad'}"><div class="bot">${x.icon || (x.good ? '✓' : '✕')}</div><b>${esc(x.label)}</b><span>${esc(x.sub || '')}</span><em>${esc(x.badge || '')}</em></div>` : ''}</div>`);
+    el.querySelector('.lrow').append(c);
+    anim(A, c, cue(x.inCue, 0.2 + i * 0.18), 'pop', 0.4);
+    if (v.reveal) {
+      const t = cue(x.cue, 0.8 + i * 0.4);
+      anim(A, c.querySelector('.face'), t, 'flipout', 0.25);
+      anim(A, c.querySelector('.back'), t + 0.2, 'flipin', 0.3);
+    }
+  });
   return el;
 };
 
@@ -474,16 +624,26 @@ function buildScene(scene, idx) {
   if (theme === 'midnight') root.append(h('<div class="glow g1"></div>'), h('<div class="glow g2"></div>'));
   const hud = h(`<div class="hud"><div>${esc(scene.chapter || '')}</div><div class="ctr"></div></div>`);
   if (scene.counter) hud.querySelector('.ctr').innerHTML = `${esc(scene.counter.label)} <b>${esc(scene.counter.value)}</b>`;
-  else hud.querySelector('.ctr').innerHTML = `<span class="brandmark">${SHIELD}AgentTrust</span>`;
+  else hud.querySelector('.ctr').innerHTML = `<span class="brandmark">${SHIELD}${esc((SB && SB.brand) || 'SARA')}</span>`;
   root.append(hud);
+  // Chapter progress: one segment per act, filled by global time.
+  if (SB && SB.acts) {
+    const pb = h(`<div class="prog">${SB.acts.map((a) => `<div class="seg"><i></i><span>${esc(a)}</span></div>`).join('')}</div>`);
+    root.append(pb);
+    scene._prog = [...pb.querySelectorAll('.seg')];
+  }
   const A = [];
   const cue = cueTimes(scene);
   const v = scene.visual || {};
   const isRec = v.type === 'rec';
   const pages = scene.caption === '' ? [] : buildCaption(scene, root, isRec);
   if (isRec) {
-    const rec = h(`<div class="rec"><div class="bar"><i></i><i></i><i></i><div class="url">${esc(v.url)}</div><span class="badge-live">${esc(v.badge || 'LIVE · PayPal Sandbox')}</span></div><img></div>`);
+    const patch = v.brandPatch === false || !(SB && SB.brandPatch) ? '' : `<div class="bpatch">${SHIELD}<b>${esc(SB.brand)}</b></div>`;
+    const rec = h(`<div class="rec"><div class="bar"><i></i><i></i><i></i><div class="url">${esc(v.url)}</div><span class="badge-live">${esc(v.badge || 'LIVE · PayPal Sandbox')}</span></div><div class="view"><div class="cam"><img>${patch}</div></div></div>`);
     root.append(rec);
+    scene._cam = rec.querySelector('.cam');
+    // Camera keyframes: {cue|at, x, y (0-1 focus point in the frame), s (zoom), d (move seconds)}.
+    scene._camKeys = (v.cam || []).map((c) => ({ at: typeof c.at === 'number' ? c.at : cue(c.cue, c.at ?? 1), x: c.x ?? 0.5, y: c.y ?? 0.5, s: c.s ?? 1, d: c.d ?? 0.9 }));
     if (v.speed && v.speed > 1.4) root.append(h(`<div class="speed">⏩ ${(Math.round(v.speed * 2) / 2).toString()}× speed</div>`));
     (v.callouts || []).forEach((c) => { const co = h(`<div class="callout">${rich(c.text)}</div>`); co.style.left = c.x + 'px'; co.style.top = c.y + 'px'; root.append(co); anim(A, co, cue(c.cue, c.at ?? 1), 'pop', 0.4, { until: c.until }); });
     anim(A, rec, 0, 'fade', 0.35);
@@ -492,10 +652,61 @@ function buildScene(scene, idx) {
     const stage = h('<div class="stage"></div>');
     stage.append(V[v.type](v, scene, cue, A));
     root.append(stage);
+    scene._stage = stage;
   }
   document.getElementById('root').append(root);
   return { scene, root, A, pages, idx, img: scene._img || null };
 }
+
+// Camera on recordings (keyframed zoom to a focus point), slow drift on graphics, act progress.
+function renderCamera(S, t) {
+  const sc = S.scene, dur = sc.dur || 6;
+  if (sc._cam) {
+    let cur = { x: 0.5, y: 0.5, s: 1 };
+    const keys = sc._camKeys.length ? sc._camKeys : [{ at: 0, x: 0.5, y: 0.45, s: 1.045, d: dur }];
+    for (const kf of keys) {
+      if (t <= kf.at) break;
+      const k = ease(clamp((t - kf.at) / kf.d));
+      cur = { x: cur.x + (kf.x - cur.x) * k, y: cur.y + (kf.y - cur.y) * k, s: cur.s + (kf.s - cur.s) * k };
+    }
+    sc._cam.style.transformOrigin = `${cur.x * 100}% ${cur.y * 100}%`;
+    sc._cam.style.transform = `scale(${cur.s})`;
+  }
+  if (sc._stage) sc._stage.style.transform = `scale(${1 + 0.03 * clamp(t / dur)})`;
+  if (sc._prog && SB.total) {
+    const g = (sc.start || 0) + t;
+    sc._prog.forEach((seg, i) => {
+      const a = SB.actStarts[i], b = SB.actStarts[i + 1] ?? SB.total;
+      seg.querySelector('i').style.width = (clamp((g - a) / (b - a)) * 100) + '%';
+      seg.classList.toggle('cur', g >= a && g < b);
+    });
+  }
+}
+
+function transitionFor(P, S) {
+  const sc = S.scene;
+  if (sc.transition) return sc.transition;
+  const pv = P.scene.visual || {}, v = sc.visual || {};
+  if (P.scene.theme !== sc.theme) return 'iris';
+  if (v.type === 'rec' && pv.type === 'rec') return pv.src === v.src ? 'fade' : 'slide';
+  if (v.type === 'rec') return 'zoom';
+  if ((P.scene.act ?? 0) !== (sc.act ?? 0)) return 'slide';
+  return 'rise';
+}
+
+function styleTransition(P, S, kind, k) {
+  const e = ease(k), r = S.root.style, p = P.root.style;
+  r.zIndex = 2; p.zIndex = 1;
+  if (kind === 'iris') r.clipPath = `circle(${e * 120}% at 50% 55%)`;
+  else if (kind === 'slide') { r.transform = `translateX(${(1 - e) * 100}%)`; p.transform = `translateX(${-e * 35}%)`; p.filter = `brightness(${1 - 0.5 * e})`; }
+  else if (kind === 'zoom') { r.opacity = clamp(k * 1.6); r.transform = `scale(${1.14 - 0.14 * e})`; }
+  else if (kind === 'fade') r.opacity = e;
+  else { r.opacity = clamp(k * 1.5); r.transform = `translateY(${(1 - e) * 60}px)`; }
+}
+
+function clearTransition(S) { const r = S.root.style; r.clipPath = r.transform = r.opacity = r.filter = r.zIndex = ''; }
+
+const TRANS = 0.5;
 
 function applyAnim(a, t) {
   const k = clamp((t - a.at) / a.dur);
@@ -510,6 +721,9 @@ function applyAnim(a, t) {
     case 'shake': { const e = back(k); el.style.opacity = clamp(k * 2.2); const sh = k < 1 ? Math.sin(k * 40) * (1 - k) * 14 : 0; el.style.transform = `scale(${0.85 + 0.15 * e}) translateX(${sh}px)`; break; }
     case 'grow': el.style.width = (ease(k) * a.to) + '%'; break;
     case 'growx': el.style.transform = `scaleX(${ease(k)})`; break;
+    case 'fn': a.fn(t); break;
+    case 'flipout': el.style.opacity = 1 - clamp(k * 1.5); el.style.transform = `rotateY(${ease(k) * 90}deg)`; break;
+    case 'flipin': el.style.opacity = clamp(k * 2); el.style.transform = `rotateY(${(1 - ease(k)) * -90}deg)`; break;
     case 'count': { const val = Math.round(ease(k) * a.to); el.textContent = val.toLocaleString('en-US') + a.suffix; break; }
     case 'type': { el.style.opacity = k > 0 ? 1 : 0; if (!el.dataset.full) el.dataset.full = el.innerHTML; const full = el.dataset.full; const txt = el.textContent; break; }
   }
@@ -531,15 +745,39 @@ window.__load = (storyboard) => {
   // The HUD counter carries over from the previous scene until a scene sets it (null clears it).
   let ctr = null;
   SB.scenes.forEach((s) => { if ('counter' in s) ctr = s.counter; else s.counter = ctr; });
+  // Global timing (from build.py) for the act progress bar.
+  if (SB.acts) {
+    let t = 0;
+    SB.scenes.forEach((s) => { s.start = t; t += s.dur || 0; });
+    SB.total = t;
+    SB.actStarts = SB.acts.map((_, i) => { const f = SB.scenes.find((s) => (s.act ?? 0) === i); return f ? f.start : t; });
+  }
   SCENES = SB.scenes.map(buildScene);
   return SCENES.length;
 };
 
+// Sound cues for build.py: transitions and the moments items land, in scene-local seconds.
+window.__events = () => SCENES.map((S, i) => {
+  const ev = [];
+  if (i > 0) { const k = transitionFor(SCENES[i - 1], S); if (k !== 'fade' && k !== 'cut') ev.push({ t: 0, k: k === 'iris' ? 'riser' : 'whoosh' }); }
+  for (const a of S.A) {
+    if (a.sfx) ev.push({ t: a.at, k: a.sfx });
+    else if (['pop', 'drop', 'flipin'].includes(a.kind)) ev.push({ t: a.at, k: 'tick' });
+    else if (a.kind === 'slam' || a.kind === 'shake') ev.push({ t: a.at, k: 'thud' });
+  }
+  return ev;
+});
+
 // t: global seconds. frameSrc: optional image URL for recording scenes.
 window.__render = (sceneIndex, localT, frameSrc) => new Promise((resolve) => {
-  SCENES.forEach((S, i) => S.root.classList.toggle('on', i === sceneIndex));
   const S = SCENES[sceneIndex];
+  const P = sceneIndex > 0 ? SCENES[sceneIndex - 1] : null;
+  const kind = P ? transitionFor(P, S) : 'cut';
+  const mixing = P && kind !== 'cut' && localT < TRANS;
+  SCENES.forEach((X, i) => { X.root.classList.toggle('on', i === sceneIndex || (mixing && X === P)); clearTransition(X); });
+  if (mixing) { renderScene(P, P.scene.dur || 5); renderCamera(P, P.scene.dur || 5); styleTransition(P, S, kind, localT / TRANS); }
   renderScene(S, localT);
+  renderCamera(S, localT);
   if (S.img && frameSrc) {
     if (S.img.getAttribute('src') === frameSrc) return resolve(true);
     S.img.onload = () => resolve(true);

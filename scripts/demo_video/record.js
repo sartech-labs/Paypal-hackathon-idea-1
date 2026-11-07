@@ -1,4 +1,4 @@
-// Records the AgentTrust live demo in a real browser, scene by scene.
+// Records the SARA live demo in a real browser, scene by scene.
 //
 // Usage: node record.js <base-url> <out-dir> <driver: ai|scripted>
 // Writes <out-dir>/raw.webm, markers.json (scene start/end seconds), facts.json (what

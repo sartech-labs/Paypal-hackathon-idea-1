@@ -1,4 +1,4 @@
-"""Tools for the AgentTrust personal agent: one agent, many ways to pay a website.
+"""Tools for the SARA personal agent: one agent, many ways to pay a website.
 
 The agent acts for one person and can:
 - discover what a site sells (its machine-readable offer catalog)
@@ -31,6 +31,8 @@ from client.agent_tools import (
     _safe_json,
     _tool,
     html_to_text,
+    payment_fields,
+    remember_payment_method,
 )
 
 PAYMENT_TYPES = ("deposit", "access", "subscription", "product")
@@ -59,6 +61,9 @@ class SpendingMandate:
     max_per_purchase: Optional[Decimal] = None
     # Merchants the agent may pay (names as published in the offer catalog); empty: any.
     allowed_merchants: frozenset[str] = frozenset()
+    # The person lets PayPal save their payment method on the first payment of this task;
+    # later payments use the saved method (an opaque ID the model never sees).
+    save_payment_method: bool = False
     committed: Decimal = Decimal("0.00")
     returned: Decimal = Decimal("0.00")
     ledger: list[dict[str, Any]] = field(default_factory=list)
@@ -152,7 +157,7 @@ ASSISTANT_TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 @dataclass
 class AssistantToolbox:
-    """Executes the personal agent's tool calls against an AgentTrust site."""
+    """Executes the personal agent's tool calls against an SARA site."""
 
     http: HttpClient
     agent_id: str
@@ -174,8 +179,10 @@ class AssistantToolbox:
     _deposit_entry: Optional[dict[str, Any]] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self.wallet: dict[str, Any] = {"save": self.mandate.save_payment_method}
         self.crawler = GatewayToolbox(
             http=self.http,
+            wallet=self.wallet,
             crawler_id=self.agent_id,
             max_deposit=self.mandate.remaining,
             approval_handler=lambda url: self.checkout_handler(url),
@@ -372,7 +379,10 @@ class AssistantToolbox:
         if payment_type not in self.mandate.allowed_types:
             return {"error": f"Your user's mandate does not allow {payment_type} payments."}
         # 1. The site prices the order. Creating it moves no money.
-        created = self.http.post("/commerce/checkout", json={"agent_id": self.agent_id, "purpose": reason[:300] or None, **body})
+        created = self.http.post(
+            "/commerce/checkout",
+            json={"agent_id": self.agent_id, "purpose": reason[:300] or None, **payment_fields(self.wallet), **body},
+        )
         if created.status_code != 201:
             return {"error": f"Checkout failed (HTTP {created.status_code}).", "detail": _safe_json(created)}
         order = created.json()
@@ -394,6 +404,7 @@ class AssistantToolbox:
         if captured.status_code != 200:
             return {"error": f"Payment failed (HTTP {captured.status_code}).", "detail": _safe_json(captured)}
         paid = captured.json()
+        remember_payment_method(self.wallet, paid)
         if paid.get("status") == "APPROVAL_REQUIRED":
             self._wait_for_payer(paid.get("approval_url"))
             captured = self.http.post(f"/commerce/orders/{order['order_id']}/capture", json={"agent_id": self.agent_id})
@@ -424,6 +435,7 @@ class AssistantToolbox:
             "unlocks": paid.get("grants"),
             "paypal_order_id": paid.get("provider_order_id"),
             "paypal_capture_id": paid.get("provider_capture_id"),
+            "paid_with": paid.get("payment_method_label"),
             "simulated_payment": paid.get("simulated"),
             "mandate_remaining": f"{self.mandate.remaining:.2f}",
         }

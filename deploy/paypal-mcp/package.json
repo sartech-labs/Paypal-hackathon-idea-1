@@ -1,7 +1,7 @@
 {
-  "name": "agenttrust-paypal-mcp",
+  "name": "sara-paypal-mcp",
   "private": true,
-  "description": "PayPal's MCP server (@paypal/mcp), pinned for the AgentTrust PayPal assistant.",
+  "description": "PayPal's MCP server (@paypal/mcp), pinned for the SARA PayPal assistant.",
   "license": "MIT",
   "dependencies": {
     "@paypal/mcp": "1.8.1"

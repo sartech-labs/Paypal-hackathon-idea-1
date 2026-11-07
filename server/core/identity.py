@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from decimal import Decimal
 from typing import Optional
 
 from server.core.security import (
@@ -41,6 +42,8 @@ class IdentityService:
         crawler_id: str,
         requested_path: str,
         challenge_ttl_seconds: int,
+        multiplier: Optional[Decimal] = None,
+        identity: Optional[dict] = None,
     ) -> tuple[ChallengeRecord, ChallengeResponse]:
         """Create a fresh, unpredictable HTTP 402 challenge bound to crawler_id."""
         valid_crawler_id = validate_crawler_id(crawler_id)
@@ -49,6 +52,13 @@ class IdentityService:
         expires_iso = utc_future_iso(challenge_ttl_seconds)
         # The deposit is priced by the gateway from the requested resource's tier.
         amount, tier = self._pricing.deposit_for_request_path(requested_path)
+        if multiplier is not None and multiplier != Decimal("1"):
+            # A verified agent's record moves its deposit: lower for a clean record, higher
+            # after a kept deposit (never below one cent).
+            full = Decimal(str(amount))
+            amount = f"{max(Decimal('0.01'), (full * multiplier).quantize(Decimal('0.01'))):.2f}"
+            if identity is not None:
+                identity = {**identity, "standard_deposit": f"{full:.2f}", "multiplier": f"{multiplier:.2f}"}
 
         record = ChallengeRecord(
             challenge_id=challenge_id,
@@ -87,6 +97,7 @@ class IdentityService:
                 if tier
                 else None
             ),
+            identity=identity,
             rules_summary=RulesSummary(
                 allowed_paths=list(self._site_config.allowed_paths),
                 disallowed_paths=list(self._site_config.disallowed_paths),

@@ -26,7 +26,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from client.agent_tools import MAX_PAGE_TEXT_CHARS, html_to_text
 
 INSTRUCTIONS = """\
-This is an AgentTrust storefront: a website that sells to AI agents through PayPal.
+This is an SARA storefront: a website that sells to AI agents through PayPal.
 Start with discover_offers and pass its wallet_id to every other tool. Then:
 - Paid media (videos, datasets, audio) and products: quote_access or quote_products creates a
   priced PayPal order; show the amount to your user, then pay_order captures it.
@@ -63,7 +63,7 @@ class Storefront:
         self._asgi_app = asgi_app
         self._wallets: dict[str, Wallet] = {}
         self.server = MCPServer(
-            name="AgentTrust storefront",
+            name="SARA storefront",
             instructions=INSTRUCTIONS,
             version="1.0",
         )
@@ -72,7 +72,7 @@ class Storefront:
     # --- plumbing ---------------------------------------------------------------------
 
     def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=httpx.ASGITransport(app=self._asgi_app), base_url="http://agenttrust.internal", timeout=60.0)
+        return httpx.AsyncClient(transport=httpx.ASGITransport(app=self._asgi_app), base_url="http://sara.internal", timeout=60.0)
 
     def _wallet(self, wallet_id: str, create: bool = False) -> Wallet:
         """The shopper behind a wallet ID; only discover_offers opens a new wallet."""
@@ -245,7 +245,7 @@ class Storefront:
                 return {
                     "status": 200,
                     "path": path,
-                    "remaining_session_budget": resp.headers.get("X-AgentTrust-Remaining-Budget"),
+                    "remaining_session_budget": resp.headers.get("X-SARA-Remaining-Budget"),
                     "content": self._content(resp.text, resp.headers.get("content-type", "")),
                 }
             body = self._body(resp)

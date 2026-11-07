@@ -1,2 +1,2 @@
-"""AgentTrust CLI demonstration clients."""
+"""SARA CLI demonstration clients."""
 

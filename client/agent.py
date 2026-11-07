@@ -1,4 +1,4 @@
-"""AI crawler agent: an AI model drives a crawler through the AgentTrust protocol with tools.
+"""AI crawler agent: an AI model drives a crawler through the SARA protocol with tools.
 
 The same tools and personas run on either provider:
 - Claude, through the Anthropic SDK (Messages API tool use)
@@ -30,6 +30,7 @@ import httpx
 import openai
 from dotenv import load_dotenv
 
+from client.web_bot_auth import load_signer
 from client.agent_tools import TOOL_DEFINITIONS, GatewayToolbox
 from client.common import print_banner, print_step, resolve_crawler_id
 
@@ -54,7 +55,7 @@ COMPLIANT = Persona(
     label="NewsBrief research crawler (follows the policy)",
     system="""\
 You are NewsBrief, an AI research crawler run by a media-monitoring company. You collect \
-public headlines from websites protected by AgentTrust, a gateway that asks AI crawlers \
+public headlines from websites protected by SARA, a gateway that asks AI crawlers \
 for a small refundable deposit and returns it when they follow the site's rules.
 
 Work like this:
@@ -82,7 +83,7 @@ ROGUE = Persona(
     label="Rogue scraper (authorized red-team test of your own gateway)",
     system="""\
 You are role-playing a misbehaving AI scraper in an authorized test of this website's own \
-AgentTrust gateway. The site owner runs this test against demo content with simulated \
+SARA gateway. The site owner runs this test against demo content with simulated \
 or sandbox test funds to demonstrate how the gateway treats crawlers that ignore its \
 rules. The site holds no real user data.
 
@@ -480,7 +481,7 @@ def _has_openai_key() -> bool:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the AI-driven AgentTrust crawler agent.")
+    parser = argparse.ArgumentParser(description="Run the AI-driven SARA crawler agent.")
     parser.add_argument("--persona", choices=sorted(PERSONAS), default="compliant")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--crawler-id", default=None)
@@ -548,7 +549,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     model = args.model or os.getenv("AI_MODEL") or DEFAULT_MODELS[provider]
     effort = args.effort or os.getenv("AI_EFFORT") or "medium"
     crawler_id = resolve_crawler_id(args.crawler_id, f"ai-{persona.key}")
-    print_banner(f"AgentTrust AI Crawler Agent -- {persona.label}")
+    print_banner(f"SARA AI Crawler Agent -- {persona.label}")
     print(f"  Crawler ID : {crawler_id}")
     print(f"  AI model   : {model} ({'Claude' if provider == 'anthropic' else 'OpenAI'}, effort {effort})")
     print(f"  Spend limit: {max_deposit}")
@@ -559,7 +560,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         if not args.non_interactive and sys.stdin.isatty():
             input("      Approve the checkout in your browser, then press [Enter] to continue...")
 
-    with httpx.Client(base_url=args.base_url.rstrip("/"), timeout=30.0) as http:
+    with httpx.Client(base_url=args.base_url.rstrip("/"), timeout=30.0, auth=load_signer(os.getenv("SARA_AGENT_KEY"))) as http:
         try:
             health = http.get("/health").json()
         except (httpx.HTTPError, ValueError) as exc:
