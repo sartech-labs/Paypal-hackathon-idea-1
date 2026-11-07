@@ -591,7 +591,7 @@
     $("start-button").hidden = running;
     $("start-button").disabled = running || !!state.blocked;
     $("task").disabled = running;
-    $("task").placeholder = running ? "Aria is working…" : "Ask Aria to do something…";
+    $("task").placeholder = running ? (state.mode === "rogue" ? "The scraper is running…" : "Aria is working…") : "Ask Aria to do something…";
   }
 
   async function send() {
