@@ -4,6 +4,26 @@ The Devpost submission needs a public YouTube video shorter than 3 minutes. The 
 
 **Automated recording.** `scripts/demo_video/make_video.sh ai video-out` records this storyboard in a real browser against the PayPal Sandbox and renders a narrated, captioned MP4 (see [`scripts/demo_video/README.md`](../scripts/demo_video/README.md)). The narration is generated from what each take actually did, and a take that goes off-script is rejected. The submitted video was made this way: 2 min 14 s, GPT-5.5 as both crawler personas, OpenAI `gpt-4o-mini-tts` narration. The manual storyboard below is for recording by hand.
 
+## Storyboard A: the agentic era (Agent studio, recommended)
+
+This cut tells the bigger story: one agent, four ways to pay, a person in control. It needs an AI key and `DEMO_PUBLIC=true`. In mock payment mode the subscription activates at once; in the Sandbox PayPal asks the payer to approve it.
+
+| Time | Screen | Voiceover |
+| :--- | :--- | :--- |
+| 0:00–0:15 | `/agent`, hero and the "What Sentinel News sells to agents" strip | "AI agents are becoming customers. They read, subscribe, and buy for people. Most websites can only block them or get scraped." |
+| 0:15–0:30 | Point at the four offer cards | "AgentTrust gets a site ready for them, backed by PayPal: a machine-readable catalog with four ways to pay: a refundable crawl deposit, pay-per-access, subscriptions, and products." |
+| 0:30–0:45 | The request box (first preset) and the mandate: $60 budget, ask above $10 | "This is Aria, a personal agent. I give it a task and a spending mandate. The mandate is enforced in code, not by the model." |
+| 0:45–1:25 | **Run agent**. Activity fills: catalog, mandate, 402, deposit paid, video bought ($2) | "It reads the catalog, plans, and pays. A one-dollar refundable deposit to crawl the news. Two dollars for the video, under my threshold, so it doesn't ask." |
+| 1:25–1:50 | Approval card for Sentinel Pro $9.99/month. **Approve**. | "A subscription is a recurring charge, so it always asks me. I approve; PayPal Subscriptions starts the plan, and the members feed unlocks." |
+| 1:50–2:05 | Approval card for the $12 e-book. **Decline**. | "Twelve dollars is above my limit. I decline, and the agent accepts it. It doesn't retry or work around me." |
+| 2:05–2:30 | Report and the spending panel: deposit refunded, video paid, subscription active, e-book declined, net $11.99 | "The crawl session ends cleanly, so the deposit comes back. The report lists every payment with its PayPal reference." |
+| 2:30–2:50 | `/console#commerce`: revenue by type, orders and subscriptions grids | "The publisher sees it all: pay-per-access, products, subscription revenue, and the deposits it kept from agents that broke the rules." |
+| 2:50–3:00 | Closing card | "AgentTrust, backed by PayPal: websites ready for the agentic era." |
+
+## Storyboard B: the crawler deposit in depth
+
+The original cut below focuses on the refundable deposit, policy enforcement, and PayPal MCP verification.
+
 ## Before recording
 
 1. **Credentials:** `.env` has `PAYMENT_MODE=paypal_sandbox`, `PAYPAL_SANDBOX_AUTOPAY=true`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`), `DEMO_PUBLIC=true`, and `DASHBOARD_PUBLIC=true`. With autopay, deposits are real Sandbox payments made with PayPal's Sandbox test card, so there is no PayPal login on camera.
@@ -19,13 +39,13 @@ The Devpost submission needs a public YouTube video shorter than 3 minutes. The 
 | Time | Screen | Voiceover |
 | :--- | :--- | :--- |
 | 0:00–0:15 | Live demo page, empty state with the five steps | "AI crawlers read the web at machine speed. `robots.txt` is only a request, and publishers pay for every scraper that ignores it." |
-| 0:15–0:25 | Point at the badges: PayPal Sandbox, settlement, AI model, PayPal MCP | "CrawlerTrust is an HTTP 402 gateway. Before an AI agent can read, it posts a small refundable deposit through PayPal and accepts the site's rules." |
+| 0:15–0:25 | Point at the badges: PayPal Sandbox, settlement, AI model, PayPal MCP | "AgentTrust is an HTTP 402 gateway. Before an AI agent can read, it posts a small refundable deposit through PayPal and accepts the site's rules." |
 | 0:25–1:15 | Pick **Compliant research crawler** and **AI agent**, press **Start run**. The step rail fills in: 402 challenge, policy, PayPal deposit, crawl. Hover the prompt-injection card on `/news/economy`. | "Here GPT-5.5 is the crawler. It gets HTTP 402, reads the policy, pays the deposit with PayPal, and paces itself to the rate limit. This page hides an instruction telling AI agents to grab private customer data. The agent ignores it." |
 | 1:15–1:35 | Session completes: deposit card turns **Refunded**, PayPal order, capture, and refund IDs appear. Explanation card shows findings with evidence chips. | "The session ends and the gateway decides from its own audit log: no violations, so the deposit comes back. The explanation cites the exact audit events." |
 | 1:35–1:55 | Press **Verify with PayPal (MCP)**. The table shows every check matching. | "Then the publisher checks PayPal's own records, through PayPal's MCP server: order, amount, capture refunded, refund completed. Read-only, and every check matches." |
 | 1:55–2:30 | Pick **Rogue scraper**, **Start run**. Red 403 and 429 rows stack up; step 4 turns red; deposit turns **Forfeited**. | "Now the same model, told to grab everything. It probes the admin area and private data, tries path traversal, and bursts requests. The gateway blocks each one, and the deposit is forfeited by policy, not by the model." |
 | 2:30–2:50 | PayPal assistant: click the suggestion "Check the last 3 deposits against PayPal's records" and **Ask**. Show the answer and the tool-call list. | "The PayPal assistant answers questions with PayPal's MCP tools and shows every call it made, so the answer can be checked." |
-| 2:50–3:00 | Closing card: repo URL and the one-line positioning | "Other 402 schemes charge for access. CrawlerTrust charges for misbehaviour. Good agents crawl free." |
+| 2:50–3:00 | Closing card: repo URL and the one-line positioning | "Other 402 schemes charge for access. AgentTrust charges for misbehaviour. Good agents crawl free." |
 
 Keep the final cut under 2:55 to leave margin for YouTube's processing. If time is short, cut the PayPal assistant question (2:30–2:50) and keep **Verify with PayPal**.
 

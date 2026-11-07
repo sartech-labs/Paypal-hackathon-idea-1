@@ -1,4 +1,4 @@
-"""Policy evaluation engine for CrawlerTrust."""
+"""Policy evaluation engine for AgentTrust."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-# Render Blueprint for a public CrawlerTrust demo (https://render.com/docs/blueprint-spec).
+# Render Blueprint for a public AgentTrust demo (https://render.com/docs/blueprint-spec).
 # Render prompts for the `sync: false` secrets when the Blueprint is first created.
 # APP_PUBLIC_URL is not needed: the app falls back to Render's RENDER_EXTERNAL_URL.
 services:

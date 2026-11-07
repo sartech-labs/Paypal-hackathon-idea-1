@@ -224,16 +224,16 @@ async def _handle_gateway_request(
         status_code=200,
         media_type=page.content_type,
         headers={
-            "X-CrawlerTrust-Session-Id": session.session_id,
-            "X-CrawlerTrust-Policy-Version": decision.policy_version,
-            "X-CrawlerTrust-Remaining-Budget": str(decision.remaining_session_budget),
-            "X-CrawlerTrust-Remaining-Window": str(decision.remaining_window_requests),
-            **({"X-CrawlerTrust-Pricing-Tier": resource_tier.tier_id} if resource_tier else {}),
+            "X-AgentTrust-Session-Id": session.session_id,
+            "X-AgentTrust-Policy-Version": decision.policy_version,
+            "X-AgentTrust-Remaining-Budget": str(decision.remaining_session_budget),
+            "X-AgentTrust-Remaining-Window": str(decision.remaining_window_requests),
+            **({"X-AgentTrust-Pricing-Tier": resource_tier.tier_id} if resource_tier else {}),
         },
     )
 
 
-@router.get("/gateway", summary="Access root protected content through the CrawlerTrust gateway")
+@router.get("/gateway", summary="Access root protected content through the AgentTrust gateway")
 async def gateway_root(
     request: Request,
     container: AppContainer = Depends(get_container),
@@ -253,7 +253,7 @@ async def gateway_root(
 
 @router.get(
     "/gateway/{path:path}",
-    summary="Access protected website paths through the CrawlerTrust gateway",
+    summary="Access protected website paths through the AgentTrust gateway",
 )
 async def gateway_path(
     path: str,

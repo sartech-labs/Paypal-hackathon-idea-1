@@ -51,7 +51,7 @@ async def test_openai_request_uses_responses_api_with_strict_schema(test_setting
     assert sent["reasoning"] == {"effort": "medium"}
     assert sent["max_output_tokens"] == 16000
     assert sent["text"] == {
-        "format": {"type": "json_schema", "name": "crawlertrust_output", "schema": {"type": "object"}, "strict": True}
+        "format": {"type": "json_schema", "name": "agenttrust_output", "schema": {"type": "object"}, "strict": True}
     }
 
 

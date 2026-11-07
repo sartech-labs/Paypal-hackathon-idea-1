@@ -25,17 +25,24 @@ import httpx
 
 from client.agent import PERSONAS, CrawlerAgent
 from client.agent_tools import GatewayToolbox
+from client.assistant_agent import DEFAULT_TASK, make_persona
+from client.assistant_tools import ASSISTANT_TOOL_DEFINITIONS, PAYMENT_TYPES, AssistantToolbox, SpendingMandate
 from client.scripted_agent import ScriptedDriver
 from server.core.quotas import HourlyQuota
 from server.core.security import utc_now_iso
 from server.schemas import DemoRunEvent, DemoRunResponse, PricingTier
 
-logger = logging.getLogger("crawlertrust.demo")
+logger = logging.getLogger("agenttrust.demo")
 
 # Default operator spending limit enforced by the crawler's toolbox. The gateway raises it
 # to its highest published price so every configured tier stays payable.
 MAX_DEPOSIT = Decimal("5.00")
 MAX_TURNS = 25
+ASSISTANT_MAX_TURNS = 40
+DECISION_TIMEOUT_SECONDS = 300.0
+DEFAULT_BUDGET = Decimal("60.00")
+DEFAULT_APPROVAL_THRESHOLD = Decimal("10.00")
+MAX_BUDGET = Decimal("200.00")
 APPROVAL_TIMEOUT_SECONDS = 600.0
 APPROVAL_POLL_SECONDS = 2.0
 MAX_RUNS_KEPT = 20
@@ -98,14 +105,20 @@ class DemoRun:
     error: Optional[str] = None
     usage: dict[str, Any] = field(default_factory=dict)
     pricing_tier: Optional[dict[str, Any]] = None
+    task: Optional[str] = None
+    mandate_config: Optional[dict[str, Any]] = None
+    pending_decision: Optional[dict[str, Any]] = None
+    mandate: Optional[dict[str, Any]] = None
+    decision_value: Optional[bool] = None
     events: list[DemoRunEvent] = field(default_factory=list)
     cancel_event: threading.Event = field(default_factory=threading.Event)
     approved_event: threading.Event = field(default_factory=threading.Event)
+    decision_event: threading.Event = field(default_factory=threading.Event)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
     def finished(self) -> bool:
-        return self.status in ("completed", "failed", "cancelled")
+        return self.status in ("completed", "failed", "cancelled")  # running / awaiting_* are live
 
     def emit(self, kind: str, data: Optional[dict[str, Any]] = None) -> None:
         with self.lock:
@@ -136,6 +149,9 @@ class DemoRun:
                 error=self.error,
                 usage=dict(self.usage),
                 pricing_tier=dict(self.pricing_tier) if self.pricing_tier else None,
+                task=self.task,
+                pending_decision=dict(self.pending_decision) if self.pending_decision else None,
+                mandate=dict(self.mandate) if self.mandate else None,
                 events=[event for event in self.events if event.seq >= after],
                 next_seq=len(self.events),
             )
@@ -153,6 +169,8 @@ class DemoRun:
                 "deposit_id": deposit.get("deposit_id"),
                 "deposit_state": deposit.get("deposit_state"),
                 "pricing_tier": (self.pricing_tier or {}).get("tier_id"),
+                "purchases": len([p for p in (self.mandate or {}).get("purchases", []) if p.get("status") != "DECLINED_BY_USER"]),
+                "spent_net": (self.mandate or {}).get("spent_net"),
             }
 
 
@@ -231,8 +249,25 @@ class DemoRunner:
         ai_effort: str = "medium",
         ai_available: bool = False,
         tier: Optional[PricingTier] = None,
+        task: Optional[str] = None,
+        budget: Optional[str] = None,
+        approval_threshold: Optional[str] = None,
+        allowed_types: Optional[list[str]] = None,
     ) -> DemoRun:
-        if persona not in PERSONAS:
+        mandate_config: Optional[dict[str, Any]] = None
+        if persona == "assistant":
+            if driver != "ai":
+                raise DemoRunError("The personal agent is AI-driven only; start it with driver 'ai'.")
+            spend = Decimal(budget or DEFAULT_BUDGET).quantize(Decimal("0.01"))
+            threshold = Decimal(approval_threshold or DEFAULT_APPROVAL_THRESHOLD).quantize(Decimal("0.01"))
+            if spend <= 0 or spend > MAX_BUDGET:
+                raise DemoRunError(f"The demo budget must be between 0.01 and {MAX_BUDGET}.")
+            types = sorted(set(allowed_types)) if allowed_types else list(PAYMENT_TYPES)
+            if not types:
+                raise DemoRunError("Allow at least one payment type.")
+            mandate_config = {"budget": f"{spend:.2f}", "approval_threshold": f"{threshold:.2f}", "allowed_types": types}
+            task = " ".join((task or DEFAULT_TASK).split())
+        elif persona not in PERSONAS:
             raise DemoRunError(f"Unknown persona {persona!r}.")
         if driver == "ai" and not ai_available:
             raise DemoUnavailableError(
@@ -253,7 +288,9 @@ class DemoRunner:
                 run_id=f"run_{secrets.token_hex(6)}",
                 driver=driver,
                 persona=persona,
-                crawler_id=f"{prefix}-{persona}-{secrets.token_hex(3)}",
+                crawler_id=f"aria-{secrets.token_hex(4)}" if persona == "assistant" else f"{prefix}-{persona}-{secrets.token_hex(3)}",
+                task=task if persona == "assistant" else None,
+                mandate_config=mandate_config,
                 provider=provider,
                 model=ai_model if driver == "ai" else "scripted",
                 # Tier selection drives the compliant crawler; the rogue scenario is unchanged.
@@ -266,7 +303,7 @@ class DemoRunner:
             self._active = run.run_id
 
         thread = threading.Thread(
-            target=self._execute,
+            target=self._execute_assistant if persona == "assistant" else self._execute,
             args=(run, base_url, ai_effort),
             name=f"demo-{run.run_id}",
             daemon=True,
@@ -280,6 +317,16 @@ class DemoRunner:
             return False
         run.cancel_event.set()
         run.approved_event.set()
+        run.decision_event.set()
+        return True
+
+    def decide(self, run_id: str, approve: bool) -> bool:
+        """Record the person's answer to the purchase the personal agent is waiting on."""
+        run = self.get(run_id)
+        if run is None or run.status != "awaiting_decision":
+            return False
+        run.decision_value = bool(approve)
+        run.decision_event.set()
         return True
 
     def confirm_approval(self, run_id: str) -> bool:
@@ -399,6 +446,111 @@ class DemoRunner:
             run.update(status="failed", error=f"The demo run failed ({type(exc).__name__}).", finished_at=utc_now_iso())
             run.emit("run_finished", {"status": "failed", "error": run.error})
 
+    # --- personal agent runs ---------------------------------------------------------
+
+    def _execute_assistant(self, run: DemoRun, base_url: str, effort: str) -> None:
+        config = run.mandate_config or {}
+        persona = make_persona(run.task or DEFAULT_TASK)
+        mandate = SpendingMandate(
+            budget=Decimal(config.get("budget", DEFAULT_BUDGET)),
+            approval_threshold=Decimal(config.get("approval_threshold", DEFAULT_APPROVAL_THRESHOLD)),
+            allowed_types=frozenset(config.get("allowed_types") or PAYMENT_TYPES),
+        )
+        run.update(mandate=mandate.snapshot())
+        run.emit(
+            "run_started",
+            {
+                "driver": run.driver,
+                "persona": run.persona,
+                "persona_label": persona.label,
+                "task": persona.task,
+                "crawler_id": run.crawler_id,
+                "model": run.model,
+                "provider": run.provider,
+                "mandate": mandate.snapshot(),
+            },
+        )
+        try:
+            with self._http_factory(base_url) as http:
+                toolbox = AssistantToolbox(
+                    http=http,
+                    agent_id=run.crawler_id,
+                    mandate=mandate,
+                    sleep=self._sleep or (lambda seconds: run.cancel_event.wait(seconds)),
+                )
+                toolbox.decision_handler = lambda request: self._await_decision(run, toolbox, request)
+                toolbox.checkout_handler = lambda url: self._await_approval(run, toolbox.crawler, http, url)
+
+                def on_event(kind: str, payload: dict[str, Any]) -> None:
+                    if kind == "tool_result":
+                        run.emit("tool_result", _tool_result_event(payload["name"], payload["result"], payload["is_error"]))
+                        self._sync_assistant(run, toolbox)
+                    elif kind == "tool_call":
+                        run.emit("tool_call", {"name": payload["name"], "input": payload["input"]})
+                    else:
+                        run.emit(kind, dict(payload))
+
+                assert run.provider is not None
+                agent = CrawlerAgent(
+                    llm=self._llm_factory(run.provider),
+                    toolbox=toolbox,
+                    persona=persona,
+                    model=run.model,
+                    effort=effort,
+                    max_turns=ASSISTANT_MAX_TURNS,
+                    on_event=on_event,
+                    provider=run.provider,
+                    should_stop=run.cancel_event.is_set,
+                    tools=ASSISTANT_TOOL_DEFINITIONS,
+                )
+                result = agent.run()
+                run.update(
+                    usage={
+                        "turns": result.turns,
+                        "input_tokens": result.input_tokens,
+                        "output_tokens": result.output_tokens,
+                        "cached_input_tokens": result.cache_read_tokens,
+                    },
+                    model=result.model,
+                )
+                if toolbox.crawler.access_token and toolbox.crawler.outcome is None:
+                    run.emit("text", {"text": "The agent stopped with a crawl session still open; completing it now so the deposit is settled."})
+                    run.emit("tool_call", {"name": "complete_session", "input": {}})
+                    content, is_error = toolbox.execute("complete_session", {})
+                    run.emit("tool_result", _tool_result_event("complete_session", json.loads(content), is_error))
+                    self._sync_assistant(run, toolbox)
+                explanation = self._fetch_explanation(http, toolbox.crawler)
+                final_status = "cancelled" if result.stop == "cancelled" else ("failed" if result.stop in ("error", "refusal") else "completed")
+                run.update(
+                    final_text=result.final_text or None,
+                    error=result.error,
+                    explanation=explanation,
+                    status=final_status,
+                    finished_at=utc_now_iso(),
+                    pending_decision=None,
+                )
+                run.emit("run_finished", {"status": final_status, "stop": result.stop, "error": result.error, "mandate": mandate.snapshot()})
+        except Exception:  # report, never crash the server thread silently
+            logger.exception("Agent run %s failed", run.run_id)
+            run.update(status="failed", error="The agent run failed unexpectedly.", finished_at=utc_now_iso(), pending_decision=None)
+            run.emit("run_finished", {"status": "failed", "error": run.error})
+
+    def _sync_assistant(self, run: DemoRun, toolbox: AssistantToolbox) -> None:
+        self._sync_state(run, toolbox.crawler)
+        run.update(mandate=toolbox.mandate.snapshot())
+
+    def _await_decision(self, run: DemoRun, toolbox: AssistantToolbox, request: dict[str, Any]) -> bool:
+        """Ask the person (in the page) to approve a purchase; declined on timeout or stop."""
+        run.decision_event.clear()
+        run.update(status="awaiting_decision", pending_decision=dict(request), decision_value=None, mandate=toolbox.mandate.snapshot())
+        run.emit("decision_required", dict(request))
+        answered = run.decision_event.wait(DECISION_TIMEOUT_SECONDS)
+        approved = bool(answered and run.decision_value and not run.cancel_event.is_set())
+        outcome = "approved" if approved else ("timeout" if not answered else ("cancelled" if run.cancel_event.is_set() else "declined"))
+        run.update(status="running", pending_decision=None)
+        run.emit("decision_done", {"outcome": outcome, "title": request.get("title"), "amount": request.get("amount")})
+        return approved
+
     @staticmethod
     def _sync_state(run: DemoRun, toolbox: GatewayToolbox) -> None:
         changes: dict[str, Any] = {}
@@ -415,6 +567,9 @@ class DemoRunner:
         """Wait for the viewer to approve the PayPal Sandbox checkout in a popup."""
         deposit = toolbox.deposit or {}
         challenge = toolbox.challenge or {}
+        # A personal-agent run can need several PayPal approvals; each waits for its own.
+        if not run.cancel_event.is_set():
+            run.approved_event.clear()
         run.update(status="awaiting_approval", approval_url=url, deposit=dict(deposit))
         run.emit("approval_required", {"approval_url": url, "deposit_id": deposit.get("deposit_id")})
         deadline = time.monotonic() + APPROVAL_TIMEOUT_SECONDS

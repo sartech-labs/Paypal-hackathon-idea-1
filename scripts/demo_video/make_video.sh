@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Record and render the CrawlerTrust demo video against the live PayPal Sandbox.
+# Record and render the AgentTrust demo video against the live PayPal Sandbox.
 #
 # Usage: scripts/demo_video/make_video.sh [ai|scripted] [output-dir]
 # Needs: PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET (Sandbox app), and for the AI driver

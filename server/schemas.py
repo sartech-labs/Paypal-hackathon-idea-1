@@ -1,4 +1,4 @@
-"""Pydantic models, enums, and state transition definitions for CrawlerTrust."""
+"""Pydantic models, enums, and state transition definitions for AgentTrust."""
 
 from __future__ import annotations
 
@@ -694,7 +694,7 @@ class AuditSummaryResponse(BaseModel):
 
 
 class PayPalToolCallTrace(BaseModel):
-    source: Literal["paypal_mcp", "crawlertrust"]
+    source: Literal["paypal_mcp", "agenttrust"]
     tool: str
     arguments: dict[str, Any] = Field(default_factory=dict)
     ok: bool
@@ -706,7 +706,7 @@ class PayPalToolCallTrace(BaseModel):
 
 class PayPalVerificationCheck(BaseModel):
     label: str
-    crawlertrust: str
+    agenttrust: str
     paypal: str
     status: Literal["match", "mismatch", "info"]
 
@@ -763,9 +763,22 @@ class DemoRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     driver: Literal["ai", "scripted"]
-    persona: Literal["compliant", "rogue"]
+    persona: Literal["compliant", "rogue", "assistant"]
     # Content access tier for the compliant crawler (validated against the site's tiers).
     tier: Optional[str] = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{1,31}$")
+    # Personal agent (persona "assistant"): the person's request and spending mandate.
+    task: Optional[str] = Field(default=None, min_length=8, max_length=800)
+    budget: Optional[str] = Field(default=None, pattern=r"^\d{1,4}(\.\d{1,2})?$")
+    approval_threshold: Optional[str] = Field(default=None, pattern=r"^\d{1,4}(\.\d{1,2})?$")
+    allowed_types: Optional[list[Literal["deposit", "access", "subscription", "product"]]] = Field(default=None, max_length=4)
+
+
+class DemoDecisionRequest(BaseModel):
+    """The person's answer to a purchase the personal agent asked to make."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approve: bool
 
 
 class DemoRunEvent(BaseModel):
@@ -778,8 +791,8 @@ class DemoRunEvent(BaseModel):
 class DemoRunResponse(BaseModel):
     run_id: str
     driver: Literal["ai", "scripted"]
-    persona: Literal["compliant", "rogue"]
-    status: Literal["running", "awaiting_approval", "completed", "failed", "cancelled"]
+    persona: Literal["compliant", "rogue", "assistant"]
+    status: Literal["running", "awaiting_approval", "awaiting_decision", "completed", "failed", "cancelled"]
     crawler_id: str
     model: Optional[str] = None
     provider: Optional[str] = None
@@ -793,6 +806,10 @@ class DemoRunResponse(BaseModel):
     error: Optional[str] = None
     usage: dict[str, Any] = Field(default_factory=dict)
     pricing_tier: Optional[dict[str, Any]] = None
+    # Personal agent runs: the task, the purchase awaiting the person, and the mandate ledger.
+    task: Optional[str] = None
+    pending_decision: Optional[dict[str, Any]] = None
+    mandate: Optional[dict[str, Any]] = None
     events: list[DemoRunEvent] = Field(default_factory=list)
     next_seq: int = 0
 
@@ -843,3 +860,198 @@ class DemoRequestRow(BaseModel):
 class DemoRequestHistoryResponse(BaseModel):
     rows: list[DemoRequestRow]
     generated_at: str
+
+
+# --- Agent commerce: pay-per-access, subscriptions, products -----------------------------
+
+_PRICE_PATTERN = r"^\d{1,6}(\.\d{1,2})?$"
+_ID_PATTERN = r"^[a-z][a-z0-9_-]{1,63}$"
+
+
+class ProtectedPage(BaseModel):
+    """Content served only to a buyer whose token covers its path."""
+
+    title: str
+    content_type: str = "text/html; charset=utf-8"
+    body: str
+
+
+class AccessItem(BaseModel):
+    """A fixed-price, non-refundable item: one payment unlocks one resource (video, dataset, audio)."""
+
+    item_id: str = Field(..., pattern=_ID_PATTERN)
+    kind: Literal["video", "audio", "dataset", "report", "article"]
+    title: str
+    description: str
+    price: str = Field(..., pattern=_PRICE_PATTERN)
+    path: str = Field(..., pattern=r"^/media/[a-z0-9/_-]+$")
+    content_type: str = "text/html; charset=utf-8"
+    body: str
+
+
+class SubscriptionPlan(BaseModel):
+    """A recurring plan billed through PayPal Subscriptions; unlocks every page under path_prefix."""
+
+    plan_id: str = Field(..., pattern=_ID_PATTERN)
+    name: str
+    description: str
+    price: str = Field(..., pattern=_PRICE_PATTERN)
+    interval_unit: Literal["DAY", "WEEK", "MONTH", "YEAR"] = "MONTH"
+    interval_count: int = Field(default=1, ge=1, le=12)
+    path_prefix: str = Field(..., pattern=r"^/members$|^/members/[a-z0-9/_-]+$")
+    benefits: list[str] = Field(default_factory=list)
+
+
+class Product(BaseModel):
+    """A product an agent can buy: digital (download link) or physical (shipped)."""
+
+    sku: str = Field(..., pattern=_ID_PATTERN)
+    name: str
+    description: str
+    price: str = Field(..., pattern=_PRICE_PATTERN)
+    fulfillment: Literal["digital", "physical"]
+    shipping: str = Field(default="0.00", pattern=_PRICE_PATTERN)
+    download_path: Optional[str] = Field(default=None, pattern=r"^/downloads/[a-z0-9/_-]+$")
+
+
+class CommerceCatalogFile(BaseModel):
+    merchant_name: str
+    catalog_version: str = "1.0"
+    access_items: list[AccessItem] = Field(default_factory=list)
+    subscription_plans: list[SubscriptionPlan] = Field(default_factory=list)
+    members_pages: dict[str, ProtectedPage] = Field(default_factory=dict)
+    products: list[Product] = Field(default_factory=list)
+    downloads: dict[str, ProtectedPage] = Field(default_factory=dict)
+
+
+class OrderLine(BaseModel):
+    ref: str  # item_id or sku
+    name: str
+    unit_price: str
+    quantity: int
+    category: Literal["DIGITAL_GOODS", "PHYSICAL_GOODS"]
+
+
+class CommerceOrderRecord(BaseModel):
+    order_id: str
+    kind: Literal["access", "product"]
+    agent_id: str
+    status: Literal["CREATED", "APPROVAL_REQUIRED", "PAID", "FAILED", "CANCELLED"]
+    amount: str
+    currency: str
+    lines: list[OrderLine]
+    shipping: str = "0.00"
+    purpose: Optional[str] = None
+    payment_mode: PaymentMode
+    simulated: bool
+    provider_order_id: Optional[str] = None
+    provider_capture_id: Optional[str] = None
+    approval_url: Optional[str] = None
+    fulfillment_status: Optional[Literal["DELIVERED", "PROCESSING", "PENDING_PAYMENT"]] = None
+    grants: list[str] = Field(default_factory=list)
+    access_token_hash: Optional[str] = None
+    created_at: str
+    paid_at: Optional[str] = None
+    failure_reason: Optional[str] = None
+
+
+class SubscriptionRecord(BaseModel):
+    subscription_ref: str
+    plan_id: str
+    plan_name: str
+    agent_id: str
+    status: Literal["APPROVAL_PENDING", "APPROVED", "ACTIVE", "SUSPENDED", "CANCELLED", "EXPIRED", "FAILED"]
+    amount: str
+    currency: str
+    interval_unit: str
+    interval_count: int
+    path_prefix: str
+    purpose: Optional[str] = None
+    payment_mode: PaymentMode
+    simulated: bool
+    provider_plan_id: Optional[str] = None
+    provider_subscription_id: Optional[str] = None
+    approval_url: Optional[str] = None
+    next_billing_time: Optional[str] = None
+    access_token_hash: Optional[str] = None
+    created_at: str
+    activated_at: Optional[str] = None
+    cancelled_at: Optional[str] = None
+    failure_reason: Optional[str] = None
+
+
+class CheckoutLineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sku: str = Field(..., pattern=_ID_PATTERN)
+    quantity: int = Field(default=1, ge=1, le=10)
+
+
+class CheckoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str = Field(..., min_length=3, max_length=128)
+    offer_type: Literal["access", "product"]
+    item_id: Optional[str] = Field(default=None, pattern=_ID_PATTERN)
+    items: list[CheckoutLineRequest] = Field(default_factory=list, max_length=10)
+    purpose: Optional[str] = Field(default=None, max_length=300)
+
+
+class AgentActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str = Field(..., min_length=3, max_length=128)
+
+
+class SubscribeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str = Field(..., min_length=3, max_length=128)
+    plan_id: str = Field(..., pattern=_ID_PATTERN)
+    purpose: Optional[str] = Field(default=None, max_length=300)
+
+
+class CommerceOrderResponse(BaseModel):
+    order_id: str
+    kind: Literal["access", "product"]
+    agent_id: str
+    status: str
+    amount: str
+    currency: str
+    lines: list[OrderLine]
+    shipping: str
+    payment_mode: PaymentMode
+    simulated: bool
+    provider_order_id: Optional[str] = None
+    provider_capture_id: Optional[str] = None
+    approval_url: Optional[str] = None
+    fulfillment_status: Optional[str] = None
+    grants: list[str] = Field(default_factory=list)
+    created_at: str
+    paid_at: Optional[str] = None
+    failure_reason: Optional[str] = None
+    # Returned once, on the call that first confirms payment. Stored only as a hash.
+    access_token: Optional[str] = None
+
+
+class SubscriptionResponse(BaseModel):
+    subscription_ref: str
+    plan_id: str
+    plan_name: str
+    agent_id: str
+    status: str
+    amount: str
+    currency: str
+    interval_unit: str
+    interval_count: int
+    path_prefix: str
+    payment_mode: PaymentMode
+    simulated: bool
+    provider_subscription_id: Optional[str] = None
+    approval_url: Optional[str] = None
+    next_billing_time: Optional[str] = None
+    created_at: str
+    activated_at: Optional[str] = None
+    cancelled_at: Optional[str] = None
+    failure_reason: Optional[str] = None
+    access_token: Optional[str] = None

@@ -1,4 +1,4 @@
-"""PayPal assistant: checks CrawlerTrust deposits against PayPal's records through MCP.
+"""PayPal assistant: checks AgentTrust deposits against PayPal's records through MCP.
 
 Two features, both read-only:
 - verify_deposit: deterministic. Reads the deposit's PayPal order (and refund) through
@@ -35,15 +35,15 @@ MAX_PREVIEW_CHARS = 1500
 MAX_DEPOSITS_LISTED = 25
 
 ASSISTANT_SYSTEM = """\
-You are the PayPal assistant in the CrawlerTrust publisher console. CrawlerTrust asks AI \
+You are the PayPal assistant in the AgentTrust publisher console. AgentTrust asks AI \
 crawlers for a small refundable PayPal deposit: compliant sessions get it back (refund, or \
 a voided authorization hold), sessions that break the site's rules forfeit it.
 
 You answer the publisher's questions with read-only tools:
-- list_crawlertrust_deposits reads the gateway's own deposit records, including the PayPal \
+- list_agenttrust_deposits reads the gateway's own deposit records, including the PayPal \
 order, capture, authorization, and refund IDs.
 - get_order, get_refund, list_transactions, list_disputes, and get_dispute are tools of \
-PayPal's MCP server and read PayPal's records. An order's custom_id is the CrawlerTrust \
+PayPal's MCP server and read PayPal's records. An order's custom_id is the AgentTrust \
 deposit ID; captures and authorizations are under purchase_units[0].payments.
 
 Rules:
@@ -74,8 +74,8 @@ def _tool(name: str, description: str, properties: dict[str, Any]) -> ToolSpec:
 _NULLABLE_STRING = {"type": ["string", "null"]}
 
 LOCAL_TOOL = _tool(
-    "list_crawlertrust_deposits",
-    "List the gateway's most recent CrawlerTrust deposits, newest first: deposit and "
+    "list_agenttrust_deposits",
+    "List the gateway's most recent AgentTrust deposits, newest first: deposit and "
     "crawler IDs, outcome, settlement mode, amount, and the PayPal order, capture, "
     "authorization, and refund IDs to look up with the PayPal tools.",
     {"limit": {"type": "integer", "description": f"How many deposits to return (1-{MAX_DEPOSITS_LISTED})."}},
@@ -244,7 +244,7 @@ def _expected_statuses(deposit: DepositRecord) -> tuple[Optional[str], Optional[
 
 def _check(label: str, ours: str, theirs: str, ok: Optional[bool]) -> PayPalVerificationCheck:
     status = "info" if ok is None else ("match" if ok else "mismatch")
-    return PayPalVerificationCheck(label=label, crawlertrust=ours, paypal=theirs, status=status)  # type: ignore[arg-type]
+    return PayPalVerificationCheck(label=label, agenttrust=ours, paypal=theirs, status=status)  # type: ignore[arg-type]
 
 
 class PayPalAssistant:
@@ -413,7 +413,7 @@ class PayPalAssistant:
             rows = await self._deposit_rows(limit)
             traces.append(
                 PayPalToolCallTrace(
-                    source="crawlertrust",
+                    source="agenttrust",
                     tool=name,
                     arguments={"limit": limit},
                     ok=True,

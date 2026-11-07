@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AgentTrust Agent Studio</title>
+  <meta name="description" content="Give one AI agent a task and a spending mandate, and watch it crawl with a refundable deposit, buy pay-per-access media, subscribe, and shop, all paid through PayPal.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%234c8dff'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>
+    try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
+  </script>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="stylesheet" href="/static/agent.css">
+  <script src="/static/agent.js" defer></script>
+</head>
+<body>
+<header class="appbar">
+  <div class="appbar-inner">
+    <a class="brand-mark" href="/agent" aria-label="AgentTrust home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="var(--accent)"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+      <span class="brand-name">AgentTrust</span>
+      <span class="brand-tag">Agent studio</span>
+    </a>
+    <nav class="nav" aria-label="Pages">
+      <a href="/agent" aria-current="page">Agent studio</a>
+      <a href="/">Crawler demo</a>
+      <a href="/console">Publisher console</a>
+      <a href="/docs">API docs</a>
+    </nav>
+    <div class="controls">
+      <div class="admin-menu">
+        <button type="button" id="admin-toggle" aria-expanded="false" aria-controls="admin-pop"><span aria-hidden="true">🔒</span> <span id="admin-toggle-text">Admin</span></button>
+        <div class="admin-pop" id="admin-pop" hidden>
+          <p class="hint">The admin token unlocks private deployments. Public demos work without it.</p>
+          <form class="token-form" id="token-form" autocomplete="off">
+            <input type="password" id="admin-token" placeholder="Admin token" aria-label="Admin token">
+            <button type="submit" class="primary">Use token</button>
+          </form>
+        </div>
+      </div>
+      <button type="button" id="theme-toggle" aria-label="Switch color theme">Theme: dark</button>
+    </div>
+  </div>
+</header>
+
+<main class="app studio">
+  <section class="studio-hero" aria-labelledby="hero-title">
+    <div>
+      <p class="eyebrow">Agentic commerce · backed by PayPal</p>
+      <h1 id="hero-title">One AI agent. <em>Every way to pay a website.</em></h1>
+      <p class="tagline">Give your agent a task and a spending mandate. It reads the site's offer catalog, then crawls with a refundable deposit, buys pay-per-access media, subscribes, and shops, all through PayPal. The site prices every offer and verifies every payment, and you approve anything large or recurring.</p>
+      <div class="badges" id="badges" aria-label="Site configuration"></div>
+    </div>
+  </section>
+
+  <section class="banner" id="banner" role="status" hidden></section>
+
+  <section class="offer-strip" aria-labelledby="offers-title">
+    <h2 class="strip-title" id="offers-title">What <span id="merchant-name">this site</span> sells to agents</h2>
+    <div class="offer-grid" id="offer-grid">
+      <p class="empty">Loading the offer catalog...</p>
+    </div>
+  </section>
+
+  <section class="card launch" aria-label="Task and spending mandate">
+    <div class="launch-grid">
+      <div class="launch-col">
+        <label class="field-label" for="task">Your request to the agent</label>
+        <textarea id="task" rows="4" maxlength="800" spellcheck="true"></textarea>
+        <div class="presets" id="presets" aria-label="Example requests"></div>
+      </div>
+      <div class="launch-col mandate-col">
+        <p class="field-label">Spending mandate <span class="muted">(enforced in code)</span></p>
+        <div class="mandate-fields">
+          <label class="money-field"><span>Budget</span><span class="money-input"><span class="cur" data-currency>$</span><input type="number" id="budget" min="1" max="200" step="1" value="60"></span></label>
+          <label class="money-field"><span>Ask me above</span><span class="money-input"><span class="cur" data-currency>$</span><input type="number" id="threshold" min="0" max="200" step="1" value="10"></span></label>
+        </div>
+        <fieldset class="type-toggles">
+          <legend>Allowed payment types</legend>
+          <label><input type="checkbox" name="ptype" value="deposit" checked> Crawl deposits</label>
+          <label><input type="checkbox" name="ptype" value="access" checked> Pay-per-access</label>
+          <label><input type="checkbox" name="ptype" value="subscription" checked> Subscriptions</label>
+          <label><input type="checkbox" name="ptype" value="product" checked> Products</label>
+        </fieldset>
+        <p class="hint">Recurring charges always come to you for approval.</p>
+      </div>
+    </div>
+    <div class="launch-foot">
+      <p class="hint" id="launch-hint" role="status"></p>
+      <div class="launch-actions">
+        <button type="button" class="danger" id="stop-button" hidden>Stop agent</button>
+        <button type="button" class="primary go" id="start-button">▶ Run agent</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="decision" id="decision" role="alertdialog" aria-labelledby="decision-title" aria-describedby="decision-reason" hidden>
+    <div class="decision-icon" aria-hidden="true">?</div>
+    <div class="decision-body">
+      <p class="eyebrow" id="decision-kind">Approval needed</p>
+      <h2 id="decision-title"></h2>
+      <p class="decision-amount" id="decision-amount"></p>
+      <p class="decision-reason" id="decision-reason"></p>
+      <p class="hint" id="decision-meta"></p>
+    </div>
+    <div class="decision-actions">
+      <button type="button" id="decline-button">Decline</button>
+      <button type="button" class="primary" id="approve-button">Approve</button>
+    </div>
+  </section>
+
+  <section class="decision paypal-approve" id="paypal-approval" role="alert" hidden>
+    <div class="decision-icon" aria-hidden="true">P</div>
+    <div class="decision-body">
+      <p class="eyebrow">PayPal approval</p>
+      <h2>Approve the payment at PayPal</h2>
+      <p class="decision-reason">The site created a PayPal Sandbox order or subscription. Approve it with a Sandbox buyer account; the agent continues on its own.</p>
+    </div>
+    <div class="decision-actions">
+      <button type="button" class="primary" id="paypal-open">Open PayPal</button>
+      <button type="button" id="paypal-done">I approved it</button>
+    </div>
+  </section>
+
+  <div class="studio-layout">
+    <section class="card" aria-labelledby="activity-title">
+      <div class="card-head">
+        <div class="section-title">
+          <span class="section-icon" aria-hidden="true">✦</span>
+          <div>
+            <h2 id="activity-title">Agent activity</h2>
+            <p class="card-sub" id="run-sub">Each tool the agent uses, what it paid, and what the site answered.</p>
+          </div>
+        </div>
+        <span class="run-state" id="run-state" data-state="idle"><span class="pulse" aria-hidden="true"></span><span id="run-state-text">Idle</span></span>
+      </div>
+      <label class="inline-check show-thinking"><input type="checkbox" id="show-thinking"> Show the agent's reasoning</label>
+      <ol class="activity" id="activity" aria-live="polite">
+        <li class="activity-empty">Start a run to watch the agent work.</li>
+      </ol>
+      <div class="report" id="report" hidden></div>
+    </section>
+
+    <aside class="studio-side">
+      <section class="card wallet" aria-labelledby="wallet-title">
+        <div class="card-head">
+          <div class="section-title">
+            <span class="section-icon" aria-hidden="true">$</span>
+            <div>
+              <h2 id="wallet-title">Mandate &amp; spend</h2>
+              <p class="card-sub">Net of refunded deposits. Updated after every payment.</p>
+            </div>
+          </div>
+        </div>
+        <div class="wallet-figures">
+          <div><span class="wf-label">Budget</span><strong id="w-budget">-</strong></div>
+          <div><span class="wf-label">Spent (net)</span><strong id="w-spent">-</strong></div>
+          <div><span class="wf-label">Remaining</span><strong id="w-remaining" class="good">-</strong></div>
+        </div>
+        <div class="meter" aria-hidden="true"><span class="meter-fill" id="w-meter"></span></div>
+        <ul class="purchases" id="purchases"><li class="empty">No payments yet.</li></ul>
+      </section>
+
+      <section class="card" aria-labelledby="types-title">
+        <div class="card-head">
+          <div class="section-title">
+            <span class="section-icon" aria-hidden="true">≡</span>
+            <div>
+              <h2 id="types-title">Payment types in this run</h2>
+              <p class="card-sub">Four PayPal flows, one agent.</p>
+            </div>
+          </div>
+        </div>
+        <ul class="type-tally" id="type-tally"></ul>
+      </section>
+    </aside>
+  </div>
+
+  <footer>
+    AgentTrust · websites ready for the agentic era, backed by PayPal ·
+    <a href="/.well-known/agent-commerce.json">Offer catalog JSON</a> ·
+    <a href="/console">Publisher console</a> ·
+    <a href="/docs">API docs</a>
+  </footer>
+</main>
+</body>
+</html>

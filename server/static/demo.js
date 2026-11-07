@@ -1,4 +1,4 @@
-/* CrawlerTrust live demo: start a crawler run, follow it live, and verify with PayPal.
+/* AgentTrust live demo: start a crawler run, follow it live, and verify with PayPal.
    Values from crawlers, pages, PayPal, and AI models are inserted with textContent. */
 (() => {
   "use strict";
@@ -510,7 +510,7 @@
       if (!state.runId && state.config.active_run_id) attach(state.config.active_run_id);
       updateLauncher();
     } catch (_) {
-      showBanner("Cannot reach the CrawlerTrust gateway. Is the server running?");
+      showBanner("Cannot reach the AgentTrust gateway. Is the server running?");
     }
   }
 
@@ -1085,7 +1085,7 @@
       selection: "multi",
       flashNew: true,
       pageSize: 25,
-      exportName: "crawlertrust-requests",
+      exportName: "agenttrust-requests",
       search: "Search crawler, resource, tier...",
       noRows: "No gateway requests yet. Start a run.",
       segments: {
@@ -1370,7 +1370,7 @@
   function openApproval() {
     const url = $("approval-open").dataset.url;
     if (!url || !/^https:\/\/([a-z0-9-]+\.)*paypal\.com\//i.test(url)) return;
-    state.popup = window.open(url, "crawlertrust-paypal", "popup,width=480,height=760");
+    state.popup = window.open(url, "agenttrust-paypal", "popup,width=480,height=760");
     if (!state.popup) window.location.assign(url);
   }
 
@@ -1439,7 +1439,7 @@
     $("approval-open").addEventListener("click", openApproval);
     $("approval-done").addEventListener("click", confirmApproval);
     window.addEventListener("message", (event) => {
-      if (event.origin === window.location.origin && event.data && event.data.type === "crawlertrust-paypal") confirmApproval();
+      if (event.origin === window.location.origin && event.data && event.data.type === "agenttrust-paypal") confirmApproval();
     });
 
     if (window.CTPayPal) {

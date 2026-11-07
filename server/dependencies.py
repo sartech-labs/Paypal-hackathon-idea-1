@@ -14,6 +14,7 @@ from server.core.sessions import SessionManager
 from server.schemas import PaymentMode, SessionRecord, SettlementMode
 from server.services.ai_client import TextGenerator, build_text_generator
 from server.services.audit_logger import AuditLogger
+from server.services.commerce import CommerceCatalog, CommerceManager
 from server.services.content_service import ContentService
 from server.services.demo_runner import DemoRunner, HttpFactory, LlmFactory
 from server.services.deposit_manager import DepositManager
@@ -74,6 +75,13 @@ class AppContainer:
             audit_logger=self.audit_logger,
             settlement_mode=SettlementMode(settings.deposit_settlement),
         )
+        # Agent commerce: pay-per-access items, PayPal subscriptions, and products.
+        self.commerce = CommerceManager(
+            db_path=settings.commerce_db_path,
+            catalog=CommerceCatalog(settings.commerce_catalog_path, self.site_config.currency),
+            payment_provider=self.payment_provider,
+            audit_logger=self.audit_logger,
+        )
         self.session_manager = SessionManager(
             sessions_db_path=settings.sessions_db_path,
             site_config=self.site_config,
@@ -95,6 +103,7 @@ class AppContainer:
         """Load audit log, payment/challenge records, and session snapshots from disk."""
         self.audit_logger.load_from_disk()
         self.deposit_manager.load_from_disk()
+        self.commerce.load_from_disk()
         self.session_manager.load_from_disk()
 
 

@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "crawlertrust"
+name = "agenttrust"
 version = "0.1.0"
 description = "Deposit-based accountability gateway for AI crawlers using FastAPI and PayPal Sandbox"
 readme = "README.md"

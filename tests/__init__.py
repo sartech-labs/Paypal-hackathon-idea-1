@@ -1,2 +1,2 @@
-"""Automated pytest test suite for CrawlerTrust."""
+"""Automated pytest test suite for AgentTrust."""
 

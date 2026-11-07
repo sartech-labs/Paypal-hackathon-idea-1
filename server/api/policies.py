@@ -83,7 +83,7 @@ async def health_check(
 ) -> dict[str, Any]:
     return {
         "status": "ok",
-        "service": "CrawlerTrust Gateway",
+        "service": "AgentTrust Gateway",
         "site_id": container.site_config.site_id,
         "policy_version": container.site_config.policy_version,
         "payment_mode": container.payment_provider.mode.value,

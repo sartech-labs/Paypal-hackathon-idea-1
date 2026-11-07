@@ -1,4 +1,4 @@
-"""Configuration management and validated settings for CrawlerTrust."""
+"""Configuration management and validated settings for AgentTrust."""
 
 from __future__ import annotations
 
@@ -68,6 +68,10 @@ class Settings(BaseModel):
     audit_log_path: Path = Field(default=Path("storage/audit.jsonl"))
     payments_db_path: Path = Field(default=Path("storage/payments_db.json"))
     sessions_db_path: Path = Field(default=Path("storage/sessions_db.json"))
+    # Agent commerce: the offer catalog (pay-per-access, subscriptions, products) and the
+    # store of orders, subscriptions and access grants.
+    commerce_catalog_path: Path = Field(default=Path("data/commerce_catalog.json"))
+    commerce_db_path: Path = Field(default=Path("storage/commerce_db.json"))
 
     admin_api_token: str = Field(default="")
     # Read-only publisher dashboard without the admin token (for demo deployments only).
@@ -238,6 +242,8 @@ def load_settings_from_env() -> Settings:
         audit_log_path=Path(os.getenv("AUDIT_LOG_PATH", "storage/audit.jsonl")),
         payments_db_path=Path(os.getenv("PAYMENTS_DB_PATH", "storage/payments_db.json")),
         sessions_db_path=Path(os.getenv("SESSIONS_DB_PATH", "storage/sessions_db.json")),
+        commerce_catalog_path=Path(os.getenv("COMMERCE_CATALOG_PATH", "data/commerce_catalog.json")),
+        commerce_db_path=Path(os.getenv("COMMERCE_DB_PATH", "storage/commerce_db.json")),
         admin_api_token=os.getenv("ADMIN_API_TOKEN", ""),
         dashboard_public=_env_bool("DASHBOARD_PUBLIC", False),
         demo_public=_env_bool("DEMO_PUBLIC", False),

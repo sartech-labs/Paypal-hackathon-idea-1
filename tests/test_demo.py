@@ -71,9 +71,9 @@ def _results(run: dict[str, Any], name: str) -> list[dict[str, Any]]:
 
 def test_demo_page_console_and_assets_are_served(demo_client: TestClient) -> None:
     page = demo_client.get("/")
-    assert page.status_code == 200 and "CrawlerTrust Live Demo" in page.text
+    assert page.status_code == 200 and "AgentTrust Live Demo" in page.text
     assert demo_client.get("/demo").status_code == 200
-    assert "CrawlerTrust publisher console" in demo_client.get("/console").text
+    assert "AgentTrust publisher console" in demo_client.get("/console").text
     for asset in ("/static/demo.js", "/static/demo.css", "/static/paypal_panel.js"):
         assert demo_client.get(asset).status_code == 200
 

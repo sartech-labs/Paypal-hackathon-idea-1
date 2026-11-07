@@ -1,4 +1,4 @@
-"""FastAPI application entrypoint for CrawlerTrust."""
+"""FastAPI application entrypoint for AgentTrust."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from server.api import audit, dashboard, deposits, demo, gateway, paypal, policies, sessions
+from server.api import audit, commerce, dashboard, deposits, demo, gateway, paypal, policies, sessions
 from server.config import Settings, load_settings_from_env
 from server.dependencies import AppContainer
 from server.services.ai_client import TextGenerator
@@ -20,7 +20,7 @@ from server.services.payment_service import PaymentProvider
 from server.services.paypal_mcp import PayPalMCPClient
 from server.services.rate_limiter import SlidingWindowRateLimiter
 
-logger = logging.getLogger("crawlertrust")
+logger = logging.getLogger("agenttrust")
 
 
 def create_app(
@@ -32,7 +32,7 @@ def create_app(
     demo_http_factory: Optional[HttpFactory] = None,
     demo_llm_factory: Optional[LlmFactory] = None,
 ) -> FastAPI:
-    """Create and configure the CrawlerTrust FastAPI application."""
+    """Create and configure the AgentTrust FastAPI application."""
     resolved_settings = settings or load_settings_from_env()
     logging.basicConfig(
         level=getattr(logging, resolved_settings.log_level.upper(), logging.INFO),
@@ -55,15 +55,15 @@ def create_app(
         app_instance.state.container = container
         container.load_persisted_state()
         logger.info(
-            "CrawlerTrust Gateway started (site_id=%s, payment_mode=%s)",
+            "AgentTrust Gateway started (site_id=%s, payment_mode=%s)",
             container.site_config.site_id,
             container.payment_provider.mode.value,
         )
         yield
-        logger.info("CrawlerTrust Gateway shutting down")
+        logger.info("AgentTrust Gateway shutting down")
 
     app = FastAPI(
-        title="CrawlerTrust — Deposit-Based Accountability Gateway for AI Crawlers",
+        title="AgentTrust — Deposit-Based Accountability Gateway for AI Crawlers",
         version="0.1.0",
         description=(
             "Enforces website crawling policies, rate limits, and path restrictions using "
@@ -132,6 +132,7 @@ def create_app(
     app.include_router(dashboard.router)
     app.include_router(demo.router)
     app.include_router(paypal.router)
+    app.include_router(commerce.router)
     app.mount("/static", StaticFiles(directory=dashboard.STATIC_DIR), name="static")
 
     return app

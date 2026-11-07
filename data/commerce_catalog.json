@@ -1,0 +1,97 @@
+{
+  "merchant_name": "Sentinel News",
+  "catalog_version": "1.0",
+  "access_items": [
+    {
+      "item_id": "agent-economy-video",
+      "kind": "video",
+      "title": "The Agent Economy in 12 Minutes (video briefing)",
+      "description": "Narrated video briefing with full transcript: how AI agents are starting to pay websites for data, media and goods.",
+      "price": "2.00",
+      "path": "/media/video/agent-economy-briefing",
+      "content_type": "text/html; charset=utf-8",
+      "body": "<!DOCTYPE html><html><head><title>The Agent Economy in 12 Minutes - Video Briefing</title></head><body><h1>The Agent Economy in 12 Minutes</h1><p><em>SYNTHETIC DEMO CONTENT. Video transcript.</em></p><p>[00:00] Agents now account for a measurable share of web traffic on large publishers, and a growing share of it carries a payment intent.</p><p>[02:40] Three payment patterns dominate: refundable crawl deposits, pay-per-item access for premium media, and agent-initiated subscriptions approved once by a human.</p><p>[06:10] Merchants that publish a machine-readable offer catalog see agents complete checkout without screen-scraping product pages.</p><p>[09:30] The open question is trust: who authorised the agent, how much may it spend, and how does the merchant prove the payment. Payment networks that already hold buyer and merchant identity are positioned to answer it.</p><p>[11:50] Takeaway: websites that expose offers, prices and payment endpoints to agents will capture this demand; the rest will be scraped.</p></body></html>"
+    },
+    {
+      "item_id": "agent-traffic-dataset",
+      "kind": "dataset",
+      "title": "Agent Traffic & Spend Dataset, Q3 (CSV)",
+      "description": "Quarterly dataset of AI agent visits, payment attempts and conversion by site category.",
+      "price": "4.00",
+      "path": "/media/data/agent-traffic-q3",
+      "content_type": "text/csv; charset=utf-8",
+      "body": "site_category,agent_visits_millions,paid_sessions_pct,avg_payment_usd,checkout_conversion_pct\nnews,412,3.1,1.40,0.0\nresearch,96,11.8,4.25,0.0\nretail,288,1.9,38.60,6.4\nsaas,57,4.4,12.10,2.2\ntravel,74,2.7,212.00,1.1\n# SYNTHETIC DEMO CONTENT\n"
+    },
+    {
+      "item_id": "analyst-call-audio",
+      "kind": "audio",
+      "title": "Analyst Call: Payments for AI Agents (audio + notes)",
+      "description": "Recorded analyst call with summary notes on agent payments, fraud and merchant readiness.",
+      "price": "1.50",
+      "path": "/media/audio/analyst-call-agent-payments",
+      "content_type": "text/html; charset=utf-8",
+      "body": "<!DOCTYPE html><html><head><title>Analyst Call: Payments for AI Agents</title></head><body><h1>Analyst Call: Payments for AI Agents</h1><p><em>SYNTHETIC DEMO CONTENT. Call notes.</em></p><ul><li>Spending mandates (budget, merchant allow-lists, approval thresholds) are becoming the standard control for agent purchases.</li><li>Merchants want verifiable payment records rather than agent self-reports.</li><li>Recurring charges remain the area where buyers insist on explicit human approval.</li><li>Fraud teams treat unknown agents like unknown devices: allow small, verified, reversible payments first.</li></ul></body></html>"
+    }
+  ],
+  "subscription_plans": [
+    {
+      "plan_id": "sentinel-pro-monthly",
+      "name": "Sentinel Pro",
+      "description": "Unlimited members-only analysis, the daily agent-economy feed, and the weekly deep dive.",
+      "price": "9.99",
+      "interval_unit": "MONTH",
+      "interval_count": 1,
+      "path_prefix": "/members",
+      "benefits": [
+        "Daily agent-economy feed",
+        "Weekly deep-dive analysis",
+        "Members-only market notes"
+      ]
+    }
+  ],
+  "members_pages": {
+    "/members/daily-feed": {
+      "title": "Daily Agent-Economy Feed (Sentinel Pro)",
+      "content_type": "text/html; charset=utf-8",
+      "body": "<!DOCTYPE html><html><head><title>Daily Agent-Economy Feed</title></head><body><h1>Daily Agent-Economy Feed</h1><p><em>SYNTHETIC DEMO CONTENT. Members only.</em></p><ul><li>Two large marketplaces published machine-readable offer catalogs for AI shopping agents.</li><li>A consumer-bank pilot lets customers give an agent a monthly spending mandate with per-merchant caps.</li><li>Publisher coalition reports refundable crawl deposits cut abusive scraping by roughly half in pilots.</li></ul></body></html>"
+    },
+    "/members/weekly-deep-dive": {
+      "title": "Weekly Deep Dive: Readying a Website for Agents (Sentinel Pro)",
+      "content_type": "text/html; charset=utf-8",
+      "body": "<!DOCTYPE html><html><head><title>Weekly Deep Dive</title></head><body><h1>Readying a Website for Agents</h1><p><em>SYNTHETIC DEMO CONTENT. Members only.</em></p><p>The readiness checklist: publish offers and prices in a machine-readable catalog; answer unpaid requests with HTTP 402 and a way to pay; issue scoped tokens instead of cookies; keep verifiable payment records; and require human approval for recurring charges. Sites that do this convert agent traffic instead of blocking it.</p></body></html>"
+    }
+  },
+  "products": [
+    {
+      "sku": "ebook-agent-economy",
+      "name": "The Agent Economy Playbook (e-book)",
+      "description": "120-page e-book: pricing, payments and policy for websites in the agentic era. Delivered as a download link.",
+      "price": "12.00",
+      "fulfillment": "digital",
+      "download_path": "/downloads/agent-economy-playbook"
+    },
+    {
+      "sku": "print-annual-report",
+      "name": "Sentinel Annual Report 2026 (printed)",
+      "description": "Printed annual market report, shipped worldwide.",
+      "price": "25.00",
+      "fulfillment": "physical",
+      "shipping": "4.99"
+    },
+    {
+      "sku": "mug-sentinel",
+      "name": "Sentinel News mug",
+      "description": "Ceramic mug, 350 ml.",
+      "price": "14.00",
+      "fulfillment": "physical",
+      "shipping": "4.99"
+    }
+  ],
+  "downloads": {
+    "/downloads/agent-economy-playbook": {
+      "title": "The Agent Economy Playbook (e-book download)",
+      "content_type": "text/html; charset=utf-8",
+      "body": "<!DOCTYPE html><html><head><title>The Agent Economy Playbook</title></head><body><h1>The Agent Economy Playbook</h1><p><em>SYNTHETIC DEMO CONTENT. Licensed copy for the purchaser.</em></p><h2>Chapter 1: Offers, not pages</h2><p>Agents buy from catalogs, not from product pages designed for people.</p><h2>Chapter 2: Price behaviour, not access</h2><p>Refundable deposits make honest crawling free and abusive crawling expensive.</p><h2>Chapter 3: Mandates and approvals</h2><p>Let agents spend within a mandate; ask a human for recurring or large commitments.</p></body></html>"
+    }
+  }
+}

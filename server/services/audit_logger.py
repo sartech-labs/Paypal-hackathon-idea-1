@@ -24,7 +24,7 @@ from server.schemas import (
     SessionRecord,
 )
 
-logger = logging.getLogger("crawlertrust.audit")
+logger = logging.getLogger("agenttrust.audit")
 
 
 class AuditLogger:

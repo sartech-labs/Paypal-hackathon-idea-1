@@ -32,7 +32,7 @@ from server.services.ai_client import (
     TextGenerator,
 )
 
-logger = logging.getLogger("crawlertrust.explainer")
+logger = logging.getLogger("agenttrust.explainer")
 
 GATEWAY_EVENT_TYPES = frozenset(
     {"GATEWAY_ACCESS_ALLOWED", "GATEWAY_ACCESS_REJECTED", "POLICY_VIOLATION"}
@@ -52,7 +52,7 @@ MAX_FINDINGS = 6
 CACHE_SIZE = 256
 
 SYSTEM_PROMPT = """\
-You explain why a website's CrawlerTrust gateway returned or kept an AI crawler's \
+You explain why a website's AgentTrust gateway returned or kept an AI crawler's \
 refundable deposit. Readers are the crawler's operator and the website publisher.
 
 The outcome has already been decided by deterministic policy rules. Explain that \

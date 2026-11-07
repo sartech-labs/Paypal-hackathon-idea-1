@@ -20,5 +20,5 @@
   ],
   "policy_endpoint": "/policies",
   "gateway_prefix": "/gateway",
-  "notice": "Automated crawlers and AI agents must establish a CrawlerTrust deposit session and accept the active policy before accessing content under /gateway."
+  "notice": "Automated crawlers and AI agents must establish a AgentTrust deposit session and accept the active policy before accessing content under /gateway."
 }

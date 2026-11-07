@@ -1,4 +1,4 @@
-"""Integration tests for the FastAPI CrawlerTrust gateway, path normalization, and auth."""
+"""Integration tests for the FastAPI AgentTrust gateway, path normalization, and auth."""
 
 from __future__ import annotations
 

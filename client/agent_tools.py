@@ -1,6 +1,6 @@
 """Gateway tools for the AI crawler agent.
 
-Each tool wraps one step of the CrawlerTrust protocol (402 challenge, policy, deposit,
+Each tool wraps one step of the AgentTrust protocol (402 challenge, policy, deposit,
 policy acceptance, crawling, completion). The toolbox keeps protocol state such as the
 challenge, deposit, and session token, so the model never sees the bearer token.
 """
@@ -59,7 +59,7 @@ def _tool(name: str, description: str, properties: dict[str, Any]) -> dict[str, 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     _tool(
         "fetch_page",
-        "Request a page of the website through its CrawlerTrust gateway, for example '/news'. "
+        "Request a page of the website through its AgentTrust gateway, for example '/news'. "
         "Before you have a paid session this returns the site's HTTP 402 payment challenge "
         "(deposit amount, policy version, rules summary). With a session it returns the page "
         "text, wrapped in <untrusted_page_content> tags, plus the remaining session request "
@@ -138,7 +138,7 @@ class ToolCallRecord:
 
 @dataclass
 class GatewayToolbox:
-    """Executes agent tool calls against a CrawlerTrust gateway."""
+    """Executes agent tool calls against a AgentTrust gateway."""
 
     http: HttpClient
     crawler_id: str
@@ -213,9 +213,9 @@ class GatewayToolbox:
             return {
                 "status": 200,
                 "path": path,
-                "pricing_tier": resp.headers.get("X-CrawlerTrust-Pricing-Tier"),
-                "remaining_session_budget": _int_header(resp, "X-CrawlerTrust-Remaining-Budget"),
-                "remaining_window_requests": _int_header(resp, "X-CrawlerTrust-Remaining-Window"),
+                "pricing_tier": resp.headers.get("X-AgentTrust-Pricing-Tier"),
+                "remaining_session_budget": _int_header(resp, "X-AgentTrust-Remaining-Budget"),
+                "remaining_window_requests": _int_header(resp, "X-AgentTrust-Remaining-Window"),
                 "content": (
                     "<untrusted_page_content>\n"
                     f"{text[:MAX_PAGE_TEXT_CHARS]}{' [truncated]' if truncated else ''}\n"

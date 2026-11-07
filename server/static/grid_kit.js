@@ -1,4 +1,4 @@
-/* CrawlerTrust grid kit: one AG Grid (Community) setup shared by the live demo and the console.
+/* AgentTrust grid kit: one AG Grid (Community) setup shared by the live demo and the console.
 
    Adds, on top of a plain AG Grid:
    - a toolbar: quick search, segment filters, a floating-filter toggle, a row counter, and CSV
@@ -202,7 +202,7 @@
         .map((c) => c.getColId());
       const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
       ctl.api.exportDataAsCsv({
-        fileName: `${opts.exportName || "crawlertrust"}-${stamp}.csv`,
+        fileName: `${opts.exportName || "agenttrust"}-${stamp}.csv`,
         onlySelected: selected,
         columnKeys: keys,
         skipPinnedBottom: true,

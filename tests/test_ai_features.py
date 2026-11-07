@@ -198,7 +198,7 @@ TERMS = (
 def _valid_draft(**overrides: Any) -> dict[str, Any]:
     draft: dict[str, Any] = {
         "site_id": "demo-news-site",
-        "site_name": "CrawlerTrust Sentinel News",
+        "site_name": "Sentinel News",
         "policy_version": "1.1",
         "deposit_amount": "0.5",
         "currency": "usd",

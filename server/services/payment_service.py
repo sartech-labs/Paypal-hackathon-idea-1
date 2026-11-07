@@ -111,6 +111,46 @@ class SettlementResult:
     failure_reason: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class OrderLineItem:
+    """One item on an itemized PayPal order (product purchases and pay-per-access)."""
+
+    name: str
+    unit_amount: Decimal
+    quantity: int = 1
+    sku: Optional[str] = None
+    category: str = "DIGITAL_GOODS"  # DIGITAL_GOODS | PHYSICAL_GOODS
+
+
+@dataclass(frozen=True)
+class SubscriptionResult:
+    """State of a PayPal subscription (Subscriptions API v1)."""
+
+    subscription_id: str
+    status: str  # APPROVAL_PENDING | APPROVED | ACTIVE | SUSPENDED | CANCELLED | EXPIRED
+    plan_id: str
+    simulated: bool
+    approval_url: Optional[str] = None
+    next_billing_time: Optional[str] = None
+    last_payment_amount: Optional[Decimal] = None
+    failure_reason: Optional[str] = None
+
+
+def build_amount_breakdown(
+    *, items: list[OrderLineItem], shipping: Decimal, currency: str
+) -> tuple[Decimal, dict[str, Any]]:
+    """Total and PayPal `amount` object (with breakdown) for an itemized order."""
+    item_total = sum(
+        (item.unit_amount.quantize(Decimal("0.01")) * item.quantity for item in items), Decimal("0.00")
+    )
+    shipping = shipping.quantize(Decimal("0.01"))
+    total = (item_total + shipping).quantize(Decimal("0.01"))
+    breakdown: dict[str, Any] = {"item_total": {"currency_code": currency, "value": f"{item_total:.2f}"}}
+    if shipping > 0:
+        breakdown["shipping"] = {"currency_code": currency, "value": f"{shipping:.2f}"}
+    return total, {"currency_code": currency, "value": f"{total:.2f}", "breakdown": breakdown}
+
+
 def _parse_money(amount_obj: Any) -> tuple[Optional[Decimal], Optional[str]]:
     """Parse a PayPal money object into (amount, currency), tolerating malformed input."""
     if not isinstance(amount_obj, dict):
@@ -196,8 +236,15 @@ class PaymentProvider(abc.ABC):
         request_id: str,
         description: str,
         intent: str = "CAPTURE",
+        items: Optional[list[OrderLineItem]] = None,
+        shipping: Decimal = Decimal("0.00"),
+        callback_path: str = "/deposits/paypal",
     ) -> OrderCreationResult:
-        """Create a deposit order with intent CAPTURE or AUTHORIZE."""
+        """Create an order with intent CAPTURE or AUTHORIZE.
+
+        `deposit_id` becomes the order's custom_id (a deposit ID or a commerce order ID).
+        `items` makes it an itemized order whose amount must equal items plus shipping.
+        """
 
     @abc.abstractmethod
     async def authorize_order(
@@ -282,6 +329,34 @@ class PaymentProvider(abc.ABC):
     async def get_refund_details(self, *, refund_id: str) -> RefundDetailsLookupResult:
         """Retrieve an existing refund without submitting a new financial operation."""
 
+    # --- Subscriptions (agent commerce). Optional: providers without them raise. ---------
+
+    async def create_subscription_plan(
+        self,
+        *,
+        name: str,
+        description: str,
+        price: Decimal,
+        currency: str,
+        interval_unit: str,
+        interval_count: int,
+        request_id: str,
+    ) -> str:
+        """Create a billing plan (and its catalog product); returns the plan ID."""
+        raise PaymentProviderError(f"{type(self).__name__} does not support subscriptions.")
+
+    async def create_subscription(self, *, plan_id: str, custom_id: str, request_id: str) -> SubscriptionResult:
+        """Start a subscription; PayPal returns an approval link for the subscriber."""
+        raise PaymentProviderError(f"{type(self).__name__} does not support subscriptions.")
+
+    async def get_subscription(self, *, subscription_id: str) -> SubscriptionResult:
+        """Read the subscription's current status from the provider."""
+        raise PaymentProviderError(f"{type(self).__name__} does not support subscriptions.")
+
+    async def cancel_subscription(self, *, subscription_id: str, reason: str) -> SubscriptionResult:
+        """Cancel a subscription (no further billing cycles)."""
+        raise PaymentProviderError(f"{type(self).__name__} does not support subscriptions.")
+
 
 class MockPaymentProvider(PaymentProvider):
     """
@@ -294,6 +369,9 @@ class MockPaymentProvider(PaymentProvider):
         self._order_by_request_id: dict[str, str] = {}
         self._refund_by_request_id: dict[str, RefundExecutionResult] = {}
         self._refund_by_capture_id: dict[str, RefundExecutionResult] = {}
+        self._plans_by_request_id: dict[str, str] = {}
+        self._subscriptions: dict[str, SubscriptionResult] = {}
+        self._subscription_by_request_id: dict[str, str] = {}
 
     @property
     def mode(self) -> PaymentMode:
@@ -308,7 +386,14 @@ class MockPaymentProvider(PaymentProvider):
         request_id: str,
         description: str,
         intent: str = "CAPTURE",
+        items: Optional[list[OrderLineItem]] = None,
+        shipping: Decimal = Decimal("0.00"),
+        callback_path: str = "/deposits/paypal",
     ) -> OrderCreationResult:
+        if items:
+            total, _ = build_amount_breakdown(items=items, shipping=shipping, currency=currency.upper())
+            if total != amount.quantize(Decimal("0.01")):
+                raise PaymentProviderError(f"Item total {total} does not match order amount {amount:.2f}")
         if request_id in self._order_by_request_id:
             existing_id = self._order_by_request_id[request_id]
             existing = self._orders[existing_id]
@@ -604,6 +689,59 @@ class MockPaymentProvider(PaymentProvider):
             provider_status="COMPLETED",
         )
 
+    # --- Subscriptions (simulated) ---------------------------------------------------
+
+    async def create_subscription_plan(
+        self,
+        *,
+        name: str,
+        description: str,
+        price: Decimal,
+        currency: str,
+        interval_unit: str,
+        interval_count: int,
+        request_id: str,
+    ) -> str:
+        existing = self._plans_by_request_id.get(request_id)
+        if existing:
+            return existing
+        plan_id = f"mock_plan_{secrets.token_hex(6)}"
+        self._plans_by_request_id[request_id] = plan_id
+        return plan_id
+
+    async def create_subscription(self, *, plan_id: str, custom_id: str, request_id: str) -> SubscriptionResult:
+        existing = self._subscription_by_request_id.get(request_id)
+        if existing:
+            return self._subscriptions[existing]
+        subscription_id = f"mock_sub_{secrets.token_hex(8)}"
+        # The mock has no checkout page: the subscription is active at once (simulated).
+        result = SubscriptionResult(
+            subscription_id=subscription_id,
+            status="ACTIVE",
+            plan_id=plan_id,
+            simulated=True,
+        )
+        self._subscriptions[subscription_id] = result
+        self._subscription_by_request_id[request_id] = subscription_id
+        return result
+
+    async def get_subscription(self, *, subscription_id: str) -> SubscriptionResult:
+        found = self._subscriptions.get(subscription_id)
+        if found is None:
+            raise PaymentProviderError(f"Mock subscription not found: {subscription_id}")
+        return found
+
+    async def cancel_subscription(self, *, subscription_id: str, reason: str) -> SubscriptionResult:
+        found = await self.get_subscription(subscription_id=subscription_id)
+        cancelled = SubscriptionResult(
+            subscription_id=found.subscription_id,
+            status="CANCELLED",
+            plan_id=found.plan_id,
+            simulated=True,
+        )
+        self._subscriptions[subscription_id] = cancelled
+        return cancelled
+
 
 # PayPal's published Sandbox test card. Used only when PAYPAL_SANDBOX_AUTOPAY=true, which
 # settings validation allows only against api-m.sandbox.paypal.com. With a card payment
@@ -613,7 +751,7 @@ SANDBOX_TEST_CARD: dict[str, str] = {
     "number": "4032039317984658",
     "expiry": "2030-12",
     "security_code": "123",
-    "name": "CrawlerTrust Sandbox Agent",
+    "name": "AgentTrust Sandbox Agent",
 }
 
 
@@ -841,25 +979,43 @@ class PayPalSandboxProvider(PaymentProvider):
         request_id: str,
         description: str,
         intent: str = "CAPTURE",
+        items: Optional[list[OrderLineItem]] = None,
+        shipping: Decimal = Decimal("0.00"),
+        callback_path: str = "/deposits/paypal",
     ) -> OrderCreationResult:
         quantized = amount.quantize(Decimal("0.01"))
         if intent.upper() not in ("CAPTURE", "AUTHORIZE"):
             raise PaymentProviderError(f"Unsupported PayPal order intent: {intent!r}")
         async with self._build_client() as client:
             token = await self._get_access_token(client)
-            callback_query = urlencode({"deposit_id": deposit_id})
+            id_param = "deposit_id" if callback_path == "/deposits/paypal" else "order_id"
+            callback_query = urlencode({id_param: deposit_id})
+            unit: dict[str, Any] = {
+                "custom_id": deposit_id,
+                "description": description[:127],
+                "amount": {
+                    "currency_code": currency.upper(),
+                    "value": f"{quantized:.2f}",
+                },
+            }
+            if items:
+                total, amount_obj = build_amount_breakdown(items=items, shipping=shipping, currency=currency.upper())
+                if total != quantized:
+                    raise PaymentProviderError(f"Item total {total} does not match order amount {quantized:.2f}")
+                unit["amount"] = amount_obj
+                unit["items"] = [
+                    {
+                        "name": item.name[:127],
+                        "quantity": str(item.quantity),
+                        "unit_amount": {"currency_code": currency.upper(), "value": f"{item.unit_amount:.2f}"},
+                        "category": item.category,
+                        **({"sku": item.sku[:127]} if item.sku else {}),
+                    }
+                    for item in items
+                ]
             body = {
                 "intent": intent.upper(),
-                "purchase_units": [
-                    {
-                        "custom_id": deposit_id,
-                        "description": description[:127],
-                        "amount": {
-                            "currency_code": currency.upper(),
-                            "value": f"{quantized:.2f}",
-                        },
-                    }
-                ],
+                "purchase_units": [unit],
                 "payment_source": (
                     {"card": dict(SANDBOX_TEST_CARD)}
                     if self._autopay
@@ -867,12 +1023,19 @@ class PayPalSandboxProvider(PaymentProvider):
                         "paypal": {
                             "experience_context": {
                                 "return_url": (
-                                    f"{self._app_public_url}/deposits/paypal/return?"
+                                    f"{self._app_public_url}{callback_path}/return?"
                                     f"{callback_query}"
                                 ),
                                 "cancel_url": (
-                                    f"{self._app_public_url}/deposits/paypal/cancel?"
+                                    f"{self._app_public_url}{callback_path}/cancel?"
                                     f"{callback_query}"
+                                ),
+                                # Itemized digital orders skip the shipping address;
+                                # physical goods collect one at checkout.
+                                **(
+                                    {"shipping_preference": "NO_SHIPPING"}
+                                    if items and all(i.category == "DIGITAL_GOODS" for i in items)
+                                    else {}
                                 ),
                             }
                         }
@@ -2128,3 +2291,147 @@ class PayPalSandboxProvider(PaymentProvider):
                 else f"PayPal rejected the capture: {reason}."
             ),
         )
+
+    # --- Subscriptions API v1 (agent commerce) -------------------------------------------
+
+    async def _subscriptions_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: Optional[dict[str, Any]] = None,
+        request_id: Optional[str] = None,
+        ok: tuple[int, ...] = (200, 201),
+    ) -> dict[str, Any]:
+        async with self._build_client() as client:
+            token = await self._get_access_token(client)
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            }
+            if request_id:
+                headers["PayPal-Request-Id"] = request_id
+            try:
+                response = await client.request(method, path, json=json_body, headers=headers)
+            except httpx.TimeoutException as exc:
+                raise PaymentProviderTimeoutError(f"Timed out calling PayPal {path}") from exc
+            except httpx.HTTPError as exc:
+                raise PaymentProviderError(f"HTTP error calling PayPal {path}: {exc}") from exc
+            if response.status_code not in ok:
+                detail = ""
+                try:
+                    err = response.json()
+                    issues = [str(d.get("issue", "")) for d in err.get("details", []) if isinstance(d, dict)]
+                    detail = f" ({err.get('name', '')}: {','.join(issues)})"
+                except ValueError:
+                    pass
+                raise PaymentProviderError(f"PayPal {method} {path} failed with HTTP {response.status_code}{detail}")
+            if response.status_code == 204 or not response.content:
+                return {}
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise PaymentProviderError(f"Invalid JSON from PayPal {path}") from exc
+            return payload if isinstance(payload, dict) else {}
+
+    async def create_subscription_plan(
+        self,
+        *,
+        name: str,
+        description: str,
+        price: Decimal,
+        currency: str,
+        interval_unit: str,
+        interval_count: int,
+        request_id: str,
+    ) -> str:
+        product = await self._subscriptions_request(
+            "POST",
+            "/v1/catalogs/products",
+            json_body={"name": name[:127], "description": description[:256], "type": "SERVICE", "category": "SOFTWARE"},
+            request_id=f"{request_id}-product",
+        )
+        product_id = str(product.get("id") or "").strip()
+        if not product_id:
+            raise PaymentProviderError("PayPal catalog product response missing id")
+        plan = await self._subscriptions_request(
+            "POST",
+            "/v1/billing/plans",
+            json_body={
+                "product_id": product_id,
+                "name": name[:127],
+                "description": description[:127],
+                "status": "ACTIVE",
+                "billing_cycles": [
+                    {
+                        "frequency": {"interval_unit": interval_unit.upper(), "interval_count": int(interval_count)},
+                        "tenure_type": "REGULAR",
+                        "sequence": 1,
+                        "total_cycles": 0,
+                        "pricing_scheme": {
+                            "fixed_price": {"value": f"{price.quantize(Decimal('0.01')):.2f}", "currency_code": currency.upper()}
+                        },
+                    }
+                ],
+                "payment_preferences": {"auto_bill_outstanding": True, "payment_failure_threshold": 1},
+            },
+            request_id=f"{request_id}-plan",
+        )
+        plan_id = str(plan.get("id") or "").strip()
+        if not plan_id:
+            raise PaymentProviderError("PayPal billing plan response missing id")
+        return plan_id
+
+    def _parse_subscription(self, payload: dict[str, Any], fallback_plan_id: str = "") -> SubscriptionResult:
+        billing = payload.get("billing_info") if isinstance(payload.get("billing_info"), dict) else {}
+        last_payment = billing.get("last_payment") if isinstance(billing.get("last_payment"), dict) else {}
+        amount, _currency = _parse_money(last_payment.get("amount"))
+        return SubscriptionResult(
+            subscription_id=str(payload.get("id") or ""),
+            status=str(payload.get("status") or "UNKNOWN"),
+            plan_id=str(payload.get("plan_id") or fallback_plan_id),
+            simulated=False,
+            approval_url=self._extract_approval_url(payload),
+            next_billing_time=billing.get("next_billing_time") if isinstance(billing.get("next_billing_time"), str) else None,
+            last_payment_amount=amount,
+        )
+
+    async def create_subscription(self, *, plan_id: str, custom_id: str, request_id: str) -> SubscriptionResult:
+        callback_query = urlencode({"subscription_ref": custom_id})
+        payload = await self._subscriptions_request(
+            "POST",
+            "/v1/billing/subscriptions",
+            json_body={
+                "plan_id": plan_id,
+                "custom_id": custom_id[:127],
+                "application_context": {
+                    "brand_name": "AgentTrust",
+                    "shipping_preference": "NO_SHIPPING",
+                    "user_action": "SUBSCRIBE_NOW",
+                    "return_url": f"{self._app_public_url}/commerce/paypal/return?{callback_query}",
+                    "cancel_url": f"{self._app_public_url}/commerce/paypal/cancel?{callback_query}",
+                },
+            },
+            request_id=request_id,
+        )
+        result = self._parse_subscription(payload, plan_id)
+        if not result.subscription_id:
+            raise PaymentProviderError("PayPal subscription response missing id")
+        return result
+
+    async def get_subscription(self, *, subscription_id: str) -> SubscriptionResult:
+        payload = await self._subscriptions_request(
+            "GET", f"/v1/billing/subscriptions/{quote(subscription_id, safe='')}", ok=(200,)
+        )
+        return self._parse_subscription(payload)
+
+    async def cancel_subscription(self, *, subscription_id: str, reason: str) -> SubscriptionResult:
+        await self._subscriptions_request(
+            "POST",
+            f"/v1/billing/subscriptions/{quote(subscription_id, safe='')}/cancel",
+            json_body={"reason": reason[:127] or "Cancelled by subscriber"},
+            ok=(200, 204),
+        )
+        return await self.get_subscription(subscription_id=subscription_id)

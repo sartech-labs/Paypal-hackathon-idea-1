@@ -1,4 +1,4 @@
-"""Test doubles for the AI APIs and the PayPal MCP server used by CrawlerTrust."""
+"""Test doubles for the AI APIs and the PayPal MCP server used by AgentTrust."""
 
 from __future__ import annotations
 

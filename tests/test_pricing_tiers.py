@@ -106,7 +106,7 @@ async def test_challenge_and_deposit_use_the_tier_price(async_client: httpx.Asyn
     assert deposit["pricing_tier"] == tier_id and deposit["requested_resource"] == path
 
     page = await async_client.get(f"/gateway{path}", headers={"Authorization": f"Bearer {token}"})
-    assert page.status_code == 200 and page.headers["X-CrawlerTrust-Pricing-Tier"] == tier_id
+    assert page.status_code == 200 and page.headers["X-AgentTrust-Pricing-Tier"] == tier_id
 
     done = (await async_client.post("/sessions/complete", headers={"Authorization": f"Bearer {token}"})).json()
     assert done["deposit"]["deposit_state"] == "REFUNDED"

@@ -1,12 +1,27 @@
-# CrawlerTrust — refundable PayPal deposits that keep AI crawlers accountable
+# AgentTrust — get your website ready for the agentic era, backed by PayPal
 
-CrawlerTrust is an HTTP `402 Payment Required` gateway that sits in front of a website. Before an AI crawler or agent can read protected pages, it posts a small **refundable deposit through PayPal** and explicitly accepts the site's machine-readable crawling policy. Crawlers that follow the policy get the deposit back. Crawlers that request forbidden paths, attempt path traversal, or flood the site lose it.
+AI agents are starting to browse, read, subscribe, and shop for people. Most websites can only block them or get scraped by them. **AgentTrust is a PayPal-backed layer that lets a website do business with AI agents instead.**
 
-**Positioning in one line:** HTTP 402 schemes such as Cloudflare Pay Per Crawl and the x402 protocol charge crawlers for *access*. CrawlerTrust prices *misbehaviour*: well-behaved AI agents crawl at no net cost, and agents that ignore the rules pay for it.
+A site publishes one machine-readable offer catalog (`/.well-known/agent-commerce.json`) and answers unpaid requests with `HTTP 402 Payment Required` and a way to pay. An agent can then pay it through PayPal in four ways:
+
+| Offer | Example on the demo site | PayPal flow | What the agent gets |
+| :--- | :--- | :--- | :--- |
+| **Refundable crawl deposit** (tiered) | Premium $5 · Standard $3 · Public $1 | Orders v2 capture → refund (or authorize → void) | Crawl under the site's policy; deposit returned if it follows the rules, kept if not |
+| **Pay-per-access** (fixed charge) | Video briefing $2 · dataset $4 · analyst call $1.50 | Orders v2 capture | A token that unlocks that one item |
+| **Subscription** | Sentinel Pro $9.99/month | **Subscriptions v1** (product → plan → subscription) | Members-only pages while PayPal reports the subscription ACTIVE |
+| **Product purchase** | E-book $12 · printed report $25 · mug $14 | Orders v2 with itemized cart and shipping | Digital download or a shipped order |
+
+On the user's side, **one AI agent** (Aria) has a toolbox that covers all four. Give it a task in plain English and a **spending mandate** (budget, allowed payment types, an approval threshold) and it decides what to pay for. The mandate is enforced in code, not left to the model. Anything above the threshold, and every recurring charge, goes to the person for approval.
+
+**Positioning in one line:** HTTP 402 schemes such as Cloudflare Pay Per Crawl and x402 charge agents for *access*. AgentTrust gives websites the whole agent-commerce surface (refundable deposits that price *misbehaviour*, one-off access, subscriptions, and checkout) on PayPal's rails, which already carry buyer and merchant identity, disputes, and refunds.
 
 > **Prototype notice.** Built for the PayPal AI Hackathon 2026. Payments run in mock mode or against the PayPal **Sandbox** with test funds; no real money moves.
 
-**See it in the browser.** Start the server and open `/`: the **live demo** lets you pick a compliant or rogue crawler, run it with an AI model or a scripted driver, and watch every step: the 402 challenge, the PayPal deposit, each request the gateway allows or blocks, the refund or forfeiture, and the evidence-cited explanation. The **PayPal assistant** then checks the deposit against PayPal's own records through **PayPal's MCP server**. The publisher console is at `/console`.
+**See it in the browser.** Start the server and open:
+
+- **`/agent`: Agent studio.** Type a request, set a budget, and watch Aria crawl with a refundable deposit, buy a video, subscribe, and order products. Approve or decline its purchases as they come up.
+- **`/`: Crawler demo.** The deposit flow in detail, with compliant and rogue crawlers, the policy pipeline, and an evidence-cited explanation of the outcome.
+- **`/console`: Publisher console.** Revenue by payment type, orders, subscriptions, deposits, violations, and the audit log. The **PayPal assistant** checks deposits against PayPal's own records through **PayPal's MCP server**.
 
 ## Contents
 
@@ -33,13 +48,25 @@ CrawlerTrust is an HTTP `402 Payment Required` gateway that sits in front of a w
 
 ## 1. Why this matters
 
-- `robots.txt` is advisory: nothing stops an AI crawler or agent from ignoring it.
-- Blanket IP blocks and CAPTCHAs also block legitimate, well-behaved agents.
-- Publishers carry the infrastructure cost of scraping and have no recourse when a crawler takes restricted pages or ignores rate limits.
+- Agents are becoming customers. They read, compare, subscribe, and buy for people, but websites were built for browsers and checkout pages, not for software that pays.
+- `robots.txt` is advisory, and blanket IP blocks and CAPTCHAs shut out well-behaved agents along with abusive scrapers. Publishers carry the cost of scraping and have no recourse.
+- People will only let agents spend if spending is bounded and visible: a budget, approval for large or recurring charges, and payment records the merchant can verify.
 
-CrawlerTrust turns the policy into a commitment backed by money: an honest agent's deposit is returned, so compliance costs it nothing, while a violation forfeits the stake.
+AgentTrust answers all three with PayPal: a machine-readable catalog of offers, `402` responses that say how to pay, payments the site verifies with PayPal before granting anything, and a refundable deposit that makes honest crawling free and abusive crawling expensive.
 
 ## 2. How it works
+
+**Discovery.** `GET /.well-known/agent-commerce.json` lists every offer (deposit tiers, pay-per-access items, subscription plans, products), their prices, and the endpoints to pay. Paid content under `/paid/...` answers `402` with the offers that unlock it.
+
+**One-off purchases (pay-per-access and products).**
+
+1. The agent names the offer: `POST /commerce/checkout` with an `item_id`, or with `items: [{sku, quantity}]`. The **site** prices the order from its catalog (items, quantities, shipping); the request cannot carry a price.
+2. The site creates a PayPal order (itemized, with an amount breakdown) and returns it. No money has moved yet, so the agent checks the total against its mandate here.
+3. `POST /commerce/orders/{id}/capture` captures and verifies the payment with PayPal. On success the site issues one bearer token (returned once, stored only as a SHA-256 hash) that unlocks exactly what was bought, and records fulfilment (`DELIVERED` for digital, `PROCESSING` for shipped goods).
+
+**Subscriptions.** `POST /commerce/subscriptions` creates (once, then reuses) a PayPal catalog product and billing plan, then a subscription. In the Sandbox PayPal returns an approval link for the payer; `POST /commerce/subscriptions/{ref}/activate` confirms the status with PayPal and issues the token only when it is `ACTIVE`. Cancelling at PayPal locks the members pages again.
+
+**The refundable crawl deposit** (unchanged from the original gateway):
 
 1. **Challenge.** A crawler without a session gets `HTTP 402` with a single-use `challenge_id`, the deposit amount, and a rules summary.
 2. **Deposit.** The crawler pays through PayPal. The server sets the amount and verifies the payment itself; clients cannot self-certify.
@@ -48,12 +75,15 @@ CrawlerTrust turns the policy into a commitment backed by money: an honest agent
 5. **Outcome.** On completion the gateway decides from its own records: no disqualifying violations returns the deposit; otherwise it is kept. An AI explanation, citing audit-log evidence, tells both sides why.
 6. **Verification.** The publisher's PayPal assistant reads the PayPal order and refund through PayPal's MCP server and confirms, field by field, that PayPal's records match the gateway's.
 
-The live demo page (`/`) runs this whole loop from the browser. A run uses the same tools and HTTP calls as the command-line agent, executed by the server against its own gateway, and the page polls the run's event log. Public demo deployments cap runs per hour and allow one run at a time.
+**The personal agent.** Aria (`client/assistant_agent.py`, `client/assistant_tools.py`) gets the task and the mandate. Its tools are `discover_offers`, `check_mandate`, the six crawler tools (`fetch_page`, `read_policy`, `pay_deposit`, `accept_policy`, `wait`, `complete_session`), `buy_access`, `subscribe`, `cancel_subscription`, `purchase_products`, and `open_paid_content`. Before every payment the toolbox checks that the payment type is allowed, that the amount fits the remaining budget, and whether the person must approve; a declined order is cancelled at the site. Refunded deposits go back into the budget. The tokens stay in the toolbox and are never sent to the model.
+
+The crawler demo page (`/`) runs the deposit loop from the browser. A run uses the same tools and HTTP calls as the command-line agent, executed by the server against its own gateway, and the page polls the run's event log. Public demo deployments cap runs per hour and allow one run at a time.
 
 ## 3. Where the AI is
 
 | Feature | What it does | Code |
 | :--- | :--- | :--- |
+| **Personal agent (Aria)** | One AI agent with a multi-tool toolbox that pays websites four ways (deposit, pay-per-access, subscription, products) under a spending mandate. It reads the offer catalog, plans the cheapest set of payments for the request, asks the person for approval when the mandate requires it, respects declines, and writes a report with every PayPal reference. Runs from Agent studio (`/agent`) or the CLI. | `client/assistant_agent.py`, `client/assistant_tools.py` |
 | **AI crawler agent** | An AI model drives a crawler through the whole protocol with tool use: reads the 402 challenge and policy, decides whether to pay, pays through PayPal, accepts the policy, paces itself from the gateway's budget and `Retry-After` signals, and completes the session. A **compliant** persona writes a news brief and gets its deposit back; a **rogue** persona (an authorized red-team run against your own gateway) ignores the rules and loses it. | `client/agent.py`, `client/agent_tools.py` |
 | **Deposit explanations** | The AI explains why a deposit was returned or kept, in plain English. Every finding must cite audit events recorded for that deposit; findings with invalid citations are dropped, and a rule-based explanation is used when AI is unavailable. | `server/services/explainer.py`, `GET /deposits/{id}/explanation` |
 | **Policy assistant** | A publisher describes crawling terms in plain English; the AI drafts the machine-readable policy with structured outputs, and the server validates paths, amounts, and limits before showing the draft. Drafts are never applied automatically. | `server/services/policy_assistant.py`, `POST /policies/draft` |
@@ -76,6 +106,10 @@ PayPal REST APIs called by `PayPalSandboxProvider` (`server/services/payment_ser
 
 | API | Endpoint | Used for |
 | :--- | :--- | :--- |
+| Orders v2 (itemized) | `POST /v2/checkout/orders` with `items` and `amount.breakdown` | Pay-per-access and product orders: line items with SKU and category, item total and shipping; digital-only carts skip the shipping address |
+| Catalog Products v1 | `POST /v1/catalogs/products` | The product behind a subscription plan (created once per plan and price, then reused) |
+| Billing Plans v1 | `POST /v1/billing/plans` | Monthly fixed-price plan for the subscription |
+| Subscriptions v1 | `POST /v1/billing/subscriptions`, `GET /v1/billing/subscriptions/{id}`, `POST .../{id}/cancel` | Start a subscription (payer approval link), confirm it is `ACTIVE` before granting access, cancel it |
 | OAuth 2.0 | `POST /v1/oauth2/token` | Client-credentials token, cached until 60 s before expiry |
 | Orders v2 | `POST /v2/checkout/orders` | Create the deposit order (`intent` `CAPTURE` or `AUTHORIZE`), with return/cancel URLs and an idempotent `PayPal-Request-Id` |
 | Orders v2 | `POST /v2/checkout/orders/{id}/capture` | Capture the deposit (refund settlement) |
@@ -113,7 +147,7 @@ The PayPal assistant reads PayPal through **PayPal's own MCP server** instead of
 Two features use it:
 
 - **Verify with PayPal** (no AI): reads the deposit's order (and refund) and compares order ID, `custom_id` (the deposit ID), amount, capture or authorization status, and refund status with the gateway's record. A refunded deposit should show the capture `REFUNDED`; a released hold, the authorization `VOIDED`; a forfeited hold, the authorization `CAPTURED`.
-- **Ask the PayPal assistant** (AI, OpenAI or Claude): a tool loop over the read tools plus `list_crawlertrust_deposits`.
+- **Ask the PayPal assistant** (AI, OpenAI or Claude): a tool loop over the read tools plus `list_agenttrust_deposits`.
 
 Why MCP is used only on the publisher side: the deposit flow needs deterministic, idempotent calls, and the MCP tools have no authorization, void, or authorization-capture operations; and the MCP server acts as the merchant, so giving it to the crawler would let the crawler refund itself.
 
@@ -132,7 +166,7 @@ python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
 
 On Windows PowerShell use `python -m venv .venv`, `.\.venv\Scripts\Activate.ps1`, and `Copy-Item .env.example .env`.
 
-Then open **http://127.0.0.1:8000/** for the live demo (the example `.env` sets `DEMO_PUBLIC=true`, so you can start runs without the admin token), pick a crawler, and press **Start run**. The publisher console is at **http://127.0.0.1:8000/console**. You can also run the crawlers from a second terminal:
+Then open **http://127.0.0.1:8000/agent** for Agent studio (needs an AI key, see below), or **http://127.0.0.1:8000/** for the crawler demo (the example `.env` sets `DEMO_PUBLIC=true`, so you can start runs without the admin token), pick a crawler, and press **Start run**. The publisher console is at **http://127.0.0.1:8000/console**. You can also run the crawlers from a second terminal:
 
 ```bash
 python -m client.compliant --base-url http://127.0.0.1:8000
@@ -148,10 +182,18 @@ To turn on the AI features, add an API key to `.env` (`OPENAI_API_KEY=...` or `A
 python -m client.agent --persona compliant --base-url http://127.0.0.1:8000
 ```
 
+The personal agent runs from the terminal too (it asks for approval in the terminal; `--auto-approve` approves everything):
+
+```bash
+python -m client.assistant_agent --base-url http://127.0.0.1:8000 --budget 60 --approval-threshold 10
+```
+
 ## 6. Demo scenarios
 
 | Scenario | Command | What you should see |
 | :--- | :--- | :--- |
+| Agent studio (browser) | Open `/agent`, keep the first preset request, **Run agent** | Aria reads the catalog, crawls `/news` with a $1 deposit (refunded at the end), buys the $2 video, asks you to approve the $9.99/month subscription and the $12 e-book, then reports. Decline one and it does not retry. The spending panel shows each payment, its PayPal reference, and the net spend. The console's **Commerce** view shows the revenue. |
+| Personal agent (CLI) | `python -m client.assistant_agent --task "..."` | The same agent in the terminal, with approvals at the prompt. |
 | Live demo (browser) | Open `/`, pick a crawler and a driver, **Start run** | The step rail and live timeline fill in as the crawler works; the deposit card shows PayPal order, capture, authorization, and refund IDs; the explanation appears when the session ends. Press **Verify with PayPal (MCP)** on a Sandbox deposit. |
 | Compliant AI agent | `python -m client.agent --persona compliant` | The agent reads the policy, pays, crawls `/news` sections within the rate limit, ignores the injected instruction on `/news/economy`, completes the session, and writes a brief. Deposit **returned**. |
 | Rogue AI agent | `python -m client.agent --persona rogue` | The agent requests `/admin` and private paths and bursts requests. The gateway blocks each one; the deposit is **forfeited** and the explanation cites each violation. |
@@ -173,18 +215,18 @@ Useful agent flags: `--max-deposit 1.00` (spending limit), `--effort medium`, `-
 
 Without autopay, a new deposit's response includes the PayPal `approval_url`. The demo page shows an **Open PayPal checkout** button and continues once the payment is approved; the CLIs and the agent print the URL and pause. PayPal redirects the browser to `GET /deposits/paypal/return`, which checks that the returned order ID matches the deposit before capturing or authorizing (the redirect itself is never treated as proof of payment) and shows a short confirmation page.
 
-If a refund completed at PayPal but CrawlerTrust conservatively left it pending, an administrator can call `POST /deposits/{id}/reconcile-refund` with `X-Admin-Token`. It only reads `GET /v2/payments/refunds/{refund_id}` and never submits another refund.
+If a refund completed at PayPal but AgentTrust conservatively left it pending, an administrator can call `POST /deposits/{id}/reconcile-refund` with `X-Admin-Token`. It only reads `GET /v2/payments/refunds/{refund_id}` and never submits another refund.
 
 ## 8. Deploy (Docker and Render)
 
 **Docker:**
 
 ```bash
-docker build -t crawlertrust .
+docker build -t agenttrust .
 ```
 
 ```bash
-docker run --rm -p 8000:8000 --env-file .env crawlertrust
+docker run --rm -p 8000:8000 --env-file .env agenttrust
 ```
 
 The image runs as a non-root user, binds to `$PORT` (default 8000), exposes a health check on `/health`, and always runs **one** uvicorn worker, because deposits, sessions, rate limits, and demo runs live in one process. It also contains Node.js 22 and PayPal's MCP server (`@paypal/mcp`, installed from the lockfile in `deploy/paypal-mcp/`) for the PayPal assistant.
@@ -220,6 +262,8 @@ Copy `.env.example` to `.env`. Settings are validated at startup (`server/config
 | `MAX_REQUESTS_PER_SESSION` | `10` | Allowed content requests per session |
 | `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW_SECONDS` | `3` / `10` | Sliding-window rate limit |
 | `AUDIT_LOG_PATH`, `PAYMENTS_DB_PATH`, `SESSIONS_DB_PATH` | `storage/...` | Persistence files |
+| `COMMERCE_CATALOG_PATH` | `data/commerce_catalog.json` | Pay-per-access items, subscription plans, members pages, products, and downloads |
+| `COMMERCE_DB_PATH` | `storage/commerce_db.json` | Orders, subscriptions, access-token hashes, and cached PayPal plan IDs |
 | `ADMIN_API_TOKEN` | empty | Secret for `X-Admin-Token` (global audit, admin console, policy assistant, reconciliation) |
 | `DASHBOARD_PUBLIC` | `false` (`true` in `.env.example`) | Read-only console without the admin token, for demos; keep `false` in production |
 | `DEMO_PUBLIC` | `false` (`true` in `.env.example`) | Anyone may start demo runs and ask the read-only PayPal assistant, within the hourly caps |
@@ -254,9 +298,19 @@ Interactive docs: **`/docs`** (Swagger UI) and **`/redoc`**.
 | GET | `/sessions/me` | crawler bearer | Session counters and violations |
 | POST | `/sessions/complete`, `/sessions/revoke` | crawler bearer (revoke: admin too) | End the session and settle |
 | GET | `/audit/events`, `/audit/summary` | crawler bearer (own session) or admin | Audit log |
+| GET | `/.well-known/agent-commerce.json`, `/commerce/offers` | none | Offer catalog for agents: deposit tiers, pay-per-access, subscriptions, products, endpoints |
+| POST | `/commerce/checkout` | agent ID | Create an itemized PayPal order for an access item or a product cart (the site sets the price) |
+| POST | `/commerce/orders/{id}/capture`, `/commerce/orders/{id}/cancel` | owning agent | Capture and verify with PayPal (returns the access token once); cancel an unpaid order |
+| GET | `/commerce/orders/{id}` | owning agent (`X-Agent-Id`) | Order status |
+| POST | `/commerce/subscriptions` | agent ID | Start a PayPal subscription to a plan |
+| POST | `/commerce/subscriptions/{ref}/activate`, `/commerce/subscriptions/{ref}/cancel` | owning agent | Confirm ACTIVE at PayPal (returns the token once); cancel at PayPal |
+| GET | `/paid/{path}` | access token, or 402 with offers | Paid media, members pages, and downloads |
+| GET | `/commerce/summary` | admin, or public when `DASHBOARD_PUBLIC=true` | Revenue by payment type, orders, subscriptions |
+| GET | `/agent` | none | Agent studio |
+| POST | `/demo/runs/{id}/decision` | admin, or public demo | Approve or decline the purchase the personal agent is waiting on |
 | GET | `/`, `/demo` | none | Live demo page |
 | GET | `/demo/config` | none (details need admin or a public demo) | Demo capabilities, run quota, active and recent runs |
-| POST | `/demo/runs` | admin, or public when `DEMO_PUBLIC=true` | Start a crawler run (`driver`: `ai` or `scripted`; `persona`: `compliant` or `rogue`) |
+| POST | `/demo/runs` | admin, or public when `DEMO_PUBLIC=true` | Start a run (`driver`: `ai` or `scripted`; `persona`: `compliant`, `rogue`, or `assistant` with `task`, `budget`, `approval_threshold`, `allowed_types`; the assistant is AI-only) |
 | GET | `/demo/runs/{id}?after=N` | admin, or public demo or dashboard | Run status, deposit, explanation, and events from sequence `N` |
 | POST | `/demo/runs/{id}/approval`, `/demo/runs/{id}/cancel` | admin, or public demo | Continue after PayPal approval; stop a run |
 | GET | `/paypal/assistant/status` | admin, or public demo | MCP and AI configuration |
@@ -269,6 +323,9 @@ Interactive docs: **`/docs`** (Swagger UI) and **`/redoc`**.
 
 ```mermaid
 flowchart TD
+    STUDIO["Agent studio\n(/agent)"] -->|/demo/runs, decisions| RUN
+    ARIA["Personal agent\n(client/assistant_agent.py,\nmandate in code)"] -->|catalog, checkout, subscribe,\n/paid, 402 protocol| GW
+    ARIA -.-> LLM
     DEMO["Live demo page\n(/)"] -->|/demo/runs| RUN
     AGENT["AI crawler agent\n(client/agent.py, tool use)"] -->|HTTP 402 protocol| GW
     CLI["Scripted crawlers\n(client/compliant.py, violating.py)"] -->|HTTP 402 protocol| GW
@@ -279,23 +336,26 @@ flowchart TD
     DEMO -->|/paypal/*| PA
     PUB -->|/paypal/*| PA
 
-    subgraph Gateway ["CrawlerTrust gateway (FastAPI)"]
+    subgraph Gateway ["AgentTrust gateway (FastAPI)"]
         GW["Gateway and routers\n(server/api/*)"] --> PE["Policy engine + rate limiter"]
         GW --> SM["Sessions and identity"]
         GW --> DM["Deposit manager\n(refund or authorization settlement)"]
         GW --> EX["Explainer + policy assistant"]
         GW --> AL["Audit logger"]
+        GW --> CM["Commerce manager\n(orders, subscriptions,\naccess tokens)"]
+        CM --> PS
         DM --> PS["Payment service"]
     end
 
     EX -->|structured outputs| LLM
-    PS -->|OAuth2, Orders v2, Payments v2| PP["PayPal Sandbox\n(or mock provider)"]
+    PS -->|OAuth2, Orders v2, Payments v2,\nSubscriptions v1| PP["PayPal Sandbox\n(or mock provider)"]
     PA["PayPal assistant\n(verify + ask)"] -->|read-only tools| MCP["PayPal MCP server\n(@paypal/mcp)"]
     PA -.->|tool loop| LLM
     MCP -->|PayPal APIs| PP
     AL --> LOG["storage/audit.jsonl"]
     DM --> PDB["storage/payments_db.json"]
     SM --> SDB["storage/sessions_db.json"]
+    CM --> CDB["storage/commerce_db.json"]
 ```
 
 | Component | Files | Responsibility |
@@ -309,14 +369,17 @@ flowchart TD
 | Dashboard | `server/api/dashboard.py`, `server/static/dashboard.*` | Publisher console and its data endpoints |
 | Live demo | `server/api/demo.py`, `server/services/demo_runner.py`, `client/scripted_agent.py`, `server/static/demo.*` | Browser demo: starts AI or scripted crawler runs in a background thread and records their events |
 | PayPal assistant | `server/api/paypal.py`, `server/services/paypal_mcp.py`, `paypal_assistant.py`, `server/static/paypal_panel.js` | MCP client limited to read tools, deposit verification, AI questions |
+| Agent commerce | `server/api/commerce.py`, `server/services/commerce.py`, `data/commerce_catalog.json` | Offer catalog, site-priced checkout, PayPal capture and subscriptions, hashed access tokens, paid content with 402 offers, publisher summary |
+| Agent studio | `server/static/agent.*`, `server/services/demo_runner.py` | Runs the personal agent in the browser with live approvals and the mandate ledger |
 | Audit logger | `server/services/audit_logger.py` | Append-only JSONL events with secret scrubbing |
 | Crawlers | `client/agent.py`, `agent_tools.py`, `compliant.py`, `violating.py`, `common.py` | AI agent and scripted demo clients |
+| Personal agent | `client/assistant_agent.py`, `assistant_tools.py` | Multi-tool AI agent, spending mandate, approvals |
 
 The end-to-end request sequence is also available as an exportable diagram in [`docs/lifecycle_diagram.html`](docs/lifecycle_diagram.html).
 
 ## 12. Deposit and session state machines
 
-CrawlerTrust keeps **payment status**, **policy decision**, and **refund status** separate, so a policy violation is never confused with a money movement and a failed provider call never overwrites a confirmed payment.
+AgentTrust keeps **payment status**, **policy decision**, and **refund status** separate, so a policy violation is never confused with a money movement and a failed provider call never overwrites a confirmed payment.
 
 - **`payment_status`:** `PENDING` → `APPROVED` → `CAPTURED` (refund mode) or `AUTHORIZED` → `VOIDED` / `CAPTURED` (authorization mode); `FAILED` on order, capture, or verification errors.
 - **`policy_decision`:** `UNDECIDED` → `ELIGIBLE_FOR_REFUND` or `FORFEITED_BY_POLICY`. The decision is recorded before any provider call and never changes afterwards.
@@ -376,6 +439,8 @@ Longer (more specific) rules beat broader ones, with `disallowed_paths` winning 
 - Audit logs scrub tokens and secrets; the dashboard feed omits event details because they can contain PayPal checkout URLs; all dashboard text from crawlers is rendered as text, never HTML.
 - AI-specific safeguards are listed in [section 3](#3-where-the-ai-is): the model never decides money movements, page content is marked untrusted, the bearer token is never sent to the model, spending is capped in code, and AI cost is bounded.
 - PayPal MCP: only five read tools can be called (the local server is started with only those enabled, and the client rejects any other name); the OAuth token goes to the MCP server process, never to the model; the server process gets a minimal environment without AI keys; PayPal results are redacted of email addresses before they are shown or sent to a model, and reach the model inside `<paypal_mcp_result>` tags as data.
+- Agent commerce: the site prices every order from its catalog (requests carrying a price are rejected), verifies capture or subscription status with PayPal before granting anything, issues one token per purchase (returned once, stored hashed) that unlocks only what was bought, and keeps orders private to the agent that placed them.
+- Spending mandate: payment type, remaining budget, and the approval threshold are checked by the agent's toolbox before money moves; recurring charges always need the person's approval; a declined order is cancelled; tokens never reach the model.
 - Public demos: one run at a time, hourly caps on runs and assistant requests, a 25-turn limit, a 1.00 spending limit per run, and runs that stop waiting for PayPal approval after 10 minutes.
 
 ## 15. Testing
@@ -384,7 +449,7 @@ Longer (more specific) rules beat broader ones, with `disallowed_paths` winning 
 pytest -q
 ```
 
-The suite (222 tests) needs no network access or credentials; PayPal, OpenAI, Claude, and the PayPal MCP server are replaced by mocked transports and scripted fakes.
+The suite (272 tests) needs no network access or credentials; PayPal, OpenAI, Claude, and the PayPal MCP server are replaced by mocked transports and scripted fakes.
 
 | File | Covers |
 | :--- | :--- |
@@ -398,6 +463,8 @@ The suite (222 tests) needs no network access or credentials; PayPal, OpenAI, Cl
 | `test_agent.py`, `test_agent_openai.py` | AI agent on both providers against the real gateway with scripted models: refund, forfeiture, spending cap, refusal, token never sent to the model |
 | `test_dashboard.py`, `test_compliant_cli.py` | Console data, access rules, KPIs; CLI output |
 | `test_demo.py` | Demo page and assets; scripted and AI runs through the runner (refund and forfeiture); access, hourly cap, cancellation |
+| `test_commerce.py` | Offer catalog, 402 offers, pay-per-access, product carts with shipping, site-set prices, subscriptions and cancellation, agent isolation, persistence, PayPal itemized-order and Subscriptions API request bodies |
+| `test_assistant_agent.py` | Personal agent: strict tool schemas, mandate (budget, allowed types, threshold, recurring approval), declined orders cancelled, deposit refund back into the budget, and a full run through the demo runner with approve and decline |
 | `test_paypal_assistant.py` | MCP read-only allowlist, server command and environment, error handling, email redaction, deposit verification (refund, hold, mismatch), AI tool loops on both providers, API access and quotas |
 
 ## 16. Persistence and troubleshooting
@@ -430,13 +497,17 @@ The suite (222 tests) needs no network access or credentials; PayPal, OpenAI, Cl
 - PayPal's hosted MCP server failed every tool call in testing (2026-11-05); the bundled local server is used instead.
 - AI agent behaviour depends on the model; the scripted crawlers give deterministic results for rehearsals. The Claude path, and the PayPal assistant's AI question path, have not been run against a live model in this version (the assistant's tool execution was run against the live MCP server with a scripted stand-in model).
 
+- Subscriptions in the Sandbox need a payer to approve the subscription at PayPal (there is no test-card shortcut as there is for deposits); in mock mode they activate at once. The Subscriptions API calls are covered by mocked-transport tests and have not yet been run against the live Sandbox.
+- Shipping is a flat rate per physical product line, and physical orders stop at `PROCESSING` (no fulfilment integration).
+
 **Roadmap**
 
-1. One-time buyer consent with a saved PayPal payment method (vaulting) and a spending cap, so agents pay autonomously outside the Sandbox too.
-2. Reputation-based deposits: a compliance history lowers an agent's future deposit.
-3. Optional pay-per-page fee captured from the hold, so publishers also earn from good crawlers.
-4. PostgreSQL and Redis for multi-instance deployments; PayPal webhooks for settlement events.
-5. Cryptographic agent identity (HTTP Message Signatures, RFC 9421) bound to deposit sessions.
+1. One-time buyer consent with a saved PayPal payment method (vaulting) and the spending mandate stored with it, so agents pay autonomously outside the Sandbox too.
+2. Mandates issued and verified by PayPal (budget, merchant allow-list, approval rules) instead of the agent's own toolbox, so merchants can trust them.
+3. Reputation-based deposits: a compliance history lowers an agent's future deposit.
+4. Optional pay-per-page fee captured from the hold, so publishers also earn from good crawlers.
+5. PostgreSQL and Redis for multi-instance deployments; PayPal webhooks for settlement events.
+6. Cryptographic agent identity (HTTP Message Signatures, RFC 9421) bound to deposit sessions.
 
 ## 18. Example API responses
 

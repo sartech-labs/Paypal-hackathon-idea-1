@@ -1,4 +1,4 @@
-/* CrawlerTrust analytics: AG Studio dashboards over the gateway's own records.
+/* AgentTrust analytics: AG Studio dashboards over the gateway's own records.
 
    AG Studio (ag-studio 3.1.0, AG Grid's embedded-analytics component) is loaded on demand,
    from a pinned CDN URL with a Subresource Integrity hash, the first time the Analytics view

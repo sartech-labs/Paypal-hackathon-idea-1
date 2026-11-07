@@ -1,6 +1,6 @@
 """Policy assistant: turn a publisher's plain-English crawling terms into a policy draft.
 
-An AI model (Claude or OpenAI) produces a draft in CrawlerTrust's SiteConfig shape using
+An AI model (Claude or OpenAI) produces a draft in AgentTrust's SiteConfig shape using
 structured outputs.
 The draft is then validated in code; it is never applied automatically.
 """
@@ -22,7 +22,7 @@ SITE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 PATH_PATTERN = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@/-]*$")
 
 SYSTEM_PROMPT = """\
-You convert a website publisher's plain-English crawling terms into CrawlerTrust's \
+You convert a website publisher's plain-English crawling terms into AgentTrust's \
 machine-readable crawling policy. AI crawlers post a refundable deposit, must follow \
 this policy, and lose the deposit for disqualifying violations.
 

@@ -1,2 +1,2 @@
-"""CrawlerTrust CLI demonstration clients."""
+"""AgentTrust CLI demonstration clients."""
 

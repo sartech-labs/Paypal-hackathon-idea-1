@@ -445,7 +445,7 @@ class DepositManager:
                 currency=record.currency,
                 request_id=record.order_request_id,
                 description=(
-                    f"CrawlerTrust refundable deposit for {record.site_id} "
+                    f"AgentTrust refundable deposit for {record.site_id} "
                     + (f"[{record.pricing_tier_name} tier] " if record.pricing_tier_name else "")
                     + f"(crawler={record.crawler_id})"
                 ),
@@ -1037,7 +1037,7 @@ class DepositManager:
                 amount=refund_amt,
                 currency=currency,
                 request_id=refund_req_id,
-                reason=f"CrawlerTrust compliant session refund ({session.session_id})",
+                reason=f"AgentTrust compliant session refund ({session.session_id})",
                 reconcile_before_refund=reconcile_before_refund,
             )
         except (Exception, asyncio.CancelledError):
@@ -1247,7 +1247,7 @@ class DepositManager:
                     amount=amount,
                     currency=currency,
                     request_id=capture_request_id,
-                    note=f"CrawlerTrust deposit forfeited under site policy ({session.session_id})",
+                    note=f"AgentTrust deposit forfeited under site policy ({session.session_id})",
                 )
             else:
                 result = await self._payment_provider.void_authorization(

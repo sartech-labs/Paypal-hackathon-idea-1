@@ -13,6 +13,7 @@ from server.core.security import utc_now_iso, validate_crawler_id
 from server.dependencies import AppContainer, demo_access, get_container, is_valid_admin_token
 from server.schemas import (
     DemoConfigResponse,
+    DemoDecisionRequest,
     DemoRequestHistoryResponse,
     DemoRequestRow,
     DemoRunRequest,
@@ -62,6 +63,11 @@ def _internal_base_url(request: Request) -> str:
 @router.get("/", include_in_schema=False)
 async def demo_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "demo.html", media_type="text/html")
+
+
+@router.get("/agent", include_in_schema=False)
+async def agent_studio_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "agent.html", media_type="text/html")
 
 
 @router.get("/demo", include_in_schema=False)
@@ -233,6 +239,10 @@ async def start_run(
             ai_effort=container.settings.ai_effort,
             ai_available=generator.is_available(),
             tier=tier,
+            task=payload.task,
+            budget=payload.budget,
+            approval_threshold=payload.approval_threshold,
+            allowed_types=list(payload.allowed_types) if payload.allowed_types else None,
         )
     except DemoRunError as exc:
         raise HTTPException(
@@ -273,6 +283,28 @@ async def confirm_approval(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"error": "demo_authorization_required", "message": "Not allowed."})
     run = _get_run(container, run_id)
     container.demo_runner.confirm_approval(run_id)
+    return run.snapshot(after=len(run.events))
+
+
+@router.post(
+    "/demo/runs/{run_id}/decision",
+    response_model=DemoRunResponse,
+    summary="Approve or decline the purchase the personal agent is waiting on",
+)
+async def decide_purchase(
+    run_id: str,
+    payload: DemoDecisionRequest,
+    container: AppContainer = Depends(get_container),
+    x_admin_token: Optional[str] = Header(default=None),
+) -> DemoRunResponse:
+    if demo_access(container, x_admin_token) == "none":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"error": "demo_authorization_required", "message": "Not allowed."})
+    run = _get_run(container, run_id)
+    if not container.demo_runner.decide(run_id, payload.approve):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "no_pending_decision", "message": "This run is not waiting for a decision."},
+        )
     return run.snapshot(after=len(run.events))
 
 

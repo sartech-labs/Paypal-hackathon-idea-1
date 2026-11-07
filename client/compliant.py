@@ -27,7 +27,7 @@ def run_compliant_crawler(
     non_interactive: bool = False,
 ) -> int:
     resolved_id = resolve_crawler_id(crawler_id, "crawler-compliant")
-    print_banner(f"CrawlerTrust Demo -- Client A: Compliant Crawler ({resolved_id})")
+    print_banner(f"AgentTrust Demo -- Client A: Compliant Crawler ({resolved_id})")
 
     with httpx.Client(base_url=base_url.rstrip("/"), timeout=20.0) as client:
         # Step 1: Request protected news content without authentication
@@ -115,8 +115,8 @@ def run_compliant_crawler(
             gateway_url = "/gateway" if path == "/" else f"/gateway{path}"
             resp = client.get(gateway_url, headers=auth_headers)
             window_counter += 1
-            rem_budget = resp.headers.get("X-CrawlerTrust-Remaining-Budget", "?")
-            rem_win = resp.headers.get("X-CrawlerTrust-Remaining-Window", "?")
+            rem_budget = resp.headers.get("X-AgentTrust-Remaining-Budget", "?")
+            rem_win = resp.headers.get("X-AgentTrust-Remaining-Window", "?")
             print(
                 f"  [{idx}/{len(paths_to_crawl)}] GET {gateway_url:<26} -> HTTP {resp.status_code} "
                 f"(len={len(resp.text)} bytes, rem_budget={rem_budget}, rem_window={rem_win})"
@@ -201,7 +201,7 @@ def run_compliant_crawler(
 
 def main() -> int:
     parser = build_arg_parser(
-        description="Run the CrawlerTrust compliant crawler demonstration (Client A).",
+        description="Run the AgentTrust compliant crawler demonstration (Client A).",
         default_prefix="crawler-compliant",
     )
     args = parser.parse_args()

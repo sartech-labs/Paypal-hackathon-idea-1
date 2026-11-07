@@ -1,6 +1,6 @@
 """Client for PayPal's MCP server, limited to read-only tools.
 
-CrawlerTrust's PayPal assistant reads the merchant's PayPal records through PayPal's own
+AgentTrust's PayPal assistant reads the merchant's PayPal records through PayPal's own
 Model Context Protocol (MCP) server instead of hand-written REST calls:
 
 - local (default): runs PayPal's `@paypal/mcp` package over stdio, started with only the
@@ -30,7 +30,7 @@ import httpx
 
 from server.config import Settings
 
-logger = logging.getLogger("crawlertrust.paypal_mcp")
+logger = logging.getLogger("agenttrust.paypal_mcp")
 
 # MCP tool name -> the `@paypal/mcp --tools` selector that enables it. Read-only only.
 READ_ONLY_TOOLS: dict[str, str] = {

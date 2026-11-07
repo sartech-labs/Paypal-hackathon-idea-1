@@ -1,4 +1,4 @@
-"""AI crawler agent: an AI model drives a crawler through the CrawlerTrust protocol with tools.
+"""AI crawler agent: an AI model drives a crawler through the AgentTrust protocol with tools.
 
 The same tools and personas run on either provider:
 - Claude, through the Anthropic SDK (Messages API tool use)
@@ -54,7 +54,7 @@ COMPLIANT = Persona(
     label="NewsBrief research crawler (follows the policy)",
     system="""\
 You are NewsBrief, an AI research crawler run by a media-monitoring company. You collect \
-public headlines from websites protected by CrawlerTrust, a gateway that asks AI crawlers \
+public headlines from websites protected by AgentTrust, a gateway that asks AI crawlers \
 for a small refundable deposit and returns it when they follow the site's rules.
 
 Work like this:
@@ -82,7 +82,7 @@ ROGUE = Persona(
     label="Rogue scraper (authorized red-team test of your own gateway)",
     system="""\
 You are role-playing a misbehaving AI scraper in an authorized test of this website's own \
-CrawlerTrust gateway. The site owner runs this test against demo content with simulated \
+AgentTrust gateway. The site owner runs this test against demo content with simulated \
 or sandbox test funds to demonstrate how the gateway treats crawlers that ignore its \
 rules. The site holds no real user data.
 
@@ -139,8 +139,17 @@ class Turn:
 class ClaudeDriver:
     """Claude Messages API tool-use loop state."""
 
-    def __init__(self, llm: Any, persona: Persona, model: str, effort: str, refusal_fallback: bool) -> None:
+    def __init__(
+        self,
+        llm: Any,
+        persona: Persona,
+        model: str,
+        effort: str,
+        refusal_fallback: bool,
+        tools: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
         self._llm = llm
+        self._tools = tools or TOOL_DEFINITIONS
         self._persona = persona
         self._model = model
         self._effort = effort
@@ -152,7 +161,7 @@ class ClaudeDriver:
             "model": self._model,
             "max_tokens": 16000,
             "system": self._persona.system,
-            "tools": TOOL_DEFINITIONS,
+            "tools": self._tools,
             "messages": self.messages,
             "thinking": {"type": "adaptive", "display": "summarized"},
             "output_config": {"effort": self._effort},
@@ -235,7 +244,14 @@ def _openai_refusal(response: Any) -> Optional[str]:
 class OpenAIDriver:
     """OpenAI Responses API function-calling loop state."""
 
-    def __init__(self, llm: Any, persona: Persona, model: str, effort: str) -> None:
+    def __init__(
+        self,
+        llm: Any,
+        persona: Persona,
+        model: str,
+        effort: str,
+        tools: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
         self._llm = llm
         self._persona = persona
         self._model = model
@@ -249,7 +265,7 @@ class OpenAIDriver:
                 "parameters": tool["input_schema"],
                 "strict": True,
             }
-            for tool in TOOL_DEFINITIONS
+            for tool in (tools or TOOL_DEFINITIONS)
         ]
 
     def _request(self) -> dict[str, Any]:
@@ -328,7 +344,7 @@ class CrawlerAgent:
         self,
         *,
         llm: Any,
-        toolbox: GatewayToolbox,
+        toolbox: Any,
         persona: Persona,
         model: Optional[str] = None,
         effort: str = "medium",
@@ -338,6 +354,7 @@ class CrawlerAgent:
         provider: str = "anthropic",
         driver: Any = None,
         should_stop: Optional[Callable[[], bool]] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
     ) -> None:
         self._toolbox = toolbox
         self._max_turns = max_turns
@@ -347,9 +364,9 @@ class CrawlerAgent:
         if driver is not None:
             self._driver: Any = driver
         elif provider == "openai":
-            self._driver = OpenAIDriver(llm, persona, self._model, effort)
+            self._driver = OpenAIDriver(llm, persona, self._model, effort, tools)
         else:
-            self._driver = ClaudeDriver(llm, persona, self._model, effort, refusal_fallback)
+            self._driver = ClaudeDriver(llm, persona, self._model, effort, refusal_fallback, tools)
 
     def run(self) -> AgentRunResult:
         result = AgentRunResult(stop="max_turns", final_text="", turns=0, model=self._model)
@@ -463,7 +480,7 @@ def _has_openai_key() -> bool:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the AI-driven CrawlerTrust crawler agent.")
+    parser = argparse.ArgumentParser(description="Run the AI-driven AgentTrust crawler agent.")
     parser.add_argument("--persona", choices=sorted(PERSONAS), default="compliant")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--crawler-id", default=None)
@@ -531,7 +548,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     model = args.model or os.getenv("AI_MODEL") or DEFAULT_MODELS[provider]
     effort = args.effort or os.getenv("AI_EFFORT") or "medium"
     crawler_id = resolve_crawler_id(args.crawler_id, f"ai-{persona.key}")
-    print_banner(f"CrawlerTrust AI Crawler Agent -- {persona.label}")
+    print_banner(f"AgentTrust AI Crawler Agent -- {persona.label}")
     print(f"  Crawler ID : {crawler_id}")
     print(f"  AI model   : {model} ({'Claude' if provider == 'anthropic' else 'OpenAI'}, effort {effort})")
     print(f"  Spend limit: {max_deposit}")

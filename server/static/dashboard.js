@@ -1,4 +1,4 @@
-/* CrawlerTrust publisher console.
+/* AgentTrust publisher console.
    All values that originate from crawlers (IDs, paths, reasons) are inserted with
    textContent, never innerHTML. Every number shown comes from the gateway's own endpoints:
    /dashboard/data, /demo/requests, /demo/config, and /policies. */
@@ -10,6 +10,7 @@
   const REQUESTS_EVERY_MS = 6000;
   const VIEWS = {
     overview: "Overview",
+    commerce: "Commerce",
     operations: "Operations",
     security: "Security & audit",
     analytics: "Analytics",
@@ -273,6 +274,7 @@
     if (!fromHash) history.replaceState(null, "", view === "overview" ? window.location.pathname : `#${view}`);
     if (view === "operations" || view === "analytics") loadRequests(true);
     if (view === "policy") loadPolicy();
+    if (view === "commerce") loadCommerce();
     if (view === "analytics" && window.CTAnalytics) window.CTAnalytics.open(analyticsContext());
   }
 
@@ -467,7 +469,7 @@
 
   function initGrids() {
     if (!window.CTGrid || !window.CTGrid.available()) {
-      for (const id of ["grid-deposits", "grid-sessions", "grid-events", "grid-requests", "grid-violations"]) {
+      for (const id of ["grid-deposits", "grid-sessions", "grid-events", "grid-requests", "grid-violations", "grid-orders", "grid-subscriptions"]) {
         const node = $(id);
         clear(node);
         node.append(el("p", { className: "empty", text: "The table library (AG Grid, cdn.jsdelivr.net) could not be loaded. Data is still available from /dashboard/data." }));
@@ -475,6 +477,7 @@
       return false;
     }
     const create = window.CTGrid.create;
+    initCommerceGrids(create);
 
     state.grids.deposits = create($("grid-deposits"), {
       rowId: (d) => d.deposit_id,
@@ -484,7 +487,7 @@
       pageSize: 10,
       autoHeight: true,
       flashNew: true,
-      exportName: "crawlertrust-deposits",
+      exportName: "agenttrust-deposits",
       search: "Search deposits...",
       noRows: "No deposits yet. Run a crawler from the live demo.",
       noExport: ["explain"],
@@ -554,7 +557,7 @@
       autoHeight: true,
       detail: sessionDetail,
       detailHeight: 176,
-      exportName: "crawlertrust-sessions",
+      exportName: "agenttrust-sessions",
       search: "Search sessions...",
       noRows: "No crawler sessions yet.",
       segments: {
@@ -589,7 +592,7 @@
       detail: requestDetail,
       detailHeight: 176,
       flashNew: true,
-      exportName: "crawlertrust-requests",
+      exportName: "agenttrust-requests",
       search: "Search requests...",
       noRows: "No gateway requests yet.",
       segments: {
@@ -616,7 +619,7 @@
       flashNew: true,
       pageSize: 10,
       autoHeight: true,
-      exportName: "crawlertrust-violations",
+      exportName: "agenttrust-violations",
       search: "Search violations...",
       noRows: "No policy violations recorded. Every crawler has behaved so far.",
       exportValues: { reason_code: (e) => humanize(e.reason_code) },
@@ -634,7 +637,7 @@
       detail: eventDetail,
       detailHeight: 160,
       flashNew: true,
-      exportName: "crawlertrust-audit",
+      exportName: "agenttrust-audit",
       search: "Search audit events...",
       noRows: "No audit events yet.",
       segments: {
@@ -1133,6 +1136,121 @@
     };
   }
 
+  // --- commerce: orders, subscriptions, revenue by payment type -------------------------
+  const ORDER_STATUS = {
+    PAID: ["good", "✓", "Paid"],
+    CREATED: ["neutral", "●", "Awaiting payment"],
+    APPROVAL_REQUIRED: ["warning", "!", "Awaiting PayPal approval"],
+    FAILED: ["critical", "✕", "Failed"],
+    CANCELLED: ["neutral", "■", "Cancelled (not paid)"],
+  };
+  const SUB_STATUS = {
+    ACTIVE: ["good", "✓", "Active"],
+    APPROVAL_PENDING: ["warning", "!", "Awaiting approval"],
+    APPROVED: ["warning", "!", "Approved"],
+    CANCELLED: ["neutral", "■", "Cancelled"],
+    SUSPENDED: ["serious", "!", "Suspended"],
+    EXPIRED: ["neutral", "■", "Expired"],
+    FAILED: ["critical", "✕", "Failed"],
+  };
+  const statusChip = (map, code) => { const [tone, icon, label] = map[code] || ["neutral", "●", humanize(code)]; return chip(tone, icon, label); };
+
+  function initCommerceGrids(create) {
+    state.grids.orders = create($("grid-orders"), {
+      rowId: (o) => o.order_id,
+      pageSize: 10,
+      autoHeight: true,
+      exportName: "agenttrust-orders",
+      search: "Search orders...",
+      noRows: "No orders yet. Run the personal agent from the agent studio.",
+      segments: {
+        label: "Filter by type",
+        options: [
+          { id: "access", label: "Pay-per-access", test: (o) => o.kind === "access" },
+          { id: "product", label: "Products", test: (o) => o.kind === "product" },
+          { id: "unpaid", label: "Unpaid", test: (o) => o.status !== "PAID" },
+        ],
+      },
+      columnDefs: [
+        { headerName: "Status", field: "status", minWidth: 150, valueGetter: (p) => (p.data ? (ORDER_STATUS[p.data.status] || [])[2] || p.data.status : ""), cellRenderer: cellNode((o) => statusChip(ORDER_STATUS, o.status)) },
+        { headerName: "Type", field: "kind", maxWidth: 140, valueFormatter: (p) => (p.value === "access" ? "Pay-per-access" : p.value === "product" ? "Product" : "") },
+        { headerName: "Items", field: "lines", minWidth: 230, valueGetter: (p) => (p.data ? p.data.lines.map((l) => `${l.quantity > 1 ? `${l.quantity}× ` : ""}${l.name}`).join(", ") : ""), tooltipValueGetter: (p) => p.value },
+        { headerName: "Amount", field: "amount", maxWidth: 120, type: "numericColumn", filter: "agNumberColumnFilter", valueGetter: (p) => (p.data ? Number(p.data.amount) : null), valueFormatter: (p) => (p.data && p.value != null ? money(p.value, p.data.currency) : "") },
+        { headerName: "Fulfilment", field: "fulfillment_status", maxWidth: 140, valueFormatter: (p) => humanize(p.value) },
+        { headerName: "Agent", field: "agent_id", minWidth: 140, cellClass: "mono" },
+        { headerName: "Agent's reason", field: "purpose", minWidth: 200, tooltipField: "purpose" },
+        { headerName: "PayPal order", field: "provider_order_id", minWidth: 150, cellClass: "mono", tooltipField: "provider_order_id" },
+        { headerName: "PayPal capture", field: "provider_capture_id", minWidth: 150, cellClass: "mono", tooltipField: "provider_capture_id" },
+        { headerName: "Created", field: "created_at", maxWidth: 120, sort: "desc", filter: false, valueFormatter: (p) => formatTime(p.value) },
+      ],
+    });
+    state.grids.subscriptions = create($("grid-subscriptions"), {
+      rowId: (s) => s.subscription_ref,
+      pageSize: 10,
+      autoHeight: true,
+      exportName: "agenttrust-subscriptions",
+      search: "Search subscriptions...",
+      noRows: "No subscriptions yet.",
+      columnDefs: [
+        { headerName: "Status", field: "status", minWidth: 150, valueGetter: (p) => (p.data ? (SUB_STATUS[p.data.status] || [])[2] || p.data.status : ""), cellRenderer: cellNode((s) => statusChip(SUB_STATUS, s.status)) },
+        { headerName: "Plan", field: "plan_name", minWidth: 140 },
+        { headerName: "Price", field: "amount", maxWidth: 140, type: "numericColumn", valueGetter: (p) => (p.data ? Number(p.data.amount) : null), valueFormatter: (p) => (p.data && p.value != null ? `${money(p.value, p.data.currency)} / ${String(p.data.interval_unit || "").toLowerCase()}` : "") },
+        { headerName: "Unlocks", field: "path_prefix", maxWidth: 130, cellClass: "mono" },
+        { headerName: "Agent", field: "agent_id", minWidth: 140, cellClass: "mono" },
+        { headerName: "Agent's reason", field: "purpose", minWidth: 200, tooltipField: "purpose" },
+        { headerName: "PayPal subscription", field: "provider_subscription_id", minWidth: 170, cellClass: "mono", tooltipField: "provider_subscription_id" },
+        { headerName: "Started", field: "created_at", maxWidth: 120, sort: "desc", filter: false, valueFormatter: (p) => formatTime(p.value) },
+      ],
+    });
+  }
+
+  async function loadCommerce() {
+    try {
+      const result = await getJson("/commerce/summary", { headers: authHeaders() });
+      if (!result.ok || !result.body) return;
+      renderCommerce(result.body);
+    } catch (_) { /* the main refresh loop reports connectivity */ }
+  }
+
+  function renderCommerce(c) {
+    const cur = c.currency;
+    const d = c.deposits || {};
+    $("count-orders").textContent = String(c.paid_access_orders + c.paid_product_orders + c.active_subscriptions);
+    const kpis = $("commerce-kpis");
+    clear(kpis);
+    kpis.append(
+      tile("Pay-per-access", money(c.access_revenue, cur), `${compact(c.paid_access_orders)} item${c.paid_access_orders === 1 ? "" : "s"} sold`, "accent", "▶"),
+      tile("Product orders", money(c.product_revenue, cur), `${compact(c.paid_product_orders)} paid order${c.paid_product_orders === 1 ? "" : "s"}`, "accent", "◫"),
+      tile("Subscriptions (MRR)", money(c.subscription_mrr, cur), `${compact(c.active_subscriptions)} active · ${compact(c.pending_subscriptions)} pending · ${compact(c.cancelled_subscriptions)} cancelled`, "good", "∞"),
+      tile("Forfeited deposits", money(d.forfeited_revenue, cur), `${compact(d.forfeited)} forfeited · ${compact(d.returned)} returned of ${compact(d.total)}`, d.forfeited ? "critical" : "neutral", "✕"),
+      tile("Awaiting payment", compact(c.orders_awaiting_payment), "Orders created but not captured", c.orders_awaiting_payment ? "warning" : "neutral", "⏸"),
+    );
+    const groups = [
+      ["Pay-per-access", "var(--accent)", Number(c.access_revenue)],
+      ["Products", "var(--status-serious)", Number(c.product_revenue)],
+      ["Subscriptions (MRR)", "var(--status-good)", Number(c.subscription_mrr)],
+      ["Forfeited deposits", "var(--status-critical)", Number(d.forfeited_revenue || 0)],
+    ].filter((g) => g[2] > 0);
+    const box = $("revenue-mix");
+    clear(box);
+    const total = groups.reduce((a, g) => a + g[2], 0);
+    if (!total) {
+      box.append(el("p", { className: "empty", text: "No agent revenue yet. Run the personal agent from the agent studio." }));
+    } else {
+      const bar = el("div", { className: "share-bar", role: "img", "aria-label": groups.map((g) => `${g[0]}: ${money(g[2], cur)}`).join(", ") });
+      for (const g of groups) bar.append(el("span", { className: "share-seg", style: `width:${(g[2] / total) * 100}%; background:${g[1]}`, title: `${g[0]}: ${money(g[2], cur)}` }));
+      box.append(bar, el("ul", { className: "share-legend" }, groups.map((g) => el("li", null, [
+        el("span", { className: "share-swatch", style: `background:${g[1]}` }),
+        el("span", { text: `${g[0]} · ${Math.round((g[2] / total) * 100)}%` }),
+        el("span", { className: "num", text: money(g[2], cur) }),
+      ]))));
+    }
+    if (state.grids.orders) {
+      state.grids.orders.setRows(c.orders);
+      state.grids.subscriptions.setRows(c.subscriptions);
+    }
+  }
+
   // --- data loop -----------------------------------------------------------------------
   async function refresh() {
     if (state.inFlight) return;
@@ -1155,8 +1273,9 @@
       hideBanner();
       render(result.body);
       if (state.view === "operations") loadRequests(false);
+      loadCommerce();
     } catch (_) {
-      showBanner("Cannot reach the CrawlerTrust gateway. Is the server running?");
+      showBanner("Cannot reach the AgentTrust gateway. Is the server running?");
     } finally {
       clearTimeout(slowTimer);
       main.classList.remove("refreshing");

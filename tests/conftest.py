@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for CrawlerTrust tests."""
+"""Shared pytest fixtures for AgentTrust tests."""
 
 from __future__ import annotations
 
@@ -57,6 +57,7 @@ def test_settings(tmp_path: Path) -> Settings:
         audit_log_path=tmp_path / "audit.jsonl",
         payments_db_path=tmp_path / "payments_db.json",
         sessions_db_path=tmp_path / "sessions_db.json",
+        commerce_db_path=tmp_path / "commerce_db.json",
         admin_api_token="test-admin-secret-token-999",
         log_level="WARNING",
         # Never call a live AI API from tests; AI tests inject a fake generator. The

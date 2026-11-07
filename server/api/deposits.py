@@ -98,7 +98,7 @@ def _callback_page(result: PayPalApprovalCallbackResponse) -> HTMLResponse:
     title, message = _CALLBACK_MESSAGES[result.outcome]
     body = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)} · CrawlerTrust</title>
+<title>{html.escape(title)} · AgentTrust</title>
 <style>
 :root {{ color-scheme: light dark; --page: #f9f9f7; --text: #0b0b0b; --muted: #52514e; --card: #fcfcfb; --border: rgba(11,11,11,.1); }}
 @media (prefers-color-scheme: dark) {{ :root {{ --page: #0d0d0d; --text: #f0efec; --muted: #c3c2b7; --card: #1a1a19; --border: rgba(255,255,255,.1); }} }}
@@ -112,7 +112,7 @@ h1 {{ font-size: 20px; margin: 0 0 8px; }} p {{ margin: 0 0 12px; color: var(--m
 <p>Deposit <code>{html.escape(result.deposit_id)}</code> · PayPal order <code>{html.escape(result.provider_order_id)}</code></p>
 <p>You can close this window and return to the demo.</p>
 </main>
-<script>try {{ if (window.opener) {{ window.opener.postMessage({{ type: "crawlertrust-paypal", outcome: {result.outcome!r} }}, window.location.origin); setTimeout(() => window.close(), 1500); }} }} catch (_) {{}}</script>
+<script>try {{ if (window.opener) {{ window.opener.postMessage({{ type: "agenttrust-paypal", outcome: {result.outcome!r} }}, window.location.origin); setTimeout(() => window.close(), 1500); }} }} catch (_) {{}}</script>
 </body></html>"""
     return HTMLResponse(body)
 
