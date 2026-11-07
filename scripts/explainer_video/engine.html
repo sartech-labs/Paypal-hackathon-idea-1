@@ -644,7 +644,6 @@ function buildScene(scene, idx) {
     scene._cam = rec.querySelector('.cam');
     // Camera keyframes: {cue|at, x, y (0-1 focus point in the frame), s (zoom), d (move seconds)}.
     scene._camKeys = (v.cam || []).map((c) => ({ at: typeof c.at === 'number' ? c.at : cue(c.cue, c.at ?? 1), x: c.x ?? 0.5, y: c.y ?? 0.5, s: c.s ?? 1, d: c.d ?? 0.9 }));
-    if (v.speed && v.speed > 1.4) root.append(h(`<div class="speed">⏩ ${(Math.round(v.speed * 2) / 2).toString()}× speed</div>`));
     (v.callouts || []).forEach((c) => { const co = h(`<div class="callout">${rich(c.text)}</div>`); co.style.left = c.x + 'px'; co.style.top = c.y + 'px'; root.append(co); anim(A, co, cue(c.cue, c.at ?? 1), 'pop', 0.4, { until: c.until }); });
     anim(A, rec, 0, 'fade', 0.35);
     scene._img = rec.querySelector('img');

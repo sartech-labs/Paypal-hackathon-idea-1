@@ -22,9 +22,9 @@ from tests.conftest import FakeClock
 from tests.test_demo import ADMIN, _make_client, _results, _wait_for
 
 TIERS = {
-    "premium": ("5.00", "/content/premium/market-intelligence-report"),
-    "standard": ("3.00", "/content/standard/industry-analysis"),
-    "public": ("1.00", "/content/public/general-news"),
+    "premium": ("20.00", "/content/premium/market-intelligence-report"),
+    "standard": ("10.00", "/content/standard/industry-analysis"),
+    "public": ("5.00", "/content/public/general-news"),
 }
 
 
@@ -115,7 +115,7 @@ async def test_challenge_and_deposit_use_the_tier_price(async_client: httpx.Asyn
 async def test_news_sections_are_public_tier(async_client: httpx.AsyncClient) -> None:
     for path in ("/news", "/news/economy"):
         challenge = (await async_client.get(f"/gateway{path}", headers={"X-Crawler-Id": "crawler-news"})).json()
-        assert challenge["deposit"]["amount"] == "1.00"
+        assert challenge["deposit"]["amount"] == "5.00"
         assert challenge["pricing"]["tier_id"] == "public" and challenge["pricing"]["resource"] == path
 
 
@@ -215,7 +215,7 @@ def test_rogue_run_pays_public_tier_for_news_and_forfeits(demo_client: TestClien
     run = _wait_for(demo_client, started.json()["run_id"], ADMIN)
     assert run["pricing_tier"] is None  # the tier selection does not change the rogue script
     # The rogue starts at /news, which is Public content: the gateway charges the Public price.
-    assert run["deposit"]["required_amount"] == "1.00" and run["deposit"]["pricing_tier"] == "public"
+    assert run["deposit"]["required_amount"] == "5.00" and run["deposit"]["pricing_tier"] == "public"
     assert run["deposit"]["deposit_state"] == "FORFEITED"
     history = demo_client.get(f"/demo/requests?crawler_id={run['crawler_id']}", headers=ADMIN).json()["rows"]
     assert any(r["access_decision"] == "denied" and r["http_status"] == 403 for r in history)
@@ -234,7 +234,7 @@ def test_env_tier_prices_override_site_config(test_settings: Settings, fake_cloc
     for client in _make_client(settings, fake_clock):
         tiers = {t["tier_id"]: t["price"] for t in client.get("/demo/config", headers=ADMIN).json()["pricing_tiers"]}
         # tier1 = Premium, tier2 = Standard; tier3 (Public) keeps its site_config price.
-        assert tiers == {"premium": "12.50", "standard": "7.00", "public": "1.00"}
+        assert tiers == {"premium": "12.50", "standard": "7.00", "public": "5.00"}
         challenge = client.get("/gateway/content/premium/financial-reports", headers={"X-Crawler-Id": "crawler-env"}).json()
         assert challenge["deposit"]["amount"] == "12.50"
 

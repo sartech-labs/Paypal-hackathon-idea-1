@@ -45,7 +45,7 @@ class Settings(BaseModel):
     paypal_mcp_timeout_seconds: float = Field(default=60.0, gt=0.0, le=300.0)
 
     # Base deposit for pages outside every pricing tier (for example /news).
-    deposit_amount: Decimal = Field(default=Decimal("0.01"))
+    deposit_amount: Decimal = Field(default=Decimal("1.00"))
     # Tier prices, numbered from most to least valuable: tier1 = Premium, tier2 = Standard,
     # tier3 = Public. Unset values keep the price from data/site_config.json.
     tier1_price: Optional[Decimal] = Field(default=None)
@@ -246,7 +246,7 @@ def load_settings_from_env() -> Settings:
         paypal_mcp_command=os.getenv("PAYPAL_MCP_COMMAND", "").strip() or "npx -y @paypal/mcp@1.8.1",
         paypal_mcp_url=os.getenv("PAYPAL_MCP_URL", "").strip() or "https://mcp.sandbox.paypal.com/sse",
         paypal_mcp_timeout_seconds=float(os.getenv("PAYPAL_MCP_TIMEOUT_SECONDS", "60")),
-        deposit_amount=Decimal(os.getenv("DEPOSIT_AMOUNT", "0.01")),
+        deposit_amount=Decimal(os.getenv("DEPOSIT_AMOUNT", "1.00")),
         tier1_price=os.getenv("TIER1_PRICE") or None,  # type: ignore[arg-type]
         tier2_price=os.getenv("TIER2_PRICE") or None,  # type: ignore[arg-type]
         tier3_price=os.getenv("TIER3_PRICE") or None,  # type: ignore[arg-type]

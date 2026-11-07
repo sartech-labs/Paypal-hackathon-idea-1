@@ -75,7 +75,7 @@ async def test_any_mcp_client_can_buy_read_and_crawl(mcp_url: str) -> None:
         assert feed["status"] == 200
 
         crawl = await _call(client, "start_crawl", {"path": "/news"}, wallet=w)
-        assert crawl["deposit"]["payment_status"] == "CAPTURED" and crawl["deposit"]["required_amount"] == "1.00"
+        assert crawl["deposit"]["payment_status"] == "CAPTURED" and crawl["deposit"]["required_amount"] == "5.00"
         page = await _call(client, "crawl_page", {"path": "/news"}, wallet=w)
         assert page["status"] == 200
         blocked = await _call(client, "crawl_page", {"path": "/admin"}, wallet=w)

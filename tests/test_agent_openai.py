@@ -90,7 +90,7 @@ def gateway(test_settings: Settings, fake_clock: FakeClock) -> Iterator[TestClie
 
 
 def _toolbox(gateway: TestClient, fake_clock: FakeClock) -> GatewayToolbox:
-    return GatewayToolbox(http=gateway, crawler_id="ai-openai-crawler", max_deposit=Decimal("1.00"), sleep=fake_clock.advance)
+    return GatewayToolbox(http=gateway, crawler_id="ai-openai-crawler", max_deposit=Decimal("5.00"), sleep=fake_clock.advance)
 
 
 def _agent(llm: FakeOpenAI, toolbox: GatewayToolbox, persona: Any = COMPLIANT, **kwargs: Any) -> CrawlerAgent:

@@ -100,7 +100,7 @@ def test_deposit_goes_through_the_mandate_and_comes_back_on_refund(client: TestC
     _run(box, "fetch_page", {"path": "/news"})
     paid, is_error = _run(box, "pay_deposit", {})
     assert not is_error and paid["status"] == "paid"
-    assert box.mandate.remaining == Decimal("59.00")
+    assert box.mandate.remaining == Decimal("55.00")
     _run(box, "accept_policy", {"policy_version": "1.0", "agree_to_terms": True})
     _run(box, "fetch_page", {"path": "/news"})
     done, _ = _run(box, "complete_session", {})

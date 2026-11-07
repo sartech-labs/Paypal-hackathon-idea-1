@@ -107,7 +107,7 @@ async def test_violating_session_captures_hold(auth_settings: Settings, fake_clo
         assert final["policy_decision"] == "FORFEITED_BY_POLICY"
         assert final["refund_status"] == "NOT_APPLICABLE_FORFEITED"
         assert final["provider_capture_id"].startswith("mock_cap_")
-        assert final["captured_amount"] == "1.00"
+        assert final["captured_amount"] == "5.00"
         assert "authorization hold captured" in final["decision_reason"]
 
         # The forfeited crawler cannot claw back the deposit through the refund endpoint.
@@ -214,7 +214,7 @@ def _paypal(
     log: Optional[list[dict[str, Any]]] = None,
     require_approval: bool = False,
     auth_status: str = "CREATED",
-    auth_amount: str = "1.00",
+    auth_amount: str = "5.00",
     void_http: int = 204,
     void_timeout: bool = False,
     auth_lookup_status: Optional[str] = "VOIDED",
@@ -268,7 +268,7 @@ def _paypal(
             if capture_http in (200, 201):
                 return httpx.Response(
                     capture_http,
-                    json={"id": "CAP_1", "status": capture_status, "amount": {"value": "1.00", "currency_code": "USD"}},
+                    json={"id": "CAP_1", "status": capture_status, "amount": {"value": "5.00", "currency_code": "USD"}},
                 )
             details = [{"issue": capture_issue}] if capture_issue else []
             return httpx.Response(capture_http, json={"name": "ERROR", "details": details})
@@ -286,7 +286,7 @@ async def test_sandbox_create_order_uses_authorize_intent(test_settings: Setting
     log: list[dict[str, Any]] = []
     provider = _sandbox(test_settings, _paypal(log=log))
     result = await provider.create_order(
-        deposit_id="dep_1", amount=Decimal("1.00"), currency="USD", request_id="ord_req_dep_1",
+        deposit_id="dep_1", amount=Decimal("5.00"), currency="USD", request_id="ord_req_dep_1",
         description="test", intent="AUTHORIZE",
     )
     assert result.order_id == ORDER_ID
@@ -299,7 +299,7 @@ async def test_sandbox_authorize_order_verifies_hold(test_settings: Settings) ->
     log: list[dict[str, Any]] = []
     provider = _sandbox(test_settings, _paypal(log=log))
     result = await provider.authorize_order(
-        order_id=ORDER_ID, request_id="auth_req_dep_1", expected_amount=Decimal("1.00"), expected_currency="USD"
+        order_id=ORDER_ID, request_id="auth_req_dep_1", expected_amount=Decimal("5.00"), expected_currency="USD"
     )
     assert result.verified is True
     assert result.authorization_id == AUTH_ID and result.authorization_status == "CREATED"
@@ -313,19 +313,19 @@ async def test_sandbox_authorize_requires_payer_approval(test_settings: Settings
     provider = _sandbox(test_settings, _paypal(require_approval=True))
     with pytest.raises(PaymentApprovalRequiredError) as exc_info:
         await provider.authorize_order(
-            order_id=ORDER_ID, request_id="r", expected_amount=Decimal("1.00"), expected_currency="USD"
+            order_id=ORDER_ID, request_id="r", expected_amount=Decimal("5.00"), expected_currency="USD"
         )
     assert exc_info.value.approval_url and ORDER_ID in exc_info.value.approval_url
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("auth_status", "auth_amount"), [("CREATED", "0.50"), ("PENDING", "1.00"), ("DENIED", "1.00")])
+@pytest.mark.parametrize(("auth_status", "auth_amount"), [("CREATED", "0.50"), ("PENDING", "5.00"), ("DENIED", "5.00")])
 async def test_sandbox_authorization_must_be_created_and_match(
     test_settings: Settings, auth_status: str, auth_amount: str
 ) -> None:
     provider = _sandbox(test_settings, _paypal(auth_status=auth_status, auth_amount=auth_amount))
     result = await provider.authorize_order(
-        order_id=ORDER_ID, request_id="r", expected_amount=Decimal("1.00"), expected_currency="USD"
+        order_id=ORDER_ID, request_id="r", expected_amount=Decimal("5.00"), expected_currency="USD"
     )
     assert result.verified is False
     assert result.failure_reason
@@ -368,14 +368,14 @@ async def test_sandbox_void_authorization_outcomes(
             {
                 "capture_http": 422,
                 "capture_issue": "PREVIOUSLY_CAPTURED",
-                "order_captures": [{"id": "CAP_PREV", "status": "COMPLETED", "amount": {"value": "1.00", "currency_code": "USD"}}],
+                "order_captures": [{"id": "CAP_PREV", "status": "COMPLETED", "amount": {"value": "5.00", "currency_code": "USD"}}],
             },
             "CAPTURED",
         ),
         (
             {
                 "capture_timeout": True,
-                "order_captures": [{"id": "CAP_LATE", "status": "COMPLETED", "amount": {"value": "1.00", "currency_code": "USD"}}],
+                "order_captures": [{"id": "CAP_LATE", "status": "COMPLETED", "amount": {"value": "5.00", "currency_code": "USD"}}],
             },
             "CAPTURED",
         ),
@@ -389,14 +389,14 @@ async def test_sandbox_capture_authorization_outcomes(
     log: list[dict[str, Any]] = []
     provider = _sandbox(test_settings, _paypal(log=log, **options))
     result = await provider.capture_authorization(
-        authorization_id=AUTH_ID, order_id=ORDER_ID, amount=Decimal("1.00"), currency="USD",
+        authorization_id=AUTH_ID, order_id=ORDER_ID, amount=Decimal("5.00"), currency="USD",
         request_id="cap_req_dep_1", note="forfeited",
     )
     assert result.status == expected
     capture_call = next(c for c in log if c["path"].endswith("/capture"))
     assert capture_call["headers"]["paypal-request-id"] == "cap_req_dep_1"
     assert capture_call["body"]["final_capture"] is True
-    assert capture_call["body"]["amount"] == {"value": "1.00", "currency_code": "USD"}
+    assert capture_call["body"]["amount"] == {"value": "5.00", "currency_code": "USD"}
 
 
 @pytest.mark.asyncio

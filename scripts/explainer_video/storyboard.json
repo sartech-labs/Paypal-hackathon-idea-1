@@ -184,8 +184,8 @@
       "id": "h06",
       "theme": "paper",
       "chapter": "// 03 — you can't tell them apart",
-      "vo": "So sites block them all, and lose the good ones too: the search traffic, the shoppers, the sales.",
-      "caption": "So sites *block them all,* and lose the *good ones too:* / the search traffic, the shoppers, the sales.",
+      "vo": "So sites block them all, and lose the good ones too: the shoppers and the sales.",
+      "caption": "So sites *block them all,* and lose the *good ones too:* / the shoppers and the sales.",
       "visual": {
         "type": "walls",
         "no": "✕ blocked too",
@@ -194,7 +194,7 @@
             "icon": "🔎",
             "text": "Search crawler",
             "sub": "your visitors",
-            "cue": "search"
+            "cue": "lose"
           },
           {
             "icon": "🛒",
@@ -247,8 +247,8 @@
       "id": "s07",
       "theme": "midnight",
       "chapter": "// 05 — how the gateway works",
-      "vo": "Every agent comes through it. The gateway shows your rules, takes a small refundable deposit through PayPal, and checks every single request. Your site doesn't change.",
-      "caption": "Every agent comes *through it.* The gateway shows your *rules,* / takes a small *refundable deposit* through PayPal, and checks *every single request.* Your site doesn't change.",
+      "vo": "Every agent comes through it. The gateway shows your rules, holds a refundable deposit through PayPal, and checks every request. Your site doesn't change.",
+      "caption": "Every agent comes *through it.* The gateway shows your *rules,* / holds a *refundable deposit* through PayPal, and checks *every request.* Your site doesn't change.",
       "visual": {
         "type": "gateway",
         "cue": "through",
@@ -282,11 +282,11 @@
           {
             "text": "HTTP 402: pay to enter",
             "sub": "before any content",
-            "cue": "takes"
+            "cue": "holds"
           },
           {
             "text": "Refundable PayPal deposit",
-            "sub": "$1–5, by content tier",
+            "sub": "$5–20, by content tier",
             "cue": "refundable"
           },
           {
@@ -297,7 +297,7 @@
           {
             "text": "Refund it, or keep it",
             "sub": "decided by behaviour",
-            "cue": "single"
+            "cue": "request"
           }
         ],
         "siteTitle": "Your website",
@@ -320,21 +320,21 @@
             "good": true,
             "label": "Search crawler",
             "sub": "followed the rules",
-            "badge": "$1 BACK",
+            "badge": "$5 BACK",
             "cue": "Good"
           },
           {
             "good": true,
             "label": "Shopping assistant",
             "sub": "followed the rules",
-            "badge": "$1 BACK",
+            "badge": "$5 BACK",
             "cue": "follow"
           },
           {
             "good": true,
             "label": "Research agent",
             "sub": "followed the rules",
-            "badge": "$1 BACK",
+            "badge": "$5 BACK",
             "cue": "every"
           },
           {
@@ -371,27 +371,27 @@
       "id": "g01",
       "theme": "midnight",
       "chapter": "// 05 — live: a bad agent vs the gateway",
-      "vo": "A bad agent, live on the PayPal Sandbox. It pays, then goes for admin pages and floods requests. Forbidden. Too many requests.",
-      "caption": "A bad agent, live on the *PayPal Sandbox.* It pays, / then goes for admin pages and floods requests. *Forbidden.* *Too many requests.*",
+      "vo": "A bad agent, live on the PayPal Sandbox. It pays, then goes for admin pages and floods requests.",
+      "caption": "A *bad agent,* live on the PayPal Sandbox. / It pays, then goes for *admin pages* and *floods requests.*",
       "visual": {
         "type": "rec",
         "src": "rec_crawler/crawler.webm",
-        "from": 8.08,
-        "to": 31.15,
+        "from": 4.71,
+        "to": 21.55,
         "url": "sentinel-news.demo / Crawler demo · the gateway's view",
         "callouts": [
           {
-            "text": "402 → $1 PayPal deposit",
+            "text": "402 → $5 PayPal deposit",
             "x": 1150,
             "y": 330,
-            "cue": "pays",
-            "until": 7.0
+            "cue": 3.4,
+            "until": 4.7
           },
           {
             "text": "403 /admin · 429 bursts",
             "x": 1150,
             "y": 330,
-            "cue": "Forbidden"
+            "cue": 4.75
           }
         ],
         "cam": [
@@ -402,7 +402,7 @@
             "s": 1.3
           },
           {
-            "cue": "Forbidden",
+            "cue": "admin",
             "x": 0.3,
             "y": 0.72,
             "s": 1.45
@@ -420,12 +420,12 @@
       "visual": {
         "type": "rec",
         "src": "rec_crawler/crawler.webm",
-        "from": 31.15,
-        "to": 39.21,
+        "from": 21.55,
+        "to": 29.53,
         "url": "sentinel-news.demo / Crawler demo · the gateway's view",
         "callouts": [
           {
-            "text": "$1 deposit kept",
+            "text": "$5 deposit kept",
             "x": 1260,
             "y": 330,
             "cue": "keeps"
@@ -445,19 +445,19 @@
     {
       "id": "s09",
       "theme": "midnight",
-      "chapter": "// 05 — then, sell to good agents",
-      "vo": "And once you can trust agents, you can sell to them: pay-per-access content, subscriptions, and products, through PayPal.",
-      "caption": "And once you can *trust agents,* you can *sell to them:* / pay-per-access content, subscriptions, and products, through *PayPal.*",
+      "chapter": "// 05 — every kind of agent payment",
+      "vo": "Deposits are priced by content: five dollars for public pages, ten for standard, twenty for premium. Good agents can also buy: pay-per-access, subscriptions, and products.",
+      "caption": "Deposits are priced by *content:* $5 for public pages, $10 for standard, *$20 for premium.* / Good agents can also *buy:* pay-per-access, subscriptions, and products.",
       "visual": {
         "type": "offers",
         "items": [
           {
             "icon": "↺",
             "title": "Crawl deposit",
-            "sub": "refundable, tiered",
-            "price": "$1–5",
-            "api": "Orders v2 + refunds",
-            "cue": "trust"
+            "sub": "priced by content tier",
+            "price": "$5 · $10 · $20",
+            "api": "Orders v2: hold, then release",
+            "cue": "Deposits"
           },
           {
             "icon": "▶",
@@ -496,8 +496,8 @@
       "visual": {
         "type": "rec",
         "src": "rec_owner/owner.webm",
-        "from": 2.79,
-        "to": 10.25,
+        "from": 3.53,
+        "to": 10.81,
         "url": "sentinel-news.demo / Publisher console · Overview",
         "badge": "LIVE · owner's view",
         "callouts": [
@@ -528,8 +528,8 @@
       "visual": {
         "type": "rec",
         "src": "rec_owner/owner.webm",
-        "from": 10.85,
-        "to": 22.36,
+        "from": 11.41,
+        "to": 21.92,
         "url": "sentinel-news.demo / Publisher console · Security",
         "badge": "LIVE · owner's view",
         "callouts": [
@@ -560,8 +560,8 @@
       "visual": {
         "type": "rec",
         "src": "rec_owner/owner.webm",
-        "from": 23.66,
-        "to": 40.25,
+        "from": 23.22,
+        "to": 39.09,
         "url": "sentinel-news.demo / Publisher console · Operations, Commerce",
         "badge": "LIVE · owner's view",
         "callouts": [
@@ -584,8 +584,8 @@
       "visual": {
         "type": "rec",
         "src": "rec_owner/owner.webm",
-        "from": 40.25,
-        "to": 63.32,
+        "from": 39.09,
+        "to": 52.65,
         "url": "sentinel-news.demo / Publisher console · Verify with PayPal",
         "badge": "LIVE · PayPal MCP",
         "callouts": [
@@ -616,8 +616,8 @@
       "visual": {
         "type": "rec",
         "src": "rec_owner/owner.webm",
-        "from": 66.6,
-        "to": 75.96,
+        "from": 54.3,
+        "to": 63.66,
         "url": "sentinel-news.demo / Publisher console · Analytics",
         "badge": "LIVE · owner's view"
       },
@@ -632,8 +632,8 @@
       "visual": {
         "type": "rec",
         "src": "rec/demo.webm",
-        "from": 11.37,
-        "to": 19.56,
+        "from": 13.39,
+        "to": 21.48,
         "url": "sentinel-news.demo / Agent studio · the person's view"
       },
       "act": 3
@@ -642,13 +642,13 @@
       "id": "ud2",
       "theme": "midnight",
       "chapter": "// 07 — using an agent on these sites",
-      "vo": "It reads the site's rules, pays the one-dollar deposit through PayPal, and crawls within them.",
-      "caption": "It reads the site's *rules,* pays the *$1 deposit* through PayPal, and crawls *within them.*",
+      "vo": "It reads the site's rules, pays the five-dollar deposit through PayPal, and crawls within them.",
+      "caption": "It reads the site's *rules,* pays the *$5 deposit* through PayPal, and crawls *within them.*",
       "visual": {
         "type": "rec",
         "src": "rec/demo.webm",
-        "from": 30.56,
-        "to": 75.31,
+        "from": 31.02,
+        "to": 73.0,
         "url": "sentinel-news.demo / Agent studio · the person's view"
       },
       "act": 3
@@ -662,8 +662,8 @@
       "visual": {
         "type": "rec",
         "src": "rec/demo.webm",
-        "from": 82.02,
-        "to": 118.8,
+        "from": 74.89,
+        "to": 105.4,
         "url": "sentinel-news.demo / Agent studio · the person's view"
       },
       "act": 3
@@ -708,8 +708,8 @@
       "id": "p02",
       "theme": "midnight",
       "chapter": "// 08 — why it's good for PayPal",
-      "vo": "For PayPal, every agent payment runs on PayPal. Agent Ready handles checkout; SARA handles the traffic. A package PayPal can offer every website.",
-      "caption": "For *PayPal,* every agent payment *runs on PayPal.* / *Agent Ready* handles checkout; SARA handles the *traffic.* / A *package* PayPal can offer every website.",
+      "vo": "For PayPal, every agent payment runs on PayPal. Agent Ready lets agents pay; SARA makes sure they follow your rules. A package PayPal can offer every website.",
+      "caption": "For *PayPal,* every agent payment *runs on PayPal.* / *Agent Ready* lets agents pay; SARA makes sure they *follow your rules.* / A *package* PayPal can offer every website.",
       "visual": {
         "type": "big3",
         "items": [
@@ -720,7 +720,7 @@
           },
           {
             "title": "🤝 With Agent Ready",
-            "sub": "Agent Ready: checkout · SARA: agent traffic",
+            "sub": "Agent Ready: agents pay · SARA: agents follow the rules",
             "cue": "Agent"
           },
           {
@@ -764,7 +764,7 @@
       "id": "c02",
       "theme": "midnight",
       "chapter": "// SARA · Sartech Labs",
-      "hold": 0.8,
+      "hold": 0.4,
       "vo": "SARA, by Sartech Labs. Safe and responsible agents, backed by PayPal.",
       "caption": "",
       "visual": {

@@ -499,8 +499,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--max-deposit",
-        default="1.00",
-        help="Spending limit for the deposit, enforced in code (default 1.00).",
+        default="5.00",
+        help="Spending limit for the deposit, enforced in code (default 5.00).",
     )
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--no-refusal-fallback", action="store_true", help="Claude only: disable the server-side refusal fallback.")

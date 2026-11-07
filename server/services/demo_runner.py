@@ -37,7 +37,7 @@ logger = logging.getLogger("sara.demo")
 
 # Default operator spending limit enforced by the crawler's toolbox. The gateway raises it
 # to its highest published price so every configured tier stays payable.
-MAX_DEPOSIT = Decimal("5.00")
+MAX_DEPOSIT = Decimal("25.00")
 MAX_TURNS = 25
 ASSISTANT_MAX_TURNS = 40
 DECISION_TIMEOUT_SECONDS = 300.0

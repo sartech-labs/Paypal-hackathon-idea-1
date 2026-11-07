@@ -17,7 +17,7 @@ from server.services.payment_service import SANDBOX_TEST_CARD, PayPalSandboxProv
 
 def _build_paypal_mock_transport(
     *,
-    captured_amount: str = "1.00",
+    captured_amount: str = "5.00",
     captured_currency: str = "USD",
     order_status_on_capture: str = "COMPLETED",
     capture_status: str = "COMPLETED",
@@ -477,7 +477,7 @@ async def test_paypal_buyer_return_captures_and_verifies_once_on_repeated_callba
     assert first.json()["outcome"] == "CAPTURED"
     assert first.json()["payment_status"] == "CAPTURED"
     assert first.json()["provider_capture_id"] == "PAYPAL_CAP_5001"
-    assert first.json()["captured_amount"] == "1.00"
+    assert first.json()["captured_amount"] == "5.00"
     assert first.json()["currency"] == "USD"
     assert repeated.status_code == 200
     assert repeated.json()["outcome"] == "CAPTURED"
@@ -574,10 +574,10 @@ async def test_paypal_callback_rejects_unknown_deposit(
 @pytest.mark.parametrize(
     ("capture_status", "captured_amount", "captured_currency", "capture_id"),
     [
-        ("PENDING", "1.00", "USD", "PAYPAL_CAP_5001"),
+        ("PENDING", "5.00", "USD", "PAYPAL_CAP_5001"),
         ("COMPLETED", "0.02", "USD", "PAYPAL_CAP_5001"),
-        ("COMPLETED", "1.00", "EUR", "PAYPAL_CAP_5001"),
-        ("COMPLETED", "1.00", "USD", None),
+        ("COMPLETED", "5.00", "EUR", "PAYPAL_CAP_5001"),
+        ("COMPLETED", "5.00", "USD", None),
     ],
 )
 async def test_paypal_buyer_return_does_not_accept_unverified_capture(
@@ -633,7 +633,7 @@ async def _call_paypal_refund(
     result = await provider.refund_capture(
         capture_id="PAYPAL_CAP_5001",
         order_id="PAYPAL_ORD_1001",
-        amount=Decimal("1.00"),
+        amount=Decimal("5.00"),
         currency="USD",
         request_id="refund-request-test",
         reason="Test refund",
@@ -656,7 +656,7 @@ async def _call_paypal_capture_lookup(
     )
     result = await provider.get_captured_payment(
         capture_id="PAYPAL_CAP_5001",
-        expected_amount=Decimal("1.00"),
+        expected_amount=Decimal("5.00"),
         expected_currency="USD",
     )
     return result, counters
@@ -720,7 +720,7 @@ async def test_paypal_refund_requires_completed_status_and_matching_details(
 
     assert result.status == "COMPLETED"
     assert result.refund_id == "PAYPAL_REF_9001"
-    assert result.refunded_amount == Decimal("1.00")
+    assert result.refunded_amount == Decimal("5.00")
     assert result.currency == "USD"
     assert result.provider_status == "COMPLETED"
     assert counters["/v2/payments/captures/PAYPAL_CAP_5001/refund"] == 1
@@ -731,8 +731,8 @@ async def test_paypal_refund_requires_completed_status_and_matching_details(
 @pytest.mark.parametrize(
     "refund_payload",
     [
-        {"status": "COMPLETED", "amount": {"value": "1.00", "currency_code": "USD"}},
-        {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"value": "1.00"}},
+        {"status": "COMPLETED", "amount": {"value": "5.00", "currency_code": "USD"}},
+        {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"value": "5.00"}},
         {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"currency_code": "USD"}},
         {
             "id": "PAYPAL_REF_9001",
@@ -742,7 +742,7 @@ async def test_paypal_refund_requires_completed_status_and_matching_details(
         {
             "id": "PAYPAL_REF_9001",
             "status": "COMPLETED",
-            "amount": {"value": "1.00", "currency_code": "EUR"},
+            "amount": {"value": "5.00", "currency_code": "EUR"},
         },
     ],
 )
@@ -783,7 +783,7 @@ async def test_paypal_refund_details_lookup_uses_oauth_and_parses_authoritative_
 
     assert details.refund_id == "PAYPAL_REF_9001"
     assert details.status == "COMPLETED"
-    assert details.refunded_amount == Decimal("1.00")
+    assert details.refunded_amount == Decimal("5.00")
     assert details.currency == "USD"
     assert requests == [
         {
@@ -804,17 +804,17 @@ async def test_paypal_refund_details_lookup_uses_oauth_and_parses_authoritative_
     "refund_details_payload, expected_id, expected_status, expected_amount, expected_currency",
     [
         (
-            {"status": "COMPLETED", "amount": {"value": "1.00", "currency_code": "USD"}},
+            {"status": "COMPLETED", "amount": {"value": "5.00", "currency_code": "USD"}},
             None,
             "COMPLETED",
-            Decimal("1.00"),
+            Decimal("5.00"),
             "USD",
         ),
         (
-            {"id": "PAYPAL_REF_9001", "amount": {"value": "1.00", "currency_code": "USD"}},
+            {"id": "PAYPAL_REF_9001", "amount": {"value": "5.00", "currency_code": "USD"}},
             "PAYPAL_REF_9001",
             None,
-            Decimal("1.00"),
+            Decimal("5.00"),
             "USD",
         ),
         (
@@ -832,10 +832,10 @@ async def test_paypal_refund_details_lookup_uses_oauth_and_parses_authoritative_
             "USD",
         ),
         (
-            {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"value": "1.00"}},
+            {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"value": "5.00"}},
             "PAYPAL_REF_9001",
             "COMPLETED",
-            Decimal("1.00"),
+            Decimal("5.00"),
             None,
         ),
         (
@@ -914,7 +914,7 @@ async def test_paypal_captured_payment_lookup_parses_status(
 
     assert result.capture_id == "PAYPAL_CAP_5001"
     assert result.status == capture_lookup_status
-    assert result.amount == Decimal("1.00")
+    assert result.amount == Decimal("5.00")
     assert result.currency == "USD"
     assert counters["/v2/payments/captures/PAYPAL_CAP_5001"] == 1
 
@@ -947,15 +947,15 @@ async def test_paypal_capture_lookup_uses_oauth_bearer_and_sandbox_url_without_l
 @pytest.mark.parametrize(
     "capture_lookup_payload",
     [
-        {"status": "COMPLETED", "amount": {"value": "1.00", "currency_code": "USD"}},
-        {"id": "PAYPAL_CAP_5001", "amount": {"value": "1.00", "currency_code": "USD"}},
+        {"status": "COMPLETED", "amount": {"value": "5.00", "currency_code": "USD"}},
+        {"id": "PAYPAL_CAP_5001", "amount": {"value": "5.00", "currency_code": "USD"}},
         {"id": "PAYPAL_CAP_5001", "status": "COMPLETED"},
         {"id": "PAYPAL_CAP_5001", "status": "COMPLETED", "amount": {"currency_code": "USD"}},
-        {"id": "PAYPAL_CAP_5001", "status": "COMPLETED", "amount": {"value": "1.00"}},
+        {"id": "PAYPAL_CAP_5001", "status": "COMPLETED", "amount": {"value": "5.00"}},
         {
             "id": "PAYPAL_CAP_OTHER",
             "status": "COMPLETED",
-            "amount": {"value": "1.00", "currency_code": "USD"},
+            "amount": {"value": "5.00", "currency_code": "USD"},
         },
         {
             "id": "PAYPAL_CAP_5001",
@@ -965,7 +965,7 @@ async def test_paypal_capture_lookup_uses_oauth_bearer_and_sandbox_url_without_l
         {
             "id": "PAYPAL_CAP_5001",
             "status": "COMPLETED",
-            "amount": {"value": "1.00", "currency_code": "EUR"},
+            "amount": {"value": "5.00", "currency_code": "EUR"},
         },
     ],
 )
@@ -1079,7 +1079,7 @@ async def test_initial_pending_refund_is_reconciled_before_session_completion_re
                 {
                     "id": "PAYPAL_REF_9001",
                     "status": "COMPLETED",
-                    "amount": {"value": "1.00", "currency_code": "USD"},
+                    "amount": {"value": "5.00", "currency_code": "USD"},
                 }
             ],
         ),
@@ -1166,7 +1166,7 @@ async def test_admin_reconciles_existing_refund_after_restart_without_resubmitti
         {
             "id": "PAYPAL_REF_OTHER",
             "status": "COMPLETED",
-            "amount": {"value": "1.00", "currency_code": "USD"},
+            "amount": {"value": "5.00", "currency_code": "USD"},
         },
         {
             "id": "PAYPAL_REF_9001",
@@ -1176,27 +1176,27 @@ async def test_admin_reconciles_existing_refund_after_restart_without_resubmitti
         {
             "id": "PAYPAL_REF_9001",
             "status": "COMPLETED",
-            "amount": {"value": "1.00", "currency_code": "EUR"},
+            "amount": {"value": "5.00", "currency_code": "EUR"},
         },
-        {"status": "COMPLETED", "amount": {"value": "1.00", "currency_code": "USD"}},
-        {"id": "PAYPAL_REF_9001", "amount": {"value": "1.00", "currency_code": "USD"}},
+        {"status": "COMPLETED", "amount": {"value": "5.00", "currency_code": "USD"}},
+        {"id": "PAYPAL_REF_9001", "amount": {"value": "5.00", "currency_code": "USD"}},
         {"id": "PAYPAL_REF_9001", "status": "COMPLETED"},
         {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"currency_code": "USD"}},
-        {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"value": "1.00"}},
+        {"id": "PAYPAL_REF_9001", "status": "COMPLETED", "amount": {"value": "5.00"}},
         {
             "id": "PAYPAL_REF_9001",
             "status": "PENDING",
-            "amount": {"value": "1.00", "currency_code": "USD"},
+            "amount": {"value": "5.00", "currency_code": "USD"},
         },
         {
             "id": "PAYPAL_REF_9001",
             "status": "FAILED",
-            "amount": {"value": "1.00", "currency_code": "USD"},
+            "amount": {"value": "5.00", "currency_code": "USD"},
         },
         {
             "id": "PAYPAL_REF_9001",
             "status": "FUTURE_STATUS",
-            "amount": {"value": "1.00", "currency_code": "USD"},
+            "amount": {"value": "5.00", "currency_code": "USD"},
         },
     ],
 )
@@ -1293,7 +1293,7 @@ async def test_sessions_complete_reconciles_existing_refund_and_cli_reports_refu
             {
                 "id": "PAYPAL_REF_9001",
                 "status": "COMPLETED",
-                "amount": {"value": "1.00", "currency_code": "USD"},
+                "amount": {"value": "5.00", "currency_code": "USD"},
             },
         ],
     )
@@ -1395,7 +1395,7 @@ async def test_paypal_refund_timeout_is_unknown_and_reconciled_before_retry(
     first = await provider.refund_capture(
         capture_id="PAYPAL_CAP_5001",
         order_id="PAYPAL_ORD_1001",
-        amount=Decimal("1.00"),
+        amount=Decimal("5.00"),
         currency="USD",
         request_id="refund-request-test",
         reason="Test refund",
@@ -1403,7 +1403,7 @@ async def test_paypal_refund_timeout_is_unknown_and_reconciled_before_retry(
     second = await provider.refund_capture(
         capture_id="PAYPAL_CAP_5001",
         order_id="PAYPAL_ORD_1001",
-        amount=Decimal("1.00"),
+        amount=Decimal("5.00"),
         currency="USD",
         request_id="refund-request-test",
         reason="Test refund",
@@ -1482,7 +1482,7 @@ async def test_paypal_recovers_persisted_in_progress_refund_without_duplicate(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bad_amount,bad_currency",
-    [("0.50", "USD"), ("1.00", "EUR")],
+    [("0.50", "USD"), ("5.00", "EUR")],
 )
 async def test_paypal_rejects_mismatched_amount_or_currency(
     test_settings: Settings,
@@ -1589,7 +1589,7 @@ async def test_paypal_failed_or_pending_refund_preserves_captured_record(
         transport_options["refund_details_payload"] = {
             "id": "PAYPAL_REF_9001",
             "status": "PENDING",
-            "amount": {"value": "1.00", "currency_code": "USD"},
+            "amount": {"value": "5.00", "currency_code": "USD"},
         }
     provider = PayPalSandboxProvider(
         test_settings,
@@ -1642,7 +1642,7 @@ async def test_paypal_failed_or_pending_refund_preserves_captured_record(
         # Original captured payment details are strictly preserved!
         assert final_dep["payment_status"] == "CAPTURED"
         assert final_dep["provider_capture_id"] == "PAYPAL_CAP_5001"
-        assert final_dep["captured_amount"] == "1.00"
+        assert final_dep["captured_amount"] == "5.00"
         assert final_dep["policy_decision"] == "ELIGIBLE_FOR_REFUND"
 
         assert final_dep["refund_status"] == "REFUND_PENDING"

@@ -82,7 +82,7 @@ def gateway(test_settings: Settings, fake_clock: FakeClock) -> Iterator[TestClie
         yield client
 
 
-def _toolbox(gateway: TestClient, fake_clock: FakeClock, max_deposit: str = "1.00") -> GatewayToolbox:
+def _toolbox(gateway: TestClient, fake_clock: FakeClock, max_deposit: str = "5.00") -> GatewayToolbox:
     return GatewayToolbox(
         http=gateway,
         crawler_id="ai-test-crawler",
@@ -135,7 +135,7 @@ def test_compliant_agent_completes_session_and_gets_refund(
     assert toolbox.outcome["deposit"]["deposit_state"] == "REFUNDED"
 
     challenge = _results_by_tool(toolbox, "fetch_page")[0]
-    assert challenge["status"] == 402 and challenge["deposit"]["amount"] == "1.00"
+    assert challenge["status"] == 402 and challenge["deposit"]["amount"] == "5.00"
 
     economy = _results_by_tool(toolbox, "fetch_page")[-1]
     assert economy["status"] == 200
