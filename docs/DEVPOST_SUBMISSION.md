@@ -4,11 +4,11 @@ Draft text for the PayPal AI Hackathon 2026 project page. Replace every `[TODO: 
 
 ## Project name
 
-SARA (Safe And Responsible Agents), by Sartech Labs
+SARA (Safe Access for Responsible Agents), by Sartech Labs
 
 ## Tagline
 
-The agent gateway for websites: it sits in front of a site, makes every AI agent follow the site's rules or lose a refundable PayPal deposit, lets agents pay for content, subscriptions, and products through PayPal, and shows the owner all of it in one dashboard.
+A protection layer for websites in the agentic era: it sits in front of a site, makes every AI agent follow the site's rules or lose a refundable PayPal deposit, lets agents pay for content, subscriptions, and products through PayPal, and shows the owner all of it in one dashboard.
 
 ## Inspiration
 

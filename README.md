@@ -1,6 +1,6 @@
-# SARA: Safe And Responsible Agents
+# SARA: Safe Access for Responsible Agents
 
-**The agent gateway for websites, by [Sartech Labs](https://github.com/sartech-labs) (Safe And Responsible Technology), backed by PayPal.** Good agents get in; bad agents pay.
+**A protection layer for websites in the agentic era, by [Sartech Labs](https://github.com/sartech-labs) (Safe And Responsible Technology), backed by PayPal.** Good agents get in; bad agents pay.
 
 [![CI](https://github.com/sartech-labs/Paypal-hackathon-idea-1/actions/workflows/ci.yml/badge.svg)](https://github.com/sartech-labs/Paypal-hackathon-idea-1/actions/workflows/ci.yml) ![PayPal Sandbox](https://img.shields.io/badge/PayPal-Sandbox-003087) ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 

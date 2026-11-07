@@ -231,12 +231,12 @@
       "id": "s06",
       "theme": "midnight",
       "chapter": "// 05 — the solution",
-      "vo": "That's SARA: Safe And Responsible Agents. A gateway in front of your website, backed by PayPal.",
-      "caption": "That's *SARA:* Safe And Responsible Agents. / A *gateway* in front of your website, *backed by PayPal.*",
+      "vo": "That's SARA: Safe Access for Responsible Agents. A protection layer in front of your website, backed by PayPal.",
+      "caption": "That's *SARA:* Safe Access for Responsible Agents. / A *protection layer* in front of your website, *backed by PayPal.*",
       "visual": {
         "type": "reveal",
         "title": "*SARA*",
-        "sub": "*S*afe *A*nd *R*esponsible *A*gents",
+        "sub": "*S*afe *A*ccess for *R*esponsible *A*gents",
         "pill": "💳 Backed by PayPal · by Sartech Labs",
         "cue": "SARA",
         "pillCue": "backed"
@@ -765,12 +765,12 @@
       "theme": "midnight",
       "chapter": "// SARA · Sartech Labs",
       "hold": 0.4,
-      "vo": "SARA, by Sartech Labs. Safe and responsible agents, backed by PayPal.",
+      "vo": "SARA, by Sartech Labs. Safe access for responsible agents, backed by PayPal.",
       "caption": "",
       "visual": {
         "type": "end",
         "title": "*SARA*",
-        "sub": "Safe And Responsible Agents · by Sartech Labs · backed by PayPal",
+        "sub": "Safe Access for Responsible Agents · by Sartech Labs · backed by PayPal",
         "pills": [
           "Rules enforced",
           "Good agents in",
