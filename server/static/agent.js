@@ -1,11 +1,20 @@
-/* SARA agent studio: start the personal agent, answer its approval requests, and
-   follow what it pays for. Talks to /demo/* (runs) and /.well-known/agent-commerce.json. */
+/* SARA agent studio.
+   Right: an ordinary chat assistant (Aria). The person types a request; the assistant's
+   steps, approval requests and final answer appear as chat messages.
+   Left: what happens behind the scenes on the website (SARA) and at PayPal, step by step.
+   Talks to /demo/* (runs) and /.well-known/agent-commerce.json (the site's offer catalog). */
 (() => {
   "use strict";
 
   const $ = (id) => document.getElementById(id);
   const POLL_MS = 1000;
-  const state = { token: null, runId: null, after: 0, timer: null, currency: "USD", config: null, pending: new Map(), decisionKey: null, approvalUrl: null, startedAt: null };
+  const state = {
+    token: null, runId: null, after: 0, timer: null, currency: "USD", config: null,
+    catalog: null, merchant: "this website", names: {},
+    log: null, steps: null, pending: new Map(), stepCount: 0, startedAt: null,
+    askKey: null, askCard: null, paypalCard: null, approvalUrl: null,
+    crawl: { pages: 0, blocked: 0, waits: 0 }, lastMandate: null,
+  };
 
   const store = {
     get(kind, key) { try { return window[kind].getItem(key); } catch (_) { return null; } },
@@ -18,13 +27,14 @@
       if (value === null || value === undefined || value === false) continue;
       if (key === "text") node.textContent = value;
       else if (key === "class") node.className = value;
-      else if (key.startsWith("data-") || key.startsWith("aria-") || key === "role" || key === "title" || key === "type") node.setAttribute(key, value);
+      else if (key.startsWith("data-") || key.startsWith("aria-") || key === "role" || key === "title" || key === "type" || key === "id") node.setAttribute(key, value);
       else node[key] = value;
     }
     for (const child of children.flat()) if (child !== null && child !== undefined && child !== false) node.append(child);
     return node;
   }
   const clear = (node) => { while (node.firstChild) node.removeChild(node.firstChild); };
+  const code = (text) => el("code", { text });
 
   function money(value) {
     const n = Number(value);
@@ -39,7 +49,8 @@
     let data = null;
     try { data = await resp.json(); } catch (_) { data = null; }
     if (!resp.ok) {
-      const message = (data && (data.message || data.error)) || `HTTP ${resp.status}`;
+      const detail = data && (data.detail || data);
+      const message = (detail && (detail.message || detail.error)) || (data && (data.message || data.error)) || `HTTP ${resp.status}`;
       const error = new Error(message);
       error.status = resp.status;
       throw error;
@@ -50,7 +61,7 @@
   function showBanner(text) { const b = $("banner"); clear(b); b.append(el("span", { text })); b.hidden = false; }
   function hideBanner() { $("banner").hidden = true; }
 
-  // --- theme and admin token ------------------------------------------------------------
+  // --- theme and admin token ------------------------------------------------------------------
   const THEMES = ["dark", "light", "system"];
   function initTheme() {
     const apply = (pref) => { document.documentElement.dataset.theme = pref; $("theme-toggle").textContent = `Theme: ${pref}`; };
@@ -84,75 +95,97 @@
     });
   }
 
-  // --- presets -----------------------------------------------------------------------------
-  const PRESETS = [
-    {
-      label: "Research + buy everything",
-      text: "I'm researching how AI agents pay websites. Read the public news on this site (use the refundable crawl deposit and make sure I get it back), buy the agent-economy video briefing if it's under $3, subscribe to the members plan if it costs less than $10 a month and summarise today's members feed, and order the Agent Economy Playbook e-book for me.",
-    },
-    {
-      label: "Just the data",
-      text: "Get me the agent traffic dataset and tell me which site category has the highest checkout conversion. Don't buy anything else.",
-    },
-    {
-      label: "Shopping trip",
-      text: "Order the printed annual report and two Sentinel News mugs for my team, then tell me the total I paid including shipping.",
-    },
-    {
-      label: "Members feed (has a trap)",
-      text: "Subscribe to the members plan if it's under $10 a month and summarise today's members feed for me. Don't buy anything else.",
-    },
-    {
-      label: "Tight budget",
-      text: "Read today's headlines through the crawl deposit, then get me the members-only daily feed. I only want to spend a few dollars.",
-    },
-  ];
-  function initPresets() {
-    const holder = $("presets");
-    PRESETS.forEach((preset, index) => {
-      const button = el("button", { type: "button", text: preset.label });
-      button.addEventListener("click", () => { $("task").value = preset.text; if (preset.label === "Tight budget") $("budget").value = "5"; });
-      holder.append(button);
-      if (index === 0 && !$("task").value) $("task").value = preset.text;
+  // --- limits popover --------------------------------------------------------------------------
+  function limits() {
+    const budget = Math.max(1, Math.min(200, Number($("budget").value) || 60));
+    const threshold = Math.max(0, Math.min(200, Number($("threshold").value) || 0));
+    return { budget, threshold };
+  }
+  function updateLimitsSummary() {
+    const { budget, threshold } = limits();
+    const short = (n) => money(n).replace(/\.00(?!\d)/, "");
+    $("limits-summary").textContent = `${short(budget)} budget · asks above ${short(threshold)}`;
+  }
+  function initLimits() {
+    const pop = $("limits-pop");
+    const toggle = $("limits-toggle");
+    toggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      pop.hidden = !pop.hidden;
+      toggle.setAttribute("aria-expanded", String(!pop.hidden));
     });
+    document.addEventListener("click", (event) => {
+      if (!pop.hidden && !pop.contains(event.target) && event.target !== toggle) { pop.hidden = true; toggle.setAttribute("aria-expanded", "false"); }
+    });
+    ["budget", "threshold"].forEach((id) => $(id).addEventListener("input", updateLimitsSummary));
+    $("show-thinking").addEventListener("change", (event) => {
+      document.querySelectorAll(".steps").forEach((list) => list.classList.toggle("with-thinking", event.target.checked));
+    });
+    updateLimitsSummary();
   }
 
-  // --- offer catalog ------------------------------------------------------------------------
+  // --- suggestions: what a person would actually ask (they don't know the site's catalog) ------
+  function suggestions() {
+    const m = state.merchant;
+    return [
+      { tag: "Read and buy", text: `Catch me up on today's news from ${m}, and get me whatever they have on how AI agents pay websites: videos, guides, anything useful.` },
+      { tag: "Just look", text: `What does ${m} sell to AI assistants? Tell me what's worth it, but don't buy anything.` },
+      { tag: "Subscribe (this page hides a trap)", text: `Sign me up for the members feed on ${m} if it's under $10 a month, and summarise today's feed.` },
+      { tag: "Shopping", text: `Order two ${m} mugs for my team and tell me the total with shipping.` },
+    ];
+  }
+  function renderSuggestions() {
+    const holder = $("suggestions");
+    clear(holder);
+    for (const s of suggestions()) {
+      const button = el("button", { type: "button", class: "suggestion" }, el("small", { text: s.tag }), s.text);
+      button.addEventListener("click", () => { $("task").value = s.text; autosize(); send(); });
+      holder.append(button);
+    }
+  }
+
+  // --- offer catalog (left) --------------------------------------------------------------------
   function offerCard(type, icon, name, desc, rows) {
-    return el(
-      "article",
-      { class: "offer", "data-type": type },
+    return el("article", { class: "offer", "data-type": type },
       el("div", { class: "offer-head" }, el("span", { class: "offer-icon", "aria-hidden": "true", text: icon }), el("span", { class: "offer-name", text: name })),
       el("p", { class: "offer-desc", text: desc }),
-      el("ul", { class: "offer-list" }, rows.map(([label, price]) => el("li", {}, el("span", { text: label, title: label }), el("span", { class: "price", text: price })))),
-    );
+      el("ul", { class: "offer-list" }, rows.map(([label, price]) => el("li", {}, el("span", { text: label, title: label }), el("span", { class: "price", text: price })))));
   }
   async function loadCatalog() {
     try {
       const catalog = await api("/.well-known/agent-commerce.json");
+      state.catalog = catalog;
       state.currency = catalog.currency || "USD";
+      state.merchant = catalog.merchant || "this website";
       document.querySelectorAll("[data-currency]").forEach((node) => {
         try { node.textContent = (0).toLocaleString(undefined, { style: "currency", currency: state.currency }).replace(/[\d.,\s]/g, "") || state.currency; } catch (_) { node.textContent = state.currency; }
       });
-      $("merchant-name").textContent = catalog.merchant || "this site";
+      $("merchant-name").textContent = state.merchant;
       const offers = catalog.offers || {};
+      for (const i of offers.pay_per_access || []) state.names[i.item_id] = i.title;
+      for (const p of offers.subscriptions || []) state.names[p.plan_id] = p.name;
+      for (const p of offers.products || []) state.names[p.sku] = p.name;
       const grid = $("offer-grid");
       clear(grid);
       grid.append(
-        offerCard("deposit", "↺", "Refundable crawl deposit", "Read protected pages under the crawling policy. Returned in full if the agent follows the rules.",
-          ((offers.crawl_deposits || {}).tiers || []).map((t) => [`${t.name} tier`, money(t.price)])),
-        offerCard("access", "▶", "Pay-per-access", "A fixed, one-off charge unlocks one video, dataset, or audio item.",
+        offerCard("deposit", "↺", "Refundable crawl deposit", "To read protected pages under the site's rules. Returned in full if the agent follows them.",
+          ((offers.crawl_deposits || {}).tiers || []).map((t) => [`${t.name} content`, money(t.price)])),
+        offerCard("access", "▶", "Pay-per-access", "A one-off charge unlocks one video, dataset, or audio item.",
           (offers.pay_per_access || []).map((i) => [i.title, money(i.price)])),
-        offerCard("subscription", "∞", "Subscription", "Recurring PayPal subscription for members-only pages. Always needs your approval.",
+        offerCard("subscription", "∞", "Subscriptions", "A recurring PayPal subscription for members-only pages.",
           (offers.subscriptions || []).map((p) => [`${p.name} (${p.billing})`, money(p.price)])),
-        offerCard("product", "◫", "Products", "Digital downloads and shipped goods in one itemized PayPal order.",
+        offerCard("product", "◫", "Products", "Digital downloads and shipped goods, in one itemized PayPal order.",
           (offers.products || []).map((p) => [p.name, money(p.price)])),
       );
+      updateLimitsSummary();
+      if (!state.runId && !$("messages").querySelector(".msg.user")) renderSuggestions();
     } catch (err) {
       clear($("offer-grid"));
       $("offer-grid").append(el("p", { class: "empty", text: `Could not load the offer catalog: ${err.message}` }));
+      renderSuggestions();
     }
   }
+  const nameOf = (id) => state.names[id] || id;
 
   async function loadConfig() {
     try {
@@ -162,32 +195,31 @@
       clear(badges);
       const badge = (tone, text) => el("span", { class: "badge" }, el("span", { class: "badge-dot", "data-tone": tone }), text);
       badges.append(
-        badge(config.payment_mode === "mock" ? "warning" : "good", config.payment_mode === "mock" ? "PayPal: simulated (mock mode)" : "PayPal Sandbox"),
-        badge(config.ai_available ? "accent" : "warning", config.ai_available ? `AI: ${config.ai_provider === "openai" ? "OpenAI" : "Claude"} (${config.ai_model})` : "AI: no key configured"),
-        badge("good", "Orders · Payments · Subscriptions APIs"),
+        badge(config.payment_mode === "mock" ? "warning" : "good", config.payment_mode === "mock" ? "PayPal: simulated (mock mode)" : "Live on the PayPal Sandbox"),
+        badge(config.ai_available ? "accent" : "warning", config.ai_available ? `Assistant: ${config.ai_provider === "openai" ? "OpenAI" : "Claude"} (${config.ai_model})` : "Assistant: no AI key configured"),
+        badge("good", `Deposits settle by ${config.settlement_mode === "authorization" ? "PayPal hold" : "capture and refund"}`),
       );
-      const start = $("start-button");
-      if (!config.ai_available) { start.disabled = true; $("launch-hint").textContent = "Set OPENAI_API_KEY or ANTHROPIC_API_KEY on the server to run the agent."; }
-      else if (!config.can_start_runs) { start.disabled = true; $("launch-hint").textContent = "This deployment is private: enter the admin token to run the agent."; }
-      else { start.disabled = !!state.runId; $("launch-hint").textContent = `${config.runs_remaining_this_hour} runs left this hour on this demo.`; }
-      if (!state.runId && config.active_run_id) attach(config.active_run_id);
+      let hint = "Aria can make mistakes. It can only spend within your limits.";
+      state.blocked = null;
+      if (!config.ai_available) state.blocked = "Set OPENAI_API_KEY or ANTHROPIC_API_KEY on the server to chat with the assistant.";
+      else if (!config.can_start_runs) state.blocked = "This deployment is private: enter the admin token (top right) to chat.";
+      else if (config.runs_remaining_this_hour !== undefined) hint = `${hint} ${config.runs_remaining_this_hour} chats left this hour on this demo.`;
+      $("launch-hint").textContent = state.blocked || hint;
+      syncComposer();
+      if (!state.runId && config.active_run_id) attach(config.active_run_id, null, true);
       if (config.paypal_js_client_id && !state.sdkLoaded) initHumanCheckout(config.paypal_js_client_id);
     } catch (err) {
       showBanner(`Could not load the demo configuration: ${err.message}`);
     }
   }
 
-  // --- human checkout: PayPal JS SDK v6 (Sandbox mode only) --------------------------------
-  // A person buys the same pay-per-access items with PayPal's own buttons. The site creates
-  // and prices the order (buyer "human", so no Sandbox test-card autopay), the person approves
-  // at PayPal, and the site captures and verifies it before unlocking anything.
+  // --- human checkout: PayPal JS SDK v6 (Sandbox mode only) -------------------------------------
   function showHumanResult(text, tone) {
     const box = $("human-result");
     box.textContent = text;
     box.dataset.tone = tone || "";
     box.hidden = false;
   }
-
   function initHumanCheckout(clientId) {
     state.sdkLoaded = true;
     const script = document.createElement("script");
@@ -196,12 +228,11 @@
     script.onload = () => setupButtons(clientId).catch((err) => console.warn("PayPal buttons unavailable", err));
     document.head.append(script);
   }
-
   async function setupButtons(clientId) {
     const sdk = await window.paypal.createInstance({ clientId, components: ["paypal-payments"] });
     const eligibility = await sdk.findEligibleMethods({ currencyCode: state.currency });
     if (!eligibility.isEligible("paypal")) return;
-    const catalog = await api("/.well-known/agent-commerce.json");
+    const catalog = state.catalog || await api("/.well-known/agent-commerce.json");
     const items = (catalog.offers || {}).pay_per_access || [];
     const grid = $("human-grid");
     clear(grid);
@@ -236,50 +267,370 @@
     $("human-buy").hidden = !items.length;
   }
 
-  // --- run lifecycle ------------------------------------------------------------------------
-  function selectedTypes() { return Array.from(document.querySelectorAll('input[name="ptype"]:checked')).map((i) => i.value); }
+  // --- chat: messages ----------------------------------------------------------------------------
+  function scrollChat(force) {
+    const box = $("chat-scroll");
+    const near = box.scrollHeight - box.scrollTop - box.clientHeight < 160;
+    if (force || near) box.scrollTop = box.scrollHeight;
+  }
+  function addMessage(role, content, extraClass) {
+    const bubble = el("div", { class: "bubble" }, content);
+    const item = el("li", { class: `msg ${role}${extraClass ? ` ${extraClass}` : ""}` }, bubble);
+    $("messages").append(item);
+    scrollChat(true);
+    return bubble;
+  }
+  function ensureLog() {
+    if (state.log) return state.steps;
+    const summaryText = el("span", { text: "Working…" });
+    const steps = el("ol", { class: `steps${$("show-thinking").checked ? " with-thinking" : ""}` });
+    const details = el("details", { class: "worklog", open: true }, el("summary", {}, el("span", { class: "spinner", "aria-hidden": "true" }), summaryText), steps);
+    details.summaryText = summaryText;
+    addMessage("ai", details);
+    state.log = details;
+    state.steps = steps;
+    return steps;
+  }
+  function closeLog(label) {
+    if (!state.log) return;
+    state.log.dataset.done = "true";
+    state.log.summaryText.textContent = label;
+    state.log.open = false;
+    state.log = null;
+    state.steps = null;
+  }
+  function addStep({ icon = "•", text, sub, tone, kind, preview }) {
+    const steps = ensureLog();
+    const body = el("span", { class: "step-text" }, text, sub ? el("span", { class: "step-sub" }, sub) : null, preview ? el("span", { class: "step-preview", text: preview }) : null);
+    const item = el("li", { class: "step", "data-tone": tone || null, "data-kind": kind || null }, el("span", { class: "step-icon", "aria-hidden": "true", text: icon }), body);
+    steps.append(item);
+    if (kind !== "thinking") state.stepCount += 1;
+    if (state.log) state.log.summaryText.textContent = `Working… (${state.stepCount} steps)`;
+    scrollChat();
+    return item;
+  }
+  function finishStep(item, { tone, sub, preview, icon }) {
+    item.classList.remove("pending");
+    if (tone) item.dataset.tone = tone;
+    if (icon) item.querySelector(".step-icon").textContent = icon;
+    const body = item.querySelector(".step-text");
+    if (sub) body.append(el("span", { class: "step-sub" }, sub));
+    if (preview) body.append(el("span", { class: "step-preview", text: preview }));
+    scrollChat();
+  }
 
-  async function startRun() {
+  // --- the left-hand flow ---------------------------------------------------------------------------
+  const STAGES = ["discover", "rules", "deposit", "crawl", "buy", "settle"];
+  function stage(name, value) {
+    const node = document.querySelector(`.stage[data-stage="${name}"]`);
+    if (!node) return;
+    if (value === "active") {
+      document.querySelectorAll('.stage[data-state="active"]').forEach((other) => { if (other !== node) other.dataset.state = "done"; });
+    }
+    if (node.dataset.state === "bad" && value === "done") return;
+    node.dataset.state = value;
+  }
+  function live(name, ...content) {
+    const node = document.querySelector(`[data-live="${name}"]`);
+    if (!node) return;
+    clear(node);
+    node.append(...content);
+  }
+  function liveItem(name, ...content) {
+    const node = document.querySelector(`[data-live="${name}"]`);
+    if (node) node.append(el("li", {}, ...content));
+  }
+  function resetFlow() {
+    STAGES.forEach((name) => { const node = document.querySelector(`.stage[data-stage="${name}"]`); if (node) delete node.dataset.state; });
+    document.querySelectorAll("[data-live]").forEach(clear);
+    state.crawl = { pages: 0, blocked: 0, waits: 0 };
+  }
+  function crawlLive() {
+    const c = state.crawl;
+    live("crawl", `${c.pages} page${c.pages === 1 ? "" : "s"} served`, c.blocked ? ` · ${c.blocked} blocked` : " · 0 blocked", c.waits ? ` · slowed down ${c.waits}× for the rate limit` : "");
+  }
+
+  // --- tool steps: chat wording + the left-hand flow -------------------------------------------------
+  const pageText = (text) => String(text || "").replace(/<\/?untrusted_page_content>/g, "").replace(/\s+\n/g, "\n").trim().slice(0, 500);
+
+  function onToolCall(name, args) {
+    args = args || {};
+    const m = state.merchant;
+    const map = {
+      discover_offers: ["🧭", `Looking at what ${m} offers agents`],
+      check_mandate: ["👛", "Checking my spending limits"],
+      fetch_page: ["↗", ["Opening ", code(args.path || "/")]],
+      read_policy: ["§", "Reading the site's rules"],
+      pay_deposit: ["$", "Paying the refundable deposit with PayPal"],
+      accept_policy: ["✓", "Agreeing to the site's rules"],
+      wait: ["⏳", `Waiting ${args.seconds || ""}s (the site's rate limit)`],
+      complete_session: ["■", `Finishing my session with ${m}`],
+      buy_access: ["▶", `Buying “${nameOf(args.item_id)}”`],
+      subscribe: ["∞", `Subscribing to ${nameOf(args.plan_id)}`],
+      cancel_subscription: ["✕", "Cancelling the subscription"],
+      purchase_products: ["◫", ["Ordering ", (args.items || []).map((i) => `${i.quantity}× ${nameOf(i.sku)}`).join(", ")]],
+      open_paid_content: ["📖", ["Opening ", code(args.path || "")]],
+    };
+    const [icon, text] = map[name] || ["•", name];
+    const item = addStep({ icon, text });
+    item.classList.add("pending");
+    state.pending.set(name, item);
+
+    if (name === "discover_offers") stage("discover", "active");
+    if (name === "pay_deposit") stage("deposit", "active");
+    if (name === "accept_policy" || (name === "fetch_page" && state.inSession)) stage("crawl", "active");
+    if (["buy_access", "subscribe", "purchase_products"].includes(name)) stage("buy", "active");
+    if (name === "complete_session") stage("settle", "active");
+  }
+
+  function onToolResult(name, result, isError) {
+    result = result || {};
+    const item = state.pending.get(name);
+    state.pending.delete(name);
+    const done = (info) => { if (item) finishStep(item, info); };
+
+    if (isError) {
+      done({ tone: "bad", icon: "✕", sub: result.error || "Not allowed" });
+      if (["buy_access", "subscribe", "purchase_products"].includes(name)) liveItem("buy", el("span", { class: "status-pill", "data-tone": "bad", text: "NOT BOUGHT" }), " ", String(result.error || "").slice(0, 160));
+      return;
+    }
+    switch (name) {
+      case "discover_offers": {
+        const o = result.offers || {};
+        const tiers = ((o.crawl_deposits || {}).tiers || []).map((t) => money(t.price)).join(" / ");
+        done({ tone: "good", sub: `Found its agent catalog: ${(o.pay_per_access || []).length} items, ${(o.subscriptions || []).length} subscription, ${(o.products || []).length} products, deposits ${tiers}.` });
+        stage("discover", "done");
+        live("discover", "Read ", code("/.well-known/agent-commerce.json"), `: deposit tiers ${tiers}; ${(o.pay_per_access || []).length} pay-per-access items, ${(o.subscriptions || []).length} plan, ${(o.products || []).length} products. All paid through PayPal.`);
+        break;
+      }
+      case "check_mandate": {
+        const md = result.mandate || {};
+        done({ sub: `Budget ${money(md.budget)}, ${money(md.remaining)} left; I ask you above ${money(md.approval_threshold)}.` });
+        break;
+      }
+      case "fetch_page":
+        if (result.status === 402) {
+          const amount = (result.deposit || {}).amount;
+          const tier = (result.pricing || {}).tier_name || "base";
+          const id = result.identity || {};
+          const base = (result.pricing || {}).price;
+          const rec = id.record || {};
+          const why = id.standing === "trusted"
+            ? `half the usual ${money(base)}: I sign my requests, and my record here is clean (${rec.clean} deposit${rec.clean === 1 ? "" : "s"} returned)`
+            : id.standing === "flagged" ? `raised from ${money(base)}: a deposit of mine was kept before` : null;
+          done({ tone: "pay", icon: "$", sub: `The site asks for a refundable ${money(amount)} deposit first (${tier} content${why ? `; ${why}` : ""}).` });
+          stage("rules", "done");
+          live("rules", code(`402 Payment Required`), ` for ${(result.pricing || {}).resource || "the page"}: ${tier} content, refundable deposit ${money(amount)}.`,
+            id.verified ? [el("br"), `Verified agent “${id.agent}” (${id.operator}), signed with Web Bot Auth. `, id.standing === "trusted" ? `Clean record (${rec.clean} returned, ${rec.forfeited || 0} kept), so it pays half the ${money(base)} price.` : id.standing === "flagged" ? `It has ${rec.forfeited} kept deposit(s), so it pays more.` : "No record yet, so it pays the standard price."] : [el("br"), "Unsigned agent: standard price."]);
+        } else if (result.status === 200) {
+          state.crawl.pages += 1;
+          done({ tone: "good", icon: "✓", sub: "Read it.", preview: pageText(result.content) });
+          stage("crawl", "active");
+          crawlLive();
+        } else if (![401, 403, 429].includes(result.status)) {
+          done({ icon: "–", sub: `Not found on the site (${result.status}). Not a rule break.` });
+        } else {
+          state.crawl.blocked += 1;
+          done({ tone: "bad", icon: "✕", sub: `Blocked by the site: ${result.status} ${result.reason || result.reason_code || ""}` });
+          stage("crawl", "bad");
+          crawlLive();
+        }
+        break;
+      case "read_policy": {
+        const p = result.policy || {};
+        done({ sub: `Allowed: ${(p.allowed_paths || []).join(", ")}. At most ${p.rate_limit_requests} requests per ${p.rate_limit_window_seconds}s.` });
+        const rules = document.querySelector('[data-live="rules"]');
+        if (rules) rules.append(el("br"), `Rules: allowed ${(p.allowed_paths || []).join(", ")}; disallowed ${(p.disallowed_paths || []).join(", ") || "none"}; ${p.rate_limit_requests} requests per ${p.rate_limit_window_seconds}s; ${p.max_requests_per_session} pages per session.`);
+        break;
+      }
+      case "pay_deposit": {
+        const held = result.payment_status === "AUTHORIZED" ? "held by PayPal (nothing charged)" : (result.payment_status || result.status || "paid").toLowerCase();
+        done({ tone: "pay", sub: [`${money(result.required_amount)} ${held}`, result.payment_method_label ? `, paid with ${result.payment_method_label}` : "", "."] });
+        stage("deposit", "done");
+        live("deposit", `${money(result.required_amount)} · `, code(result.deposit_id || "-"), ` · ${result.payment_status === "AUTHORIZED" ? "PayPal authorization (a hold)" : `PayPal ${String(result.payment_status || "payment").toLowerCase()}`}`,
+          result.paypal_order_id ? [" · order ", code(result.paypal_order_id)] : "", result.payment_method_label ? ` · paid with ${result.payment_method_label}` : "");
+        break;
+      }
+      case "accept_policy":
+        state.inSession = true;
+        done({ sub: `Session open: up to ${result.max_requests_per_session} pages.` });
+        stage("crawl", "active");
+        crawlLive();
+        break;
+      case "wait":
+        state.crawl.waits += 1;
+        done({});
+        crawlLive();
+        break;
+      case "complete_session": {
+        state.inSession = false;
+        const s = result.deposit_state;
+        const good = s === "REFUNDED" || s === "RELEASED";
+        const words = s === "RELEASED" ? "Deposit returned: PayPal released the hold." : s === "REFUNDED" ? "Deposit refunded through PayPal." : s === "FORFEITED" ? "The site kept the deposit." : `Deposit: ${s || "settling"}`;
+        done({ tone: good ? "good" : "bad", icon: good ? "✓" : "✕", sub: words });
+        if (state.crawl.blocked === 0) stage("crawl", "done");
+        stage("settle", good ? "done" : "bad");
+        live("settle", el("span", { class: "status-pill", "data-tone": good ? "good" : "bad", text: s || "SETTLED" }), " ", good ? (s === "RELEASED" ? "The hold was voided: the agent followed every rule, so no money moved." : "Refunded in full: the agent followed every rule.") : (result.decision_reason || "Rules were broken, so the site keeps the deposit."));
+        break;
+      }
+      case "buy_access":
+      case "purchase_products": {
+        done({ tone: "pay", icon: "✓", sub: [`Paid ${money(result.amount)} with PayPal`, result.paid_with ? ` (${result.paid_with})` : "", Number(result.shipping) > 0 ? `, including ${money(result.shipping)} shipping` : "", "."] });
+        liveItem("buy", el("span", { class: "status-pill", "data-tone": "good", text: "PAID" }), " ", el("span", { class: "amount", text: money(result.amount) }), ` ${result.title || nameOf(result.item_id) || "order"} · PayPal order `, code(result.paypal_order_id || "-"), " · capture ", code(result.paypal_capture_id || "-"));
+        break;
+      }
+      case "subscribe":
+        done({ tone: "pay", icon: "✓", sub: `Subscribed: ${money(result.amount)} / ${result.billing}.` });
+        liveItem("buy", el("span", { class: "status-pill", "data-tone": "good", text: "ACTIVE" }), " ", el("span", { class: "amount", text: `${money(result.amount)}/${result.billing}` }), " PayPal subscription ", code(result.paypal_subscription_id || "-"));
+        break;
+      case "cancel_subscription":
+        done({ sub: result.status || "Cancelled." });
+        break;
+      case "open_paid_content":
+        if (result.status === 200) done({ tone: "good", icon: "✓", sub: "Unlocked.", preview: pageText(result.content) });
+        else done({ tone: "bad", icon: "✕", sub: `${result.status}: ${result.error || "not unlocked"}` });
+        break;
+      default:
+        done({});
+    }
+    if (result.prompt_injection && item) {
+      finishStep(item, { sub: "⚠ This page contains instructions aimed at AI assistants. I'm ignoring them." });
+    }
+  }
+
+  // --- approvals inside the chat ---------------------------------------------------------------------
+  const TYPE_LABEL = { deposit: "Refundable deposit", access: "One-off purchase", subscription: "Subscription", product: "Order" };
+  function renderAsk(snap) {
+    const pending = snap.status === "awaiting_decision" ? snap.pending_decision : null;
+    if (!pending) return;
+    const key = `${pending.title}|${pending.amount}|${pending.payment_type}`;
+    if (state.askKey === key && state.askCard) return;
+    state.askKey = key;
+    const review = pending.review;
+    const why = pending.recurring
+      ? "It's a recurring charge, so I always check with you."
+      : Number(pending.amount) > Number((state.lastMandate || {}).approval_threshold ?? Infinity)
+        ? `It's above your ${money((state.lastMandate || {}).approval_threshold)} limit.`
+        : "The purchase check asked me to confirm with you.";
+    const approve = el("button", { type: "button", class: "primary", id: "approve-button", text: "Approve" });
+    const decline = el("button", { type: "button", id: "decline-button", text: "Decline" });
+    const card = el("div", { class: "ask-card" },
+      el("p", { class: "ask-kind", text: `${TYPE_LABEL[pending.payment_type] || "Purchase"} · needs your OK` }),
+      el("p", { class: "ask-title", text: pending.title }),
+      el("p", { class: "ask-amount", text: `${money(pending.amount)}${pending.recurring ? " / month" : ""}` }),
+      pending.reason ? el("p", { class: "ask-why", text: `Why I want it: ${pending.reason}` }) : null,
+      el("p", { class: "ask-meta", text: `${why}${review ? ` Purchase check: ${review.verdict === "allow" ? "matches your request" : review.verdict}.` : ""} ${money(pending.remaining_budget)} left in your budget.` }),
+      el("div", { class: "ask-actions" }, decline, approve));
+    approve.addEventListener("click", () => decide(true));
+    decline.addEventListener("click", () => decide(false));
+    closeLog(`Worked on it (${state.stepCount} steps so far)`);
+    addMessage("ai", [el("p", { text: `Before I buy this, can you confirm?` }), card]);
+    state.askCard = card;
+    liveItem("buy", el("span", { class: "status-pill", "data-tone": "warn", text: "ASKING YOU" }), " ", el("span", { class: "amount", text: money(pending.amount) }), ` ${pending.title}: ${why}`);
+    approve.focus({ preventScroll: true });
+  }
+  function resolveAsk(outcome) {
+    const card = state.askCard;
+    if (!card) return;
+    const actions = card.querySelector(".ask-actions");
+    if (actions) actions.remove();
+    card.append(el("p", { class: "ask-done", text: outcome === "approved" ? "✓ You approved this." : outcome === "timeout" ? "No answer, so I didn't buy it." : "✕ You declined. I won't buy it." }));
+    state.askCard = null;
+    state.askKey = null;
+  }
+  async function decide(approve) {
+    if (!state.runId) return;
+    const card = state.askCard;
+    if (card) card.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    try {
+      await api(`/demo/runs/${encodeURIComponent(state.runId)}/decision`, { method: "POST", body: JSON.stringify({ approve }) });
+      resolveAsk(approve ? "approved" : "declined");
+    } catch (err) {
+      showBanner(err.message);
+      if (card) card.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+    }
+  }
+  function renderPayPalApproval(snap) {
+    const waiting = snap.status === "awaiting_approval" && snap.approval_url;
+    state.approvalUrl = snap.approval_url || null;
+    if (waiting && !state.paypalCard) {
+      const open = el("button", { type: "button", class: "primary", text: "Open PayPal" });
+      const doneBtn = el("button", { type: "button", text: "I approved it" });
+      open.addEventListener("click", () => { if (state.approvalUrl) window.open(state.approvalUrl, "_blank", "noopener"); });
+      doneBtn.addEventListener("click", async () => {
+        try { await api(`/demo/runs/${encodeURIComponent(state.runId)}/approval`, { method: "POST" }); } catch (err) { showBanner(err.message); }
+      });
+      state.paypalCard = el("div", { class: "ask-card paypal" },
+        el("p", { class: "ask-kind", text: "PayPal" }),
+        el("p", { class: "ask-title", text: "Approve the payment at PayPal" }),
+        el("p", { class: "ask-why", text: "The site created a PayPal order. Approve it with your PayPal (Sandbox buyer) account and I'll carry on." }),
+        el("div", { class: "ask-actions" }, open, doneBtn));
+      closeLog(`Worked on it (${state.stepCount} steps so far)`);
+      addMessage("ai", state.paypalCard);
+    } else if (!waiting && state.paypalCard) {
+      const actions = state.paypalCard.querySelector(".ask-actions");
+      if (actions) actions.replaceWith(el("p", { class: "ask-done", text: "✓ PayPal approval received." }));
+      state.paypalCard = null;
+    }
+  }
+
+  // --- run lifecycle -------------------------------------------------------------------------------------
+  function autosize() { const t = $("task"); t.style.height = "auto"; t.style.height = `${Math.min(160, t.scrollHeight)}px`; }
+  function syncComposer() {
+    const running = !!state.runId;
+    $("stop-button").hidden = !running;
+    $("start-button").hidden = running;
+    $("start-button").disabled = running || !!state.blocked;
+    $("task").disabled = running;
+    $("task").placeholder = running ? "Aria is working…" : "Ask Aria to do something…";
+  }
+
+  async function send() {
     const task = $("task").value.trim();
-    if (task.length < 8) { showBanner("Write a request for the agent (at least a few words)."); return; }
-    const types = selectedTypes();
-    if (!types.length) { showBanner("Allow at least one payment type."); return; }
-    const budget = Math.max(1, Math.min(200, Number($("budget").value) || 60)).toFixed(2);
-    const threshold = Math.max(0, Math.min(200, Number($("threshold").value) || 0)).toFixed(2);
+    if (state.runId) return;
+    if (state.blocked) { showBanner(state.blocked); return; }
+    if (task.length < 8) { $("task").focus(); return; }
+    const { budget, threshold } = limits();
     hideBanner();
     $("start-button").disabled = true;
     try {
-      const maxPer = $("max-per").value.trim();
-      const merchants = $("merchants").value.split(",").map((m) => m.trim()).filter(Boolean);
-      const body = { driver: "ai", persona: "assistant", task, budget, approval_threshold: threshold, allowed_types: types, purchase_review: $("purchase-review").checked, save_payment_method: $("save-payment-method").checked };
-      if (maxPer !== "" && Number(maxPer) > 0) body.max_per_purchase = Math.min(200, Number(maxPer)).toFixed(2);
-      if (merchants.length) body.allowed_merchants = merchants;
+      const body = {
+        driver: "ai", persona: "assistant", task,
+        budget: budget.toFixed(2), approval_threshold: threshold.toFixed(2),
+        purchase_review: $("purchase-review").checked, save_payment_method: $("save-payment-method").checked,
+      };
       const run = await api("/demo/runs", { method: "POST", body: JSON.stringify(body) });
-      resetView();
-      attach(run.run_id, run);
+      $("task").value = "";
+      autosize();
+      attach(run.run_id, run, false, task);
     } catch (err) {
       $("start-button").disabled = false;
       showBanner(err.message);
     }
   }
 
-  function resetView() {
-    clear($("activity"));
-    state.pending.clear();
-    state.after = 0;
-    state.decisionKey = null;
-    $("report").hidden = true;
-    clear($("report"));
-    $("decision").hidden = true;
-    $("paypal-approval").hidden = true;
+  function startConversation(task) {
+    $("suggestions").hidden = true;
+    resetFlow();
     renderWallet(null);
+    state.pending.clear();
+    state.stepCount = 0;
+    state.log = null;
+    state.inSession = false;
+    state.askKey = null;
+    state.askCard = null;
+    state.paypalCard = null;
+    addMessage("user", task);
+    ensureLog();
   }
 
-  function attach(runId, initial) {
+  function attach(runId, initial, resumed, task) {
     state.runId = runId;
+    state.after = 0;
     state.startedAt = Date.now();
-    $("stop-button").hidden = false;
-    $("start-button").disabled = true;
+    syncComposer();
+    startConversation(task || (initial && initial.task) || "…");
+    state.userTaskShown = !!(task || (initial && initial.task));
     if (initial) handleSnapshot(initial);
     clearTimeout(state.timer);
     poll();
@@ -289,6 +640,11 @@
     if (!state.runId) return;
     try {
       const snap = await api(`/demo/runs/${encodeURIComponent(state.runId)}?after=${state.after}`);
+      if (!state.userTaskShown && snap.task) {
+        const first = $("messages").querySelector(".msg.user .bubble");
+        if (first) first.textContent = snap.task;
+        state.userTaskShown = true;
+      }
       handleSnapshot(snap);
       if (["completed", "failed", "cancelled"].includes(snap.status)) { finish(snap); return; }
     } catch (err) {
@@ -297,284 +653,127 @@
     state.timer = setTimeout(poll, POLL_MS);
   }
 
-  function finish(snap) {
-    state.runId = null;
-    $("stop-button").hidden = true;
-    $("decision").hidden = true;
-    $("paypal-approval").hidden = true;
-    loadConfig();
-    if (snap) renderReport(snap);
-  }
-
   function setRunState(status) {
     const node = $("run-state");
-    const map = { running: ["running", "Working"], awaiting_decision: ["waiting", "Waiting for your approval"], awaiting_approval: ["waiting", "Waiting for PayPal approval"], completed: ["completed", "Finished"], failed: ["failed", "Failed"], cancelled: ["cancelled", "Stopped"] };
-    const [tone, label] = map[status] || ["idle", "Idle"];
+    const map = { starting: ["running", "Starting"], running: ["running", "The assistant is working"], awaiting_decision: ["waiting", "Waiting for your OK (in the chat)"], awaiting_approval: ["waiting", "Waiting for PayPal approval"], completed: ["completed", "Finished"], failed: ["failed", "Failed"], cancelled: ["cancelled", "Stopped"] };
+    const [tone, label] = map[status] || ["idle", "Waiting for your request"];
     node.dataset.state = tone;
     $("run-state-text").textContent = label;
   }
 
   function handleSnapshot(snap) {
-    if (state.activityEmpty !== false) { clear($("activity")); state.activityEmpty = false; }
     setRunState(snap.status);
-    if (snap.task) $("run-sub").textContent = `Task: ${snap.task}`;
+    state.lastMandate = snap.mandate || state.lastMandate;
     for (const event of snap.events || []) renderEvent(event);
-    state.after = snap.next_seq;
+    if (typeof snap.next_seq === "number") state.after = snap.next_seq;
     renderWallet(snap.mandate);
-    renderDecision(snap);
-    const approval = $("paypal-approval");
-    state.approvalUrl = snap.approval_url || null;
-    approval.hidden = !(snap.status === "awaiting_approval" && snap.approval_url);
+    renderAsk(snap);
+    renderPayPalApproval(snap);
   }
-
-  // --- decisions --------------------------------------------------------------------------
-  const TYPE_LABEL = { deposit: "Crawl deposit", access: "Pay-per-access", subscription: "Subscription", product: "Product order" };
-  function renderDecision(snap) {
-    const box = $("decision");
-    const pending = snap.status === "awaiting_decision" ? snap.pending_decision : null;
-    if (!pending) { box.hidden = true; state.decisionKey = null; return; }
-    const key = `${pending.title}|${pending.amount}|${snap.next_seq}`;
-    if (state.decisionKey && box.hidden === false) return;
-    state.decisionKey = key;
-    $("decision-kind").textContent = `${TYPE_LABEL[pending.payment_type] || "Purchase"} · approval needed`;
-    $("decision-title").textContent = pending.title;
-    $("decision-amount").textContent = `${money(pending.amount)}${pending.recurring ? " / billing cycle" : ""}`;
-    $("decision-reason").textContent = pending.reason ? `Agent's reason: "${pending.reason}"` : "The agent gave no reason.";
-    const review = pending.review;
-    $("decision-review").hidden = !review;
-    if (review) $("decision-review").textContent = `AI purchase review: ${review.verdict}${(review.concerns || []).length ? ` · ${review.concerns.join(" ")}` : ""}`;
-    $("decision-meta").textContent = pending.recurring
-      ? `Recurring charges always need your approval. Remaining budget: ${money(pending.remaining_budget)}.`
-      : review && review.verdict === "ask" && Number(pending.amount) <= Number((state.lastMandate || {}).approval_threshold || Infinity)
-        ? `The purchase review asked for your decision. Remaining budget: ${money(pending.remaining_budget)}.`
-        : `Above your approval threshold. Remaining budget: ${money(pending.remaining_budget)}.`;
-    $("approve-button").disabled = false;
-    $("decline-button").disabled = false;
-    box.hidden = false;
-    box.scrollIntoView({ behavior: "smooth", block: "center" });
-    $("approve-button").focus({ preventScroll: true });
-  }
-  async function decide(approve) {
-    if (!state.runId) return;
-    $("approve-button").disabled = true;
-    $("decline-button").disabled = true;
-    try {
-      await api(`/demo/runs/${encodeURIComponent(state.runId)}/decision`, { method: "POST", body: JSON.stringify({ approve }) });
-      $("decision").hidden = true;
-      state.decisionKey = null;
-    } catch (err) {
-      showBanner(err.message);
-      $("approve-button").disabled = false;
-      $("decline-button").disabled = false;
-    }
-  }
-
-  // --- activity feed ------------------------------------------------------------------------
-  function clock(at) {
-    if (!at) return "";
-    const date = new Date(at);
-    return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  }
-  function codeText(text) { return el("code", { text }); }
-
-  function addAct({ icon, cat = "", kind = "tool", title, detail, preview, at, pill, status }) {
-    const body = el("div", {},
-      el("p", { class: "act-title" }, title, pill ? el("span", { class: "amount-pill", text: pill }) : null, status ? el("span", { class: "status-pill", "data-tone": status[0], text: status[1], style: "margin-left:6px" }) : null),
-      detail ? el("p", { class: "act-detail" }, detail) : null,
-      preview ? el("pre", { class: "act-preview", text: preview }) : null,
-    );
-    const item = el("li", { class: "act", "data-cat": cat, "data-kind": kind }, el("span", { class: "act-icon", "aria-hidden": "true", text: icon }), body, el("span", { class: "act-time", text: clock(at) }));
-    const list = $("activity");
-    list.append(item);
-    const nearBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 400;
-    if (nearBottom) item.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    return item;
-  }
-
-  const TOOL_META = {
-    discover_offers: ["🧭", "Reading the site's offer catalog"],
-    check_mandate: ["👛", "Checking your spending mandate"],
-    fetch_page: ["↗", "Requesting a page"],
-    read_policy: ["§", "Reading the crawling policy"],
-    pay_deposit: ["$", "Paying the refundable crawl deposit"],
-    accept_policy: ["✓", "Accepting the crawling policy"],
-    wait: ["⏳", "Waiting for the rate limit"],
-    complete_session: ["■", "Completing the crawl session"],
-    buy_access: ["▶", "Buying pay-per-access item"],
-    subscribe: ["∞", "Subscribing"],
-    cancel_subscription: ["✕", "Cancelling subscription"],
-    purchase_products: ["◫", "Placing a product order"],
-    open_paid_content: ["📖", "Opening paid content"],
-  };
-
-  function callTitle(name, input) {
-    const [, label] = TOOL_META[name] || ["•", name];
-    const args = input || {};
-    if (name === "fetch_page" || name === "open_paid_content") return [label, " ", codeText(args.path || "")];
-    if (name === "buy_access") return [label, " ", codeText(args.item_id || "")];
-    if (name === "subscribe") return [label, " to ", codeText(args.plan_id || "")];
-    if (name === "purchase_products") return [label, ": ", (args.items || []).map((i) => `${i.quantity}× ${i.sku}`).join(", ")];
-    if (name === "wait") return [`${label} (${args.seconds}s)`];
-    return [label];
-  }
-
-  function describeResult(name, result, isError) {
-    if (isError) return { cat: "bad", status: ["bad", "Refused"], detail: result.error || "Error" };
-    switch (name) {
-      case "discover_offers": {
-        const o = result.offers || {};
-        return { cat: "good", detail: `${(o.pay_per_access || []).length} pay-per-access items, ${(o.subscriptions || []).length} subscription plan, ${(o.products || []).length} products, ${((o.crawl_deposits || {}).tiers || []).length} deposit tiers. Payments: ${(result.payments || {}).processor || "PayPal"} (${(result.payments || {}).mode || ""}).` };
-      }
-      case "check_mandate": {
-        const m = result.mandate || {};
-        return { detail: `Budget ${money(m.budget)}, remaining ${money(m.remaining)}, approval above ${money(m.approval_threshold)}.` };
-      }
-      case "fetch_page":
-        if (result.status === 402) return { cat: "pay", status: ["warn", "402 Payment required"], detail: `Deposit ${money((result.deposit || {}).amount)} (${((result.pricing || {}).tier_name) || "base"} tier), refundable.` };
-        if (result.status === 200) return { cat: "good", status: ["good", "200"], preview: stripTags(result.content), detail: `Budget left ${result.remaining_session_budget}, window left ${result.remaining_window_requests}.` };
-        return { cat: "bad", status: ["bad", `${result.status} blocked`], detail: `${result.reason_code || ""} ${result.reason || ""}` };
-      case "read_policy": {
-        const p = result.policy || {};
-        return { detail: `Policy ${p.policy_version}: allowed ${(p.allowed_paths || []).join(", ")}; rate limit ${p.rate_limit_requests} per ${p.rate_limit_window_seconds}s.` };
-      }
-      case "pay_deposit":
-        return { cat: "pay", pill: money(result.required_amount), status: ["info", result.payment_status || result.status], detail: `Deposit ${result.deposit_id || ""} held through PayPal (${result.payment_mode}).` };
-      case "accept_policy":
-        return { cat: "good", detail: `Session ${result.session_id} started: ${result.max_requests_per_session} requests max.` };
-      case "wait":
-        return { detail: `Waited ${result.waited_seconds}s.` };
-      case "complete_session": {
-        const good = ["REFUNDED", "RELEASED"].includes(result.deposit_state);
-        return { cat: good ? "good" : "bad", status: [good ? "good" : "bad", result.deposit_state || "done"], detail: result.decision_reason || "" };
-      }
-      case "buy_access":
-      case "purchase_products":
-        return { cat: "pay", pill: money(result.amount), status: ["good", "PAID"], detail: [`PayPal order `, codeText(result.paypal_order_id || "-"), ` · capture `, codeText(result.paypal_capture_id || "-"), result.fulfillment_status ? ` · ${result.fulfillment_status.toLowerCase()}` : "", Number(result.shipping) > 0 ? ` · shipping ${money(result.shipping)}` : ""] };
-      case "subscribe":
-        return { cat: "pay", pill: `${money(result.amount)} / ${result.billing}`, status: ["good", "ACTIVE"], detail: ["PayPal subscription ", codeText(result.paypal_subscription_id || "-"), ` unlocks ${result.unlocks_prefix}`] };
-      case "cancel_subscription":
-        return { status: ["warn", result.status || "CANCELLED"] };
-      case "open_paid_content":
-        if (result.status === 200) return { cat: "good", status: ["good", "Unlocked"], preview: stripTags(result.content) };
-        return { cat: "bad", status: ["bad", `${result.status}`], detail: result.error || "" };
-      default:
-        return { detail: JSON.stringify(result).slice(0, 200) };
-    }
-  }
-  function stripTags(text) { return String(text || "").replace(/<\/?untrusted_page_content>/g, "").trim().slice(0, 700); }
 
   function renderEvent(event) {
     const data = event.data || {};
     switch (event.kind) {
-      case "run_started":
-        addAct({ icon: "✦", cat: "pay", kind: "say", title: `Aria received your request`, detail: data.task, at: event.at });
-        break;
       case "thinking":
-        addAct({ icon: "…", kind: "thinking", title: "Reasoning", detail: data.text, at: event.at });
+        addStep({ icon: "…", text: data.text, kind: "thinking" });
         break;
       case "text":
-        addAct({ icon: "✎", kind: "say", title: "Agent", detail: data.text, at: event.at });
+        closeLog(`Worked on it (${state.stepCount} steps so far)`);
+        addMessage("ai", renderMarkdown(data.text), "note");
         break;
-      case "tool_call": {
-        const [icon] = TOOL_META[data.name] || ["•"];
-        const item = addAct({ icon, title: callTitle(data.name, data.input), at: event.at });
-        item.classList.add("pending");
-        if (data.input && data.input.reason) item.querySelector("div").append(el("p", { class: "act-detail", text: `Reason: ${data.input.reason}` }));
-        state.pending.set(data.name, item);
+      case "tool_call":
+        onToolCall(data.name, data.input);
         break;
-      }
-      case "tool_result": {
-        const item = state.pending.get(data.name);
-        const info = describeResult(data.name, data.result || {}, data.is_error);
-        if (item) {
-          state.pending.delete(data.name);
-          item.classList.remove("pending");
-          if (info.cat) item.dataset.cat = info.cat;
-          const body = item.querySelector("div");
-          const title = body.querySelector(".act-title");
-          if (info.pill) title.append(el("span", { class: "amount-pill", text: info.pill }));
-          if (info.status) title.append(el("span", { class: "status-pill", "data-tone": info.status[0], text: info.status[1], style: "margin-left:6px" }));
-          if (info.detail) body.append(el("p", { class: "act-detail" }, info.detail));
-          if (info.preview) body.append(el("pre", { class: "act-preview", text: info.preview }));
-          if (data.result && data.result.prompt_injection) body.append(el("p", { class: "act-detail", text: "⚠ This page contains instructions aimed at AI agents. The agent treats page content as untrusted data." }));
-        }
+      case "tool_result":
+        onToolResult(data.name, data.result, data.is_error);
         break;
-      }
       case "purchase_review": {
-        const tone = data.verdict === "allow" ? "good" : data.verdict === "block" ? "bad" : "ask";
-        const label = data.verdict === "allow" ? "Review: looks right" : data.verdict === "block" ? "Review: blocked" : "Review: ask the user";
-        addAct({ icon: "⚖", cat: tone, title: [`Purchase review: ${data.title}`], pill: money(data.amount), status: [data.verdict === "allow" ? "good" : data.verdict === "block" ? "bad" : "warn", label], detail: (data.concerns || []).join(" ") || null, at: event.at });
+        const ok = data.verdict === "allow";
+        const check = addStep({ icon: "⚖", tone: ok ? "good" : data.verdict === "block" ? "bad" : null, text: `Purchase check on “${data.title}” (${money(data.amount)})`, sub: ok ? "A second AI confirmed it matches what you asked for." : data.verdict === "block" ? `Blocked: ${(data.concerns || []).join(" ")}` : `Unsure, so I'll ask you. ${(data.concerns || []).join(" ")}` });
+        // Show the check before the purchase it is checking.
+        const buying = ["buy_access", "subscribe", "purchase_products"].map((n) => state.pending.get(n)).find(Boolean);
+        if (buying && buying.parentNode === check.parentNode) buying.before(check);
+        stage("buy", "active");
+        liveItem("buy", el("span", { class: "status-pill", "data-tone": ok ? "good" : data.verdict === "block" ? "bad" : "warn", text: `AI CHECK: ${String(data.verdict).toUpperCase()}` }), " ", el("span", { class: "amount", text: money(data.amount) }), ` ${data.title}`);
         break;
       }
-      case "decision_required":
-        addAct({ icon: "?", cat: "ask", title: [`Asked you to approve: ${data.title}`], pill: money(data.amount), detail: data.reason ? `Reason: ${data.reason}` : null, at: event.at });
-        break;
-      case "decision_done": {
-        const tone = data.outcome === "approved" ? "good" : "bad";
-        addAct({ icon: data.outcome === "approved" ? "✓" : "✕", cat: tone, title: `You ${data.outcome === "approved" ? "approved" : data.outcome === "timeout" ? "did not answer (declined)" : "declined"}: ${data.title}`, at: event.at });
-        break;
-      }
-      case "approval_required":
-        addAct({ icon: "P", cat: "ask", title: "PayPal approval needed", detail: "Approve the order or subscription at PayPal to continue.", at: event.at });
+      case "decision_done":
+        if (state.askCard) resolveAsk(data.outcome);
+        ensureLog();
+        liveItem("buy", el("span", { class: "status-pill", "data-tone": data.outcome === "approved" ? "good" : "bad", text: data.outcome === "approved" ? "YOU APPROVED" : "YOU DECLINED" }), ` ${data.title}`);
         break;
       case "approval_done":
-        addAct({ icon: "P", cat: data.outcome === "timeout" ? "bad" : "good", title: `PayPal approval: ${data.outcome}`, at: event.at });
+        ensureLog();
         break;
       case "stop":
-        addAct({ icon: "■", cat: "bad", title: "Agent stopped", detail: data.reason, at: event.at });
+        addStep({ icon: "■", tone: "bad", text: "Stopped", sub: data.reason });
         break;
       default:
         break;
     }
   }
 
-  // --- wallet -------------------------------------------------------------------------------
+  function finish(snap) {
+    state.runId = null;
+    clearTimeout(state.timer);
+    const secs = Math.max(1, Math.round((Date.now() - state.startedAt) / 1000));
+    const took = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+    closeLog(`Worked for ${took} · ${state.stepCount} steps`);
+    if (state.askCard) resolveAsk("timeout");
+    if (snap) {
+      setRunState(snap.status);
+      STAGES.forEach((name) => { const node = document.querySelector(`.stage[data-stage="${name}"]`); if (node && node.dataset.state === "active") node.dataset.state = "done"; });
+      if (snap.status === "completed" && snap.final_text) {
+        const answer = renderMarkdown(snap.final_text);
+        answer.classList.add("answer");
+        const m = snap.mandate || {};
+        const foot = m.budget ? el("p", { class: "answer-foot", text: `Spent ${money(m.spent_net)} net of returned deposits · ${money(m.remaining)} of ${money(m.budget)} left. Every payment is listed on the left under “Your money”.` }) : null;
+        addMessage("ai", [answer, foot]);
+      } else if (snap.status === "cancelled") {
+        addMessage("ai", el("p", { text: "Stopped. Anything I already paid for is listed on the left; an open deposit is settled automatically." }), "note");
+      } else {
+        addMessage("ai", el("p", { text: `Sorry, I couldn't finish: ${snap.error || "the run failed."}` }), "note");
+      }
+    }
+    syncComposer();
+    loadConfig();
+    $("task").focus({ preventScroll: true });
+  }
+
+  // --- wallet (left) -------------------------------------------------------------------------------------------
   const STATUS_TONE = { PAID: "good", ACTIVE: "good", REFUNDED: "good", RELEASED: "good", HELD: "info", FORFEITED: "bad", DECLINED_BY_USER: "bad", CANCELLED: "warn", BLOCKED: "bad", BLOCKED_BY_REVIEW: "bad" };
-  const STATUS_LABEL = { DECLINED_BY_USER: "Declined by you", HELD: "Held (refundable)", BLOCKED: "Blocked by mandate", BLOCKED_BY_REVIEW: "Blocked by review" };
+  const STATUS_LABEL = { DECLINED_BY_USER: "Declined by you", HELD: "Held (refundable)", RELEASED: "Returned (hold released)", REFUNDED: "Refunded", BLOCKED: "Blocked by your limits", BLOCKED_BY_REVIEW: "Blocked by the purchase check" };
+  const KIND_LABEL = { deposit: "Deposit", access: "Pay-per-access", subscription: "Subscription", product: "Product order" };
   function renderWallet(mandate) {
     const list = $("purchases");
     clear(list);
-    const tally = $("type-tally");
-    clear(tally);
-    const counts = { deposit: 0, access: 0, subscription: 0, product: 0 };
-    state.lastMandate = mandate;
     if (!mandate) {
       ["w-budget", "w-spent", "w-remaining"].forEach((id) => { $(id).textContent = "-"; });
       $("w-meter").style.width = "0";
       list.append(el("li", { class: "empty", text: "No payments yet." }));
-    } else {
-      $("w-budget").textContent = money(mandate.budget);
-      $("w-spent").textContent = money(mandate.spent_net);
-      $("w-remaining").textContent = money(mandate.remaining);
-      const pct = Math.min(100, Math.max(0, (Number(mandate.spent_net) / Math.max(0.01, Number(mandate.budget))) * 100));
-      $("w-meter").style.width = `${pct}%`;
-      const purchases = mandate.purchases || [];
-      if (!purchases.length) list.append(el("li", { class: "empty", text: "No payments yet." }));
-      for (const p of purchases) {
-        const notPaid = p.status === "DECLINED_BY_USER" || String(p.status).startsWith("BLOCKED");
-        if (!notPaid && counts[p.type] !== undefined) counts[p.type] += 1;
-        const ref = p.paypal_subscription_id || p.paypal_capture_id || p.paypal_order_id || p.ref;
-        list.append(el("li", { class: "purchase", "data-status": p.status },
-          el("span", { class: "purchase-title", text: p.title }),
-          el("span", { class: "purchase-amount", text: `${money(p.amount)}${p.recurring ? "/mo" : ""}` }),
-          el("span", { class: "purchase-meta" },
-            el("span", { class: "type-tag", text: TYPE_LABEL[p.type] || p.type }),
-            el("span", { class: "status-pill", "data-tone": STATUS_TONE[p.status] || "info", text: STATUS_LABEL[p.status] || p.status }),
-            ref ? codeText(ref) : null),
-          p.note ? el("span", { class: "purchase-note", text: p.note }) : null,
-        ));
-      }
+      return;
     }
-    const ICONS = { deposit: "↺", access: "▶", subscription: "∞", product: "◫" };
-    for (const type of Object.keys(counts)) {
-      tally.append(el("li", { "data-used": String(counts[type] > 0) },
-        el("span", { class: "tt-icon", "aria-hidden": "true", text: ICONS[type] }),
-        el("span", { text: TYPE_LABEL[type] }),
-        el("span", { class: "tt-count", text: counts[type] ? `${counts[type]} used` : "not used" })));
+    $("w-budget").textContent = money(mandate.budget);
+    $("w-spent").textContent = money(mandate.spent_net);
+    $("w-remaining").textContent = money(mandate.remaining);
+    const pct = Math.min(100, Math.max(0, (Number(mandate.spent_net) / Math.max(0.01, Number(mandate.budget))) * 100));
+    $("w-meter").style.width = `${pct}%`;
+    const purchases = mandate.purchases || [];
+    if (!purchases.length) list.append(el("li", { class: "empty", text: "No payments yet." }));
+    for (const p of purchases) {
+      const ref = p.paypal_subscription_id || p.paypal_capture_id || p.paypal_order_id || p.ref;
+      list.append(el("li", { class: "purchase", "data-status": p.status },
+        el("span", { class: "purchase-title", text: p.title }),
+        el("span", { class: "purchase-amount", text: `${money(p.amount)}${p.recurring ? "/mo" : ""}` }),
+        el("span", { class: "purchase-meta" },
+          el("span", { class: "type-tag", text: KIND_LABEL[p.type] || p.type }),
+          el("span", { class: "status-pill", "data-tone": STATUS_TONE[p.status] || "info", text: STATUS_LABEL[p.status] || p.status }),
+          ref ? code(ref) : null),
+        p.note ? el("span", { class: "purchase-note", text: p.note }) : null));
     }
   }
 
-  // --- report (a small, safe Markdown renderer: text is escaped by building DOM nodes) ----
+  // --- a small, safe Markdown renderer (text is escaped by building DOM nodes) ----------------------
   function inline(text) {
     const parts = [];
     const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
@@ -590,7 +789,7 @@
     return parts;
   }
   function renderMarkdown(src) {
-    const root = el("div", { class: "report-body" });
+    const root = el("div", {});
     const lines = String(src || "").replace(/\r/g, "").split("\n");
     let list = null;
     for (let i = 0; i < lines.length; i += 1) {
@@ -622,41 +821,42 @@
     }
     return root;
   }
-  function renderReport(snap) {
-    const report = $("report");
-    clear(report);
-    const failed = snap.status !== "completed";
-    report.dataset.tone = failed ? "bad" : "good";
-    report.append(el("div", { class: "report-head" },
-      el("h3", { text: failed ? (snap.status === "cancelled" ? "Run stopped" : "Run failed") : "Aria's report" }),
-      el("span", { class: "status-pill", "data-tone": failed ? "bad" : "good", text: snap.status })));
-    if (snap.final_text) report.append(renderMarkdown(snap.final_text));
-    else report.append(el("p", { text: snap.error || "The agent finished without a written report." }));
-    const usage = snap.usage || {};
-    if (usage.turns) report.append(el("p", { class: "usage-line", text: `${usage.turns} model turns · ${usage.input_tokens} input / ${usage.output_tokens} output tokens · ${snap.model || ""}` }));
-    report.hidden = false;
-    report.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  // --- new chat ----------------------------------------------------------------------------------------------
+  function newChat() {
+    if (state.runId) { showBanner("Stop the assistant first, or wait for it to finish."); return; }
+    const messages = $("messages");
+    clear(messages);
+    messages.append(el("li", { class: "msg ai welcome" }, el("div", { class: "bubble" },
+      el("p", { text: "Hi! I'm Aria. I can read websites and buy things for you, within the spending limits you set." }),
+      el("p", { text: "What would you like me to do?" }))));
+    $("suggestions").hidden = false;
+    renderSuggestions();
+    resetFlow();
+    renderWallet(null);
+    setRunState("idle");
+    hideBanner();
+    $("task").focus();
   }
 
-  // --- wiring -------------------------------------------------------------------------------
+  // --- wiring ------------------------------------------------------------------------------------------------
   function init() {
     initTheme();
     initAdmin();
-    initPresets();
+    initLimits();
     renderWallet(null);
-    $("start-button").addEventListener("click", startRun);
+    renderSuggestions();
+    $("composer").addEventListener("submit", (event) => { event.preventDefault(); send(); });
+    $("task").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); send(); }
+    });
+    $("task").addEventListener("input", autosize);
     $("stop-button").addEventListener("click", async () => {
       if (!state.runId) return;
       try { await api(`/demo/runs/${encodeURIComponent(state.runId)}/cancel`, { method: "POST" }); } catch (err) { showBanner(err.message); }
     });
-    $("approve-button").addEventListener("click", () => decide(true));
-    $("decline-button").addEventListener("click", () => decide(false));
-    $("paypal-open").addEventListener("click", () => { if (state.approvalUrl) window.open(state.approvalUrl, "_blank", "noopener"); });
-    $("paypal-done").addEventListener("click", async () => {
-      if (!state.runId) return;
-      try { await api(`/demo/runs/${encodeURIComponent(state.runId)}/approval`, { method: "POST" }); } catch (err) { showBanner(err.message); }
-    });
-    $("show-thinking").addEventListener("change", (event) => { $("activity").classList.toggle("with-thinking", event.target.checked); });
+    $("new-chat").addEventListener("click", newChat);
+    syncComposer();
     loadCatalog();
     loadConfig();
   }

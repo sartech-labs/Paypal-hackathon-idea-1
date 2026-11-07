@@ -28,6 +28,7 @@ def main() -> None:
     ap.add_argument("--base", default="http://127.0.0.1:8011")
     ap.add_argument("--out", default="video-out/rec")
     ap.add_argument("--decline", default="subscription", help="payment type to decline (others approved)")
+    ap.add_argument("--task", default="Catch me up on today's news from Sentinel News, and get me whatever they have on how AI agents pay websites: videos, guides, anything useful.")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -53,22 +54,19 @@ def main() -> None:
                 [y, ms],
             )
 
+        def pane_scroll(selector: str, block: str = "center") -> None:
+            # The page itself does not scroll: each pane does. Bring an element into view in its pane.
+            page.evaluate("([sel, block]) => { const n = document.querySelector(sel); if (n) n.scrollIntoView({block, behavior: 'smooth'}); }", [selector, block])
+
         page.goto(f"{args.base}/", wait_until="networkidle")
         page.wait_for_timeout(1200)
         mark("studio_loaded")
-        page.wait_for_timeout(2500)
-        smooth_scroll(330)
-        mark("how_it_works")
-        page.wait_for_timeout(2500)
-        smooth_scroll(560)
-        mark("offers")
-        page.wait_for_timeout(3000)
-        launch_y = page.evaluate("document.querySelector('.launch').getBoundingClientRect().top + scrollY - 70")
-        smooth_scroll(int(launch_y))
-        page.get_by_role("button", name="Research + buy everything").click()
+        page.wait_for_timeout(3500)
+        page.click("#task")
+        page.keyboard.type(args.task, delay=28)
         mark("task_filled")
-        page.wait_for_timeout(2600)
-        page.get_by_role("button", name="▶ Run agent").click()
+        page.wait_for_timeout(1200)
+        page.keyboard.press("Enter")
         mark("run_started")
 
         run_id = None
@@ -79,8 +77,6 @@ def main() -> None:
                 break
             time.sleep(0.2)
         facts["run_id"] = run_id
-        page.wait_for_timeout(1500)
-        smooth_scroll(int(page.evaluate("document.querySelector('.studio-layout').getBoundingClientRect().top + scrollY - 70")), 1200)
 
         seen_events = 0
         deadline = time.monotonic() + 900
@@ -98,18 +94,19 @@ def main() -> None:
             if status == "awaiting_decision":
                 pending = snap["pending_decision"] or {}
                 approve = pending.get("payment_type") != args.decline
+                page.wait_for_selector("#approve-button", timeout=15000)
+                pane_scroll('.stage[data-stage="buy"]')
                 mark(f"decision_shown:{pending.get('payment_type')}")
                 page.wait_for_timeout(3200)  # let the viewer read the card
-                page.get_by_role("button", name="Approve" if approve else "Decline", exact=True).click()
+                page.click("#approve-button" if approve else "#decline-button")
                 mark(f"decision_{'approved' if approve else 'declined'}:{pending.get('payment_type')}")
                 facts["decisions"].append({"type": pending.get("payment_type"), "title": pending.get("title"), "amount": pending.get("amount"), "approved": approve, "review": pending.get("review")})
                 page.wait_for_timeout(1500)
-                smooth_scroll(int(page.evaluate("document.querySelector('#activity').getBoundingClientRect().bottom + scrollY - 700")), 800)
             elif status in ("completed", "failed", "cancelled"):
                 break
-            elif status == "running":
-                # Follow the newest activity line.
-                page.evaluate("(() => { const l = document.querySelector('#activity li:last-child'); if (l) l.scrollIntoView({block: 'center', behavior: 'smooth'}); })()")
+            else:
+                # Keep the explanation on the left on the step that is happening now.
+                pane_scroll('.stage[data-state="active"]')
             time.sleep(0.6)
         mark("run_finished")
         final = api.get(f"/demo/runs/{run_id}").json()
@@ -117,13 +114,11 @@ def main() -> None:
         facts["final_text"] = final.get("final_text")
         facts["mandate"] = final.get("mandate")
         facts["usage"] = final.get("usage")
-        page.wait_for_timeout(2500)
-        report_y = page.evaluate("document.querySelector('#report').getBoundingClientRect().top + scrollY - 80")
-        smooth_scroll(int(report_y), 1200)
+        page.wait_for_timeout(1500)
+        pane_scroll('.stage[data-stage="settle"]')
         mark("report")
-        page.wait_for_timeout(5000)
-        wallet_y = page.evaluate("document.querySelector('.wallet').getBoundingClientRect().top + scrollY - 80")
-        smooth_scroll(int(wallet_y), 1000)
+        page.wait_for_timeout(6000)
+        pane_scroll(".wallet", "start")
         mark("wallet")
         page.wait_for_timeout(4500)
 
