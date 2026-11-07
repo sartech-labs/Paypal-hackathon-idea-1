@@ -1132,6 +1132,10 @@
         }));
         return runs.map((run, i) => Object.assign({}, run, { detail: details[i] }));
       },
+      loadCommerce: async () => {
+        const result = await getJson("/commerce/summary", { headers: authHeaders() });
+        return result.ok ? result.body : null;
+      },
       helpers: { humanize, depositLabel, eventCategory, providerName },
     };
   }
@@ -1143,6 +1147,7 @@
     APPROVAL_REQUIRED: ["warning", "!", "Awaiting PayPal approval"],
     FAILED: ["critical", "✕", "Failed"],
     CANCELLED: ["neutral", "■", "Cancelled (not paid)"],
+    REFUNDED: ["warning", "↺", "Refunded"],
   };
   const SUB_STATUS = {
     ACTIVE: ["good", "✓", "Active"],
@@ -1182,7 +1187,17 @@
         { headerName: "PayPal order", field: "provider_order_id", minWidth: 150, cellClass: "mono", tooltipField: "provider_order_id" },
         { headerName: "PayPal capture", field: "provider_capture_id", minWidth: 150, cellClass: "mono", tooltipField: "provider_capture_id" },
         { headerName: "Created", field: "created_at", maxWidth: 120, sort: "desc", filter: false, valueFormatter: (p) => formatTime(p.value) },
+        {
+          headerName: "", colId: "actions", sortable: false, filter: false, resizable: false, pinned: "right", minWidth: 210, maxWidth: 230,
+          cellRenderer: cellNode((o) => el("span", { className: "cell-actions" }, [
+            el("button", { className: "cell-button", type: "button", text: "Verify", title: "Compare with PayPal's records through PayPal's MCP server", onclick: (e) => { e.stopPropagation(); verifyOrder(o); } }),
+            o.status === "PAID" ? el("button", { className: "cell-button", type: "button", text: "Refund", title: "Refund through PayPal (admin)", onclick: (e) => { e.stopPropagation(); refundOrder(o); } }) : null,
+            o.status === "PAID" && (o.lines || []).some((l) => l.category === "PHYSICAL_GOODS") && o.fulfillment_status !== "SHIPPED"
+              ? el("button", { className: "cell-button", type: "button", text: "Ship", title: "Add shipment tracking at PayPal (admin)", onclick: (e) => { e.stopPropagation(); shipOrder(o); } }) : null,
+          ])),
+        },
       ],
+      noExport: ["actions"],
     });
     state.grids.subscriptions = create($("grid-subscriptions"), {
       rowId: (s) => s.subscription_ref,
@@ -1204,6 +1219,57 @@
     });
   }
 
+  function showOrderPanel(title, rows, tone) {
+    const box = $("order-verify");
+    clear(box);
+    box.append(el("h3", { text: title }));
+    if (rows) {
+      box.append(el("table", null, [
+        el("thead", null, [el("tr", null, ["Check", "AgentTrust", "PayPal", ""].map((h) => el("th", { text: h })))]),
+        el("tbody", null, rows.map((c) => el("tr", null, [
+          el("td", { text: c.label }), el("td", { className: "mono", text: c.agenttrust }), el("td", { className: "mono", text: c.paypal }),
+          el("td", { className: c.status === "match" ? "ok" : c.status === "mismatch" ? "bad" : "", text: c.status }),
+        ]))),
+      ]));
+    }
+    box.dataset.tone = tone || "";
+    box.hidden = false;
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  async function verifyOrder(order) {
+    showOrderPanel(`Checking ${order.order_id} with PayPal...`);
+    const result = await getJson(`/paypal/orders/${encodeURIComponent(order.order_id)}/verify`, { method: "POST", headers: authHeaders() });
+    if (!result.ok) {
+      showOrderPanel((result.body && result.body.message) || `Verification failed (HTTP ${result.status}).`);
+      return;
+    }
+    showOrderPanel(`${result.body.verdict} (via ${result.body.mcp_server})`, result.body.checks, result.body.consistent ? "good" : "critical");
+  }
+
+  async function refundOrder(order) {
+    if (!state.token) { showOrderPanel("Refunds need the admin token (Admin menu, top right)."); return; }
+    if (!window.confirm(`Refund ${money(order.amount, order.currency)} for ${order.order_id} through PayPal? Access to what was bought ends.`)) return;
+    const result = await getJson(`/commerce/orders/${encodeURIComponent(order.order_id)}/refund`, {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ reason: "Refunded by the publisher" }),
+    });
+    showOrderPanel(result.ok ? `Refunded ${order.order_id} (PayPal refund ${result.body.provider_refund_id || "pending"}).` : (result.body && result.body.message) || `Refund failed (HTTP ${result.status}).`);
+    loadCommerce();
+  }
+
+  async function shipOrder(order) {
+    if (!state.token) { showOrderPanel("Shipping updates need the admin token (Admin menu, top right)."); return; }
+    const tracking = window.prompt("Tracking number", "");
+    if (!tracking) return;
+    const carrier = (window.prompt("Carrier code (for example UPS, FEDEX, DHL, USPS)", "UPS") || "").trim().toUpperCase();
+    if (!carrier) return;
+    const result = await getJson(`/commerce/orders/${encodeURIComponent(order.order_id)}/tracking`, {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ tracking_number: tracking.trim(), carrier }),
+    });
+    showOrderPanel(result.ok ? `Tracking ${tracking} (${carrier}) added at PayPal; ${order.order_id} is shipped.` : (result.body && result.body.message) || `Tracking failed (HTTP ${result.status}).`);
+    loadCommerce();
+  }
+
   async function loadCommerce() {
     try {
       const result = await getJson("/commerce/summary", { headers: authHeaders() });
@@ -1223,7 +1289,8 @@
       tile("Product orders", money(c.product_revenue, cur), `${compact(c.paid_product_orders)} paid order${c.paid_product_orders === 1 ? "" : "s"}`, "accent", "◫"),
       tile("Subscriptions (MRR)", money(c.subscription_mrr, cur), `${compact(c.active_subscriptions)} active · ${compact(c.pending_subscriptions)} pending · ${compact(c.cancelled_subscriptions)} cancelled`, "good", "∞"),
       tile("Forfeited deposits", money(d.forfeited_revenue, cur), `${compact(d.forfeited)} forfeited · ${compact(d.returned)} returned of ${compact(d.total)}`, d.forfeited ? "critical" : "neutral", "✕"),
-      tile("Awaiting payment", compact(c.orders_awaiting_payment), "Orders created but not captured", c.orders_awaiting_payment ? "warning" : "neutral", "⏸"),
+      tile("Awaiting payment", compact(c.orders_awaiting_payment), `Orders not captured · ${compact(c.refunded_orders || 0)} refunded · ${compact(c.open_disputes || 0)} disputes`, c.orders_awaiting_payment ? "warning" : "neutral", "⏸"),
+      tile("PayPal webhooks", compact(c.webhook_events || 0), "Verified events processed", "accent", "⇄"),
     );
     const groups = [
       ["Pay-per-access", "var(--accent)", Number(c.access_revenue)],

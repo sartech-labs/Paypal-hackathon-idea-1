@@ -25,6 +25,7 @@ from server.schemas import (
     PayPalAssistantResponse,
     PayPalToolCallTrace,
     PayPalVerificationCheck,
+    PayPalOrderVerificationResponse,
     PayPalVerificationResponse,
     SettlementMode,
 )
@@ -35,13 +36,17 @@ MAX_PREVIEW_CHARS = 1500
 MAX_DEPOSITS_LISTED = 25
 
 ASSISTANT_SYSTEM = """\
-You are the PayPal assistant in the AgentTrust publisher console. AgentTrust asks AI \
-crawlers for a small refundable PayPal deposit: compliant sessions get it back (refund, or \
-a voided authorization hold), sessions that break the site's rules forfeit it.
+You are the PayPal assistant in the AgentTrust publisher console. The site sells to AI \
+agents through PayPal in four ways: refundable crawl deposits (compliant sessions get them \
+back by refund or a voided hold; sessions that break the rules forfeit them), pay-per-access \
+items, subscriptions, and product orders.
 
 You answer the publisher's questions with read-only tools:
 - list_agenttrust_deposits reads the gateway's own deposit records, including the PayPal \
 order, capture, authorization, and refund IDs.
+- list_agenttrust_orders reads the site's pay-per-access and product orders and its \
+subscriptions, with their PayPal order, capture, refund, and subscription IDs. A commerce \
+order's custom_id at PayPal is its AgentTrust order ID (ord_...).
 - get_order, get_refund, list_transactions, list_disputes, and get_dispute are tools of \
 PayPal's MCP server and read PayPal's records. An order's custom_id is the AgentTrust \
 deposit ID; captures and authorizations are under purchase_units[0].payments.
@@ -79,6 +84,14 @@ LOCAL_TOOL = _tool(
     "crawler IDs, outcome, settlement mode, amount, and the PayPal order, capture, "
     "authorization, and refund IDs to look up with the PayPal tools.",
     {"limit": {"type": "integer", "description": f"How many deposits to return (1-{MAX_DEPOSITS_LISTED})."}},
+)
+
+ORDERS_TOOL = _tool(
+    "list_agenttrust_orders",
+    "List the site's most recent commerce orders (pay-per-access and products) and "
+    "subscriptions, newest first: status, amount, items, agent, and the PayPal order, "
+    "capture, refund, and subscription IDs to look up with the PayPal tools.",
+    {"limit": {"type": "integer", "description": f"How many orders to return (1-{MAX_DEPOSITS_LISTED})."}},
 )
 
 # Curated, strict schemas for PayPal's MCP read tools. Arguments set to null are dropped
@@ -248,10 +261,11 @@ def _check(label: str, ours: str, theirs: str, ok: Optional[bool]) -> PayPalVeri
 
 
 class PayPalAssistant:
-    def __init__(self, generator: TextGenerator, mcp: PayPalMCPClient, deposit_manager: Any) -> None:
+    def __init__(self, generator: TextGenerator, mcp: PayPalMCPClient, deposit_manager: Any, commerce: Any = None) -> None:
         self._generator = generator
         self._mcp = mcp
         self._deposits = deposit_manager
+        self._commerce = commerce
         # Each local MCP session is a Node.js process; keep a small ceiling.
         self._sessions = asyncio.Semaphore(2)
 
@@ -335,6 +349,111 @@ class PayPalAssistant:
             checked_at=utc_now_iso(),
         )
 
+    async def verify_order(self, order: Any) -> PayPalOrderVerificationResponse:
+        """Compare a commerce order (pay-per-access or products) with PayPal's records."""
+        if order.payment_mode != PaymentMode.PAYPAL_SANDBOX:
+            raise PayPalAssistantError(
+                "This order used simulated (mock) payments, so PayPal has no record of it. "
+                "Run the gateway with PAYMENT_MODE=paypal_sandbox to verify real Sandbox payments."
+            )
+        if not order.provider_order_id:
+            raise PayPalAssistantError("This order has no PayPal order.")
+        calls: list[MCPCallRecord] = []
+        async with self._sessions, self._mcp.open() as session:
+            order_call = await session.call("get_order", {"id": order.provider_order_id})
+            calls.append(order_call)
+            refund_call = None
+            if order.provider_refund_id:
+                refund_call = await session.call("get_refund", {"refund_id": order.provider_refund_id})
+                calls.append(refund_call)
+
+        checks: list[PayPalVerificationCheck] = []
+        if not order_call.ok:
+            checks.append(_check("PayPal order", order.provider_order_id, order_call.error or "Lookup failed", False))
+        else:
+            data = order_call.data if isinstance(order_call.data, dict) else {}
+            view = _order_view(data)
+            checks.append(_check("PayPal order", order.provider_order_id, f"{view.order_id} · {view.status}", view.order_id == order.provider_order_id))
+            checks.append(_check("Order reference (custom_id)", order.order_id, view.custom_id or "not set", view.custom_id == order.order_id))
+            ours_amount = f"{Decimal(order.amount):.2f} {order.currency}"
+            checks.append(_check("Amount", ours_amount, view.amount or "unknown", view.amount == ours_amount))
+            units = data.get("purchase_units")
+            unit = units[0] if isinstance(units, list) and units and isinstance(units[0], dict) else {}
+            items = unit.get("items") if isinstance(unit.get("items"), list) else None
+            if items is not None:
+                ours_items = sorted(f"{line.quantity}x {line.ref}" for line in order.lines)
+                theirs_items = sorted(f"{i.get('quantity')}x {i.get('sku')}" for i in items if isinstance(i, dict))
+                checks.append(_check("Items", ", ".join(ours_items), ", ".join(theirs_items) or "none", ours_items == theirs_items))
+            expected_capture = {"PAID": "COMPLETED", "REFUNDED": "REFUNDED"}.get(order.status)
+            if expected_capture or view.capture_id:
+                ours = f"{order.provider_capture_id or 'none'} · expect {expected_capture or 'no capture'}"
+                theirs = f"{view.capture_id or 'none'} · {view.capture_status or 'no capture'}"
+                ok = view.capture_id == order.provider_capture_id and view.capture_status == expected_capture
+                checks.append(_check("Capture", ours, theirs, ok))
+        if refund_call is not None:
+            if refund_call.ok and isinstance(refund_call.data, dict):
+                theirs = f"{refund_call.data.get('id')} · {refund_call.data.get('status')} · {_money(refund_call.data.get('amount')) or ''}".strip(" ·")
+                checks.append(_check("Refund", f"{order.provider_refund_id}", theirs, refund_call.data.get("id") == order.provider_refund_id))
+            else:
+                checks.append(_check("Refund", f"{order.provider_refund_id}", refund_call.error or "Lookup failed", False))
+
+        mismatches = [c for c in checks if c.status == "mismatch"]
+        verdict = (
+            f"PayPal's records agree with the site: order {order.status.lower()}."
+            if not mismatches
+            else f"{len(mismatches)} check(s) disagree with PayPal's records; review this order."
+        )
+        return PayPalOrderVerificationResponse(
+            order_id=order.order_id,
+            kind=order.kind,
+            order_status=order.status,
+            consistent=not mismatches,
+            verdict=verdict,
+            checks=checks,
+            calls=[_trace(call) for call in calls],
+            mcp_server=self._mcp.server_label,
+            transport=self._mcp.transport,  # type: ignore[arg-type]
+            checked_at=utc_now_iso(),
+        )
+
+    async def _order_rows(self, limit: int) -> dict[str, Any]:
+        if self._commerce is None:
+            return {"orders": [], "subscriptions": []}
+        orders = (await self._commerce.list_orders())[:limit]
+        subs = (await self._commerce.list_subscriptions())[:limit]
+        return {
+            "orders": [
+                {
+                    "order_id": o.order_id,
+                    "kind": o.kind,
+                    "agent_id": o.agent_id,
+                    "created_at": o.created_at,
+                    "status": o.status,
+                    "amount": f"{o.amount} {o.currency}",
+                    "items": [f"{l.quantity}x {l.ref}" for l in o.lines],
+                    "fulfillment_status": o.fulfillment_status,
+                    "payment_mode": o.payment_mode.value,
+                    "paypal_order_id": o.provider_order_id,
+                    "paypal_capture_id": o.provider_capture_id,
+                    "paypal_refund_id": o.provider_refund_id,
+                    "dispute_status": o.dispute_status,
+                }
+                for o in orders
+            ],
+            "subscriptions": [
+                {
+                    "subscription_ref": s.subscription_ref,
+                    "plan": s.plan_name,
+                    "agent_id": s.agent_id,
+                    "status": s.status,
+                    "amount": f"{s.amount} {s.currency} per {s.interval_unit.lower()}",
+                    "paypal_subscription_id": s.provider_subscription_id,
+                    "payments_received": s.payments_received,
+                }
+                for s in subs
+            ],
+        }
+
     # --- AI questions -------------------------------------------------------------------
 
     async def _deposit_rows(self, limit: int) -> list[dict[str, Any]]:
@@ -364,7 +483,7 @@ class PayPalAssistant:
 
         async with self._sessions, self._mcp.open() as session:
             available = {tool.name for tool in session.tools}
-            tools = [LOCAL_TOOL] + [spec for name, spec in MCP_TOOL_SPECS.items() if name in available]
+            tools = [LOCAL_TOOL, ORDERS_TOOL] + [spec for name, spec in MCP_TOOL_SPECS.items() if name in available]
 
             async def execute(name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
                 return await self._execute(session, name, arguments, traces)
@@ -422,6 +541,25 @@ class PayPalAssistant:
                 )
             )
             return json.dumps({"deposits": rows}), False
+
+        if name == ORDERS_TOOL.name:
+            try:
+                limit = int(arguments.get("limit") or 10)
+            except (TypeError, ValueError):
+                limit = 10
+            limit = max(1, min(MAX_DEPOSITS_LISTED, limit))
+            rows = await self._order_rows(limit)
+            traces.append(
+                PayPalToolCallTrace(
+                    source="agenttrust",
+                    tool=name,
+                    arguments={"limit": limit},
+                    ok=True,
+                    duration_ms=0,
+                    summary=f"{len(rows['orders'])} orders and {len(rows['subscriptions'])} subscriptions from the site's records",
+                )
+            )
+            return json.dumps(rows), False
 
         if name not in MCP_TOOL_SPECS:
             return json.dumps({"error": f"Unknown tool '{name}'."}), True

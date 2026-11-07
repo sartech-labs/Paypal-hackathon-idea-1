@@ -59,7 +59,7 @@ async def test_console_loads_shared_grid_kit_and_pinned_ag_studio(async_client: 
     assert "ag-studio@3.1.0/dist/umd/ag-studio.min.js" in analytics
     assert 'STUDIO_SRI = "sha384-' in analytics
     # The live demo uses the same grid kit for its request monitor.
-    demo = (await async_client.get("/")).text
+    demo = (await async_client.get("/crawler")).text
     assert "/static/grid_kit.js" in demo and 'id="grid-requests"' in demo
     # Empty state, live toasts, and the admin-token popover (token form IDs are unchanged).
     for marker in ('id="console-empty"', 'id="toasts"', 'id="admin-toggle"', 'id="token-form"', 'id="admin-token"'):

@@ -724,6 +724,21 @@ class PayPalVerificationResponse(BaseModel):
     checked_at: str
 
 
+class PayPalOrderVerificationResponse(BaseModel):
+    """A commerce order (pay-per-access or products) checked against PayPal's records."""
+
+    order_id: str
+    kind: Literal["access", "product"]
+    order_status: str
+    consistent: bool
+    verdict: str
+    checks: list[PayPalVerificationCheck]
+    calls: list[PayPalToolCallTrace]
+    mcp_server: str
+    transport: Literal["local", "hosted"]
+    checked_at: str
+
+
 class PayPalAssistantRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -771,6 +786,10 @@ class DemoRunRequest(BaseModel):
     budget: Optional[str] = Field(default=None, pattern=r"^\d{1,4}(\.\d{1,2})?$")
     approval_threshold: Optional[str] = Field(default=None, pattern=r"^\d{1,4}(\.\d{1,2})?$")
     allowed_types: Optional[list[Literal["deposit", "access", "subscription", "product"]]] = Field(default=None, max_length=4)
+    max_per_purchase: Optional[str] = Field(default=None, pattern=r"^\d{1,4}(\.\d{1,2})?$")
+    allowed_merchants: Optional[list[str]] = Field(default=None, max_length=10)
+    # A second AI call reviews every purchase against the person's request (never looser).
+    purchase_review: bool = True
 
 
 class DemoDecisionRequest(BaseModel):
@@ -828,6 +847,8 @@ class DemoConfigResponse(BaseModel):
     paypal_mcp_configured: bool
     paypal_mcp_transport: Literal["local", "hosted"]
     demo_public: bool
+    # Public PayPal client ID for the JS SDK buttons (Sandbox mode only; safe to expose).
+    paypal_js_client_id: Optional[str] = None
     access: Literal["admin", "public", "none"]
     can_start_runs: bool
     runs_remaining_this_hour: int
@@ -936,7 +957,7 @@ class CommerceOrderRecord(BaseModel):
     order_id: str
     kind: Literal["access", "product"]
     agent_id: str
-    status: Literal["CREATED", "APPROVAL_REQUIRED", "PAID", "FAILED", "CANCELLED"]
+    status: Literal["CREATED", "APPROVAL_REQUIRED", "PAID", "FAILED", "CANCELLED", "REFUNDED"]
     amount: str
     currency: str
     lines: list[OrderLine]
@@ -947,12 +968,19 @@ class CommerceOrderRecord(BaseModel):
     provider_order_id: Optional[str] = None
     provider_capture_id: Optional[str] = None
     approval_url: Optional[str] = None
-    fulfillment_status: Optional[Literal["DELIVERED", "PROCESSING", "PENDING_PAYMENT"]] = None
+    fulfillment_status: Optional[Literal["DELIVERED", "PROCESSING", "SHIPPED", "PENDING_PAYMENT"]] = None
     grants: list[str] = Field(default_factory=list)
     access_token_hash: Optional[str] = None
     created_at: str
     paid_at: Optional[str] = None
     failure_reason: Optional[str] = None
+    provider_refund_id: Optional[str] = None
+    refunded_at: Optional[str] = None
+    tracking: list[dict[str, str]] = Field(default_factory=list)
+    dispute_id: Optional[str] = None
+    dispute_status: Optional[str] = None
+    # Set when a verified PayPal webhook confirmed the payment (not only the agent's own call).
+    confirmed_by_webhook: bool = False
 
 
 class SubscriptionRecord(BaseModel):
@@ -978,6 +1006,8 @@ class SubscriptionRecord(BaseModel):
     activated_at: Optional[str] = None
     cancelled_at: Optional[str] = None
     failure_reason: Optional[str] = None
+    payments_received: int = 0
+    last_payment_at: Optional[str] = None
 
 
 class CheckoutLineRequest(BaseModel):
@@ -995,12 +1025,27 @@ class CheckoutRequest(BaseModel):
     item_id: Optional[str] = Field(default=None, pattern=_ID_PATTERN)
     items: list[CheckoutLineRequest] = Field(default_factory=list, max_length=10)
     purpose: Optional[str] = Field(default=None, max_length=300)
+    # "human": a person pays with PayPal's buttons and approves at PayPal (no test-card autopay).
+    buyer: Literal["agent", "human"] = "agent"
 
 
 class AgentActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     agent_id: str = Field(..., min_length=3, max_length=128)
+
+
+class RefundOrderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(default="Refunded by the merchant", max_length=120)
+
+
+class TrackingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tracking_number: str = Field(..., min_length=4, max_length=64, pattern=r"^[A-Za-z0-9-]+$")
+    carrier: str = Field(..., min_length=2, max_length=64, pattern=r"^[A-Z0-9_]+$")
 
 
 class SubscribeRequest(BaseModel):
@@ -1030,6 +1075,11 @@ class CommerceOrderResponse(BaseModel):
     created_at: str
     paid_at: Optional[str] = None
     failure_reason: Optional[str] = None
+    provider_refund_id: Optional[str] = None
+    refunded_at: Optional[str] = None
+    tracking: list[dict[str, str]] = Field(default_factory=list)
+    dispute_status: Optional[str] = None
+    confirmed_by_webhook: bool = False
     # Returned once, on the call that first confirms payment. Stored only as a hash.
     access_token: Optional[str] = None
 
@@ -1054,4 +1104,6 @@ class SubscriptionResponse(BaseModel):
     activated_at: Optional[str] = None
     cancelled_at: Optional[str] = None
     failure_reason: Optional[str] = None
+    payments_received: int = 0
+    last_payment_at: Optional[str] = None
     access_token: Optional[str] = None

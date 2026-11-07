@@ -140,7 +140,7 @@ async function main() {
   }
 
   // --- scenes ------------------------------------------------------------------------------
-  await page.goto(`${base}/`, { waitUntil: "networkidle" });
+  await page.goto(`${base}/crawler`, { waitUntil: "networkidle" });
   await zoomed();
   await page.waitForTimeout(1500);
 

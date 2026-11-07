@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Optional
 
+from client.purchase_critic import Critic
 from client.agent_tools import (
     TOOL_DEFINITIONS as CRAWLER_TOOL_DEFINITIONS,
     MAX_PAGE_TEXT_CHARS,
@@ -54,6 +55,10 @@ class SpendingMandate:
     approval_threshold: Decimal
     allowed_types: frozenset[str] = frozenset(PAYMENT_TYPES)
     recurring_needs_approval: bool = True
+    # No single payment above this amount, approved or not (None: only the budget limits it).
+    max_per_purchase: Optional[Decimal] = None
+    # Merchants the agent may pay (names as published in the offer catalog); empty: any.
+    allowed_merchants: frozenset[str] = frozenset()
     committed: Decimal = Decimal("0.00")
     returned: Decimal = Decimal("0.00")
     ledger: list[dict[str, Any]] = field(default_factory=list)
@@ -70,6 +75,8 @@ class SpendingMandate:
             "approval_threshold": f"{self.approval_threshold:.2f}",
             "allowed_types": sorted(self.allowed_types),
             "recurring_needs_approval": self.recurring_needs_approval,
+            "max_per_purchase": f"{self.max_per_purchase:.2f}" if self.max_per_purchase is not None else None,
+            "allowed_merchants": sorted(self.allowed_merchants),
             "purchases": [dict(entry) for entry in self.ledger],
         }
 
@@ -152,6 +159,11 @@ class AssistantToolbox:
     mandate: SpendingMandate
     decision_handler: DecisionHandler = lambda request: False
     checkout_handler: CheckoutHandler = lambda url: None
+    # The user's own request (trusted) and an optional AI purchase critic that reviews it.
+    task: str = ""
+    critic: Optional[Critic] = None
+    # Called with each critic review so a UI can show it.
+    on_review: Callable[[dict[str, Any]], None] = lambda review: None
     sleep: Callable[[float], None] = time.sleep
     catalog: Optional[dict[str, Any]] = None
     orders: list[dict[str, Any]] = field(default_factory=list)
@@ -200,19 +212,61 @@ class AssistantToolbox:
 
     # --- mandate ---------------------------------------------------------------------
 
+    def _block(self, payment_type: str, title: str, amount: Decimal, why: str, status: str = "BLOCKED") -> str:
+        self.mandate.ledger.append(
+            {"type": payment_type, "title": title, "amount": f"{amount:.2f}", "status": status, "note": why}
+        )
+        return why
+
     def _authorize_spend(
         self, *, payment_type: str, amount: Decimal, title: str, reason: str, recurring: bool = False
     ) -> Optional[str]:
-        """None when the payment may proceed; otherwise why it may not."""
+        """None when the payment may proceed; otherwise why it may not.
+
+        Order: hard limits (type, merchant, per-purchase cap, budget), then the AI critic
+        (which can only make things stricter), then the person's approval when required.
+        """
         mandate = self.mandate
         if payment_type not in mandate.allowed_types:
-            return f"Your user's mandate does not allow {payment_type} payments."
-        if amount > mandate.remaining:
-            return (
-                f"{amount:.2f} exceeds the remaining budget of {mandate.remaining:.2f}. "
-                "Do not try again; tell your user."
+            return self._block(payment_type, title, amount, f"Your user's mandate does not allow {payment_type} payments.")
+        merchant = str((self.catalog or {}).get("merchant") or "")
+        if mandate.allowed_merchants and merchant not in mandate.allowed_merchants:
+            return self._block(payment_type, title, amount, f"{merchant or 'This merchant'} is not on your user's list of allowed merchants.")
+        if mandate.max_per_purchase is not None and amount > mandate.max_per_purchase:
+            return self._block(
+                payment_type, title, amount,
+                f"{amount:.2f} is above your user's limit of {mandate.max_per_purchase:.2f} per purchase. Do not try again; tell your user.",
             )
-        needs_approval = amount > mandate.approval_threshold or (recurring and mandate.recurring_needs_approval)
+        if amount > mandate.remaining:
+            return self._block(
+                payment_type, title, amount,
+                f"{amount:.2f} exceeds the remaining budget of {mandate.remaining:.2f}. Do not try again; tell your user.",
+            )
+
+        review: Optional[dict[str, Any]] = None
+        if self.critic is not None and payment_type != "deposit":
+            currency = (self.catalog or {}).get("currency", "USD")
+            review = self.critic(
+                {
+                    "task": self.task,
+                    "purchase": {"type": payment_type, "title": title, "amount": f"{amount:.2f}", "currency": currency, "recurring": recurring, "merchant": merchant},
+                    "reason": reason,
+                }
+            )
+            self.on_review({"title": title, "amount": f"{amount:.2f}", **review})
+            if review.get("verdict") == "block":
+                concerns = "; ".join(review.get("concerns") or []) or "it does not match your user's request"
+                return self._block(
+                    payment_type, title, amount,
+                    f"The purchase review blocked this: {concerns}. Do not try again or work around it; tell your user.",
+                    status="BLOCKED_BY_REVIEW",
+                )
+
+        needs_approval = (
+            amount > mandate.approval_threshold
+            or (recurring and mandate.recurring_needs_approval)
+            or (review is not None and review.get("verdict") == "ask")
+        )
         if not needs_approval:
             return None
         currency = (self.catalog or {}).get("currency", "USD")
@@ -225,6 +279,7 @@ class AssistantToolbox:
                 "recurring": recurring,
                 "reason": (reason or "").strip()[:300],
                 "remaining_budget": f"{mandate.remaining:.2f}",
+                "review": review,
             }
         )
         if not approved:

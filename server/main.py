@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from server.api import audit, commerce, dashboard, deposits, demo, gateway, paypal, policies, sessions
+from server.api import audit, commerce, dashboard, webhooks, deposits, demo, gateway, paypal, policies, sessions
 from server.config import Settings, load_settings_from_env
 from server.dependencies import AppContainer
 from server.services.ai_client import TextGenerator
@@ -19,6 +19,7 @@ from server.services.demo_runner import HttpFactory, LlmFactory
 from server.services.payment_service import PaymentProvider
 from server.services.paypal_mcp import PayPalMCPClient
 from server.services.rate_limiter import SlidingWindowRateLimiter
+from server.services.storefront_mcp import Storefront
 
 logger = logging.getLogger("agenttrust")
 
@@ -50,6 +51,8 @@ def create_app(
     )
     container.load_persisted_state()
 
+    storefront_holder: dict[str, Storefront] = {}
+
     @asynccontextmanager
     async def lifespan(app_instance: FastAPI) -> AsyncIterator[None]:
         app_instance.state.container = container
@@ -59,7 +62,9 @@ def create_app(
             container.site_config.site_id,
             container.payment_provider.mode.value,
         )
-        yield
+        # The MCP storefront's session manager runs for the app's lifetime.
+        async with storefront_holder["storefront"].server.session_manager.run():
+            yield
         logger.info("AgentTrust Gateway shutting down")
 
     app = FastAPI(
@@ -133,7 +138,14 @@ def create_app(
     app.include_router(demo.router)
     app.include_router(paypal.router)
     app.include_router(commerce.router)
+    app.include_router(webhooks.router)
     app.mount("/static", StaticFiles(directory=dashboard.STATIC_DIR), name="static")
+
+    # MCP storefront (Streamable HTTP) at /mcp: any MCP client can shop this site.
+    storefront = Storefront(app)
+    storefront_holder["storefront"] = storefront
+    app.state.storefront = storefront
+    app.mount("/mcp", storefront.asgi(), name="mcp")
 
     return app
 

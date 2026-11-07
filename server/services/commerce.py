@@ -49,6 +49,7 @@ from server.services.payment_service import (
     PaymentApprovalRequiredError,
     PaymentProvider,
     PaymentProviderError,
+    PaymentProviderTimeoutError,
 )
 
 logger = logging.getLogger("agenttrust.commerce")
@@ -194,6 +195,7 @@ class CommerceManager:
         self._subscriptions: dict[str, SubscriptionRecord] = {}
         self._tokens: dict[str, dict[str, str]] = {}  # token hash -> {kind, ref}
         self._plans: dict[str, str] = {}  # plan key -> provider plan id
+        self._webhooks: dict[str, dict[str, str]] = {}  # processed PayPal webhook event ids
 
     @property
     def payment_provider(self) -> PaymentProvider:
@@ -210,6 +212,8 @@ class CommerceManager:
         self._subscriptions = {k: SubscriptionRecord.model_validate(v) for k, v in data["subscriptions"].items()}
         self._tokens = {k: dict(v) for k, v in data["tokens"].items()}
         self._plans = {k: str(v) for k, v in data["plans"].items()}
+        webhooks = data.get("webhooks")  # added later; older files have no such key
+        self._webhooks = {k: dict(v) for k, v in webhooks.items()} if isinstance(webhooks, dict) else {}
 
     def _persist(self) -> None:
         atomic_write_json(
@@ -219,6 +223,7 @@ class CommerceManager:
                 "subscriptions": {k: v.model_dump(mode="json") for k, v in self._subscriptions.items()},
                 "tokens": self._tokens,
                 "plans": self._plans,
+                "webhooks": self._webhooks,
             },
         )
 
@@ -232,7 +237,7 @@ class CommerceManager:
 
     @staticmethod
     def order_response(record: CommerceOrderRecord, access_token: Optional[str] = None) -> CommerceOrderResponse:
-        data = record.model_dump(exclude={"access_token_hash", "purpose"})
+        data = record.model_dump(exclude={"access_token_hash", "purpose", "dispute_id"})
         return CommerceOrderResponse(**data, access_token=access_token)
 
     @staticmethod
@@ -320,6 +325,7 @@ class CommerceManager:
         item_id: Optional[str],
         items: list[tuple[str, int]],
         purpose: Optional[str],
+        buyer: str = "agent",
     ) -> CommerceOrderRecord:
         lines, shipping, grants, _ships = self._price_order(offer_type, item_id, items)
         currency = self.catalog.currency
@@ -345,6 +351,7 @@ class CommerceManager:
                 items=line_items,
                 shipping=shipping,
                 callback_path=COMMERCE_CALLBACK_PATH,
+                autopay=None if buyer == "agent" else False,
             )
         except PaymentProviderError as exc:
             raise CommerceError(f"PayPal order creation failed: {exc}", status_code=502, code="payment_provider_error") from exc
@@ -389,8 +396,17 @@ class CommerceManager:
         """Capture and verify with PayPal; on first success issue the access token."""
         async with self._lock:
             record = self._own_order(order_id, agent_id)
-        if record.status == "PAID":
-            return record, None
+            if record.status == "PAID":
+                # A webhook may confirm the payment first; the token is then issued here.
+                if record.grants and record.access_token_hash is None:
+                    raw, token_hash = self._issue_token("order", order_id)
+                    record = record.model_copy(update={"access_token_hash": token_hash})
+                    self._orders[order_id] = record
+                    self._persist()
+                    return record, raw
+                return record, None
+            if record.status in ("CANCELLED", "REFUNDED"):
+                raise CommerceError(f"Order {order_id} is {record.status.lower()}.", status_code=409, code="order_closed")
         try:
             verified = await self._provider.capture_order(
                 order_id=str(record.provider_order_id),
@@ -559,6 +575,12 @@ class CommerceManager:
         """Confirm with PayPal that the subscriber approved; issue the token when ACTIVE."""
         async with self._lock:
             record = self._own_subscription(ref, agent_id)
+            if record.status == "ACTIVE" and record.access_token_hash is None:
+                raw, token_hash = self._issue_token("subscription", ref)
+                record = record.model_copy(update={"access_token_hash": token_hash})
+                self._subscriptions[ref] = record
+                self._persist()
+                return record, raw
         if record.status == "ACTIVE" or record.status in ("CANCELLED", "EXPIRED", "FAILED"):
             return record, None
         try:
@@ -610,6 +632,204 @@ class CommerceManager:
             details={"subscription_ref": ref, "plan_id": current.plan_id},
         )
         return current
+
+    # --- publisher operations: refunds and shipment tracking -------------------------
+
+    async def refund_order(self, *, order_id: str, reason: str) -> CommerceOrderRecord:
+        """Refund a paid order through PayPal (publisher action). Access ends with it."""
+        async with self._lock:
+            record = self._orders.get(order_id)
+            if record is None:
+                raise CommerceError(f"Unknown order {order_id}.", status_code=404, code="order_not_found")
+            if record.status == "REFUNDED":
+                return record
+            if record.status != "PAID" or not record.provider_capture_id:
+                raise CommerceError("Only a paid order can be refunded.", status_code=409, code="order_not_paid")
+        try:
+            result = await self._provider.refund_capture(
+                capture_id=record.provider_capture_id,
+                order_id=record.provider_order_id,
+                amount=_money(record.amount),
+                currency=record.currency,
+                request_id=f"{order_id}-refund",
+                reason=reason[:120] or "Refunded by the merchant",
+                reconcile_before_refund=True,
+            )
+        except PaymentProviderError as exc:
+            raise CommerceError(f"PayPal refund failed: {exc}", status_code=502, code="payment_provider_error") from exc
+        if result.status not in ("COMPLETED", "PENDING"):
+            raise CommerceError(f"PayPal refund failed: {result.failure_reason or result.status}", status_code=502, code="refund_failed")
+        record = await self._mark_refunded(order_id, result.refund_id)
+        await self._audit.log_event(
+            event_type="COMMERCE_ORDER_REFUNDED",
+            crawler_id=record.agent_id,
+            payment_mode=record.payment_mode.value,
+            details={"order_id": order_id, "amount": record.amount, "provider_refund_id": result.refund_id, "refund_status": result.status},
+        )
+        return record
+
+    async def _mark_refunded(self, order_id: str, refund_id: Optional[str]) -> CommerceOrderRecord:
+        async with self._lock:
+            record = self._orders[order_id].model_copy(
+                update={"status": "REFUNDED", "provider_refund_id": refund_id, "refunded_at": utc_now_iso()}
+            )
+            self._orders[order_id] = record
+            self._persist()
+        return record
+
+    async def add_tracking(self, *, order_id: str, tracking_number: str, carrier: str) -> CommerceOrderRecord:
+        """Attach shipment tracking at PayPal and mark the order shipped (publisher action)."""
+        async with self._lock:
+            record = self._orders.get(order_id)
+            if record is None:
+                raise CommerceError(f"Unknown order {order_id}.", status_code=404, code="order_not_found")
+            if record.status != "PAID" or not any(l.category == "PHYSICAL_GOODS" for l in record.lines):
+                raise CommerceError("Only a paid order with shipped goods can be tracked.", status_code=409, code="not_shippable")
+        try:
+            await self._provider.add_tracking(
+                order_id=str(record.provider_order_id),
+                capture_id=str(record.provider_capture_id),
+                tracking_number=tracking_number,
+                carrier=carrier,
+                request_id=f"{order_id}-track-{len(record.tracking) + 1}",
+            )
+        except PaymentProviderError as exc:
+            raise CommerceError(f"PayPal tracking failed: {exc}", status_code=502, code="payment_provider_error") from exc
+        async with self._lock:
+            current = self._orders[order_id]
+            record = current.model_copy(
+                update={
+                    "fulfillment_status": "SHIPPED",
+                    "tracking": [*current.tracking, {"tracking_number": tracking_number, "carrier": carrier, "added_at": utc_now_iso()}],
+                }
+            )
+            self._orders[order_id] = record
+            self._persist()
+        await self._audit.log_event(
+            event_type="COMMERCE_ORDER_SHIPPED",
+            crawler_id=record.agent_id,
+            details={"order_id": order_id, "carrier": carrier, "tracking_number": tracking_number},
+        )
+        return record
+
+    # --- PayPal webhooks ----------------------------------------------------------------
+
+    async def webhook_seen(self, event_id: str) -> bool:
+        async with self._lock:
+            return event_id in self._webhooks
+
+    async def remember_webhook(self, event_id: str, event_type: str, outcome: str) -> None:
+        async with self._lock:
+            self._webhooks[event_id] = {"type": event_type, "outcome": outcome, "at": utc_now_iso()}
+            if len(self._webhooks) > 2000:  # keep the newest 2000 event ids
+                for key in sorted(self._webhooks, key=lambda k: self._webhooks[k]["at"])[:-2000]:
+                    self._webhooks.pop(key, None)
+            self._persist()
+
+    def has_order(self, order_id: str) -> bool:
+        return order_id in self._orders
+
+    def subscription_ref_for(self, custom_id: Optional[str], provider_id: Optional[str]) -> Optional[str]:
+        if custom_id and custom_id in self._subscriptions:
+            return custom_id
+        for ref, sub in self._subscriptions.items():
+            if provider_id and sub.provider_subscription_id == provider_id:
+                return ref
+        return None
+
+    async def confirm_order_from_webhook(self, order_id: str) -> str:
+        """PAYMENT.CAPTURE.COMPLETED: confirm with PayPal itself before marking the order paid."""
+        async with self._lock:
+            record = self._orders.get(order_id)
+        if record is None:
+            return "unknown_order"
+        if record.status == "PAID":
+            async with self._lock:
+                self._orders[order_id] = self._orders[order_id].model_copy(update={"confirmed_by_webhook": True})
+                self._persist()
+            return "already_paid"
+        if record.status in ("CANCELLED", "REFUNDED", "FAILED"):
+            return f"ignored_{record.status.lower()}"
+        verified = await self._provider.verify_order(
+            order_id=str(record.provider_order_id), expected_amount=_money(record.amount), expected_currency=record.currency
+        )
+        if not verified.verified:
+            return "not_verified"
+        ships = any(l.category == "PHYSICAL_GOODS" for l in record.lines)
+        async with self._lock:
+            self._orders[order_id] = self._orders[order_id].model_copy(
+                update={
+                    "status": "PAID",
+                    "provider_capture_id": verified.capture_id,
+                    "paid_at": utc_now_iso(),
+                    "approval_url": None,
+                    "fulfillment_status": "PROCESSING" if ships else "DELIVERED",
+                    "confirmed_by_webhook": True,
+                }
+            )
+            self._persist()
+        return "marked_paid"
+
+    async def refund_from_webhook(self, order_id: str, refund_id: Optional[str]) -> str:
+        async with self._lock:
+            record = self._orders.get(order_id)
+        if record is None:
+            return "unknown_order"
+        if record.status == "REFUNDED":
+            return "already_refunded"
+        if not refund_id:
+            return "not_verified"
+        # Never trust the event body: read the refund back from PayPal first.
+        try:
+            details = await self._provider.get_refund_details(refund_id=refund_id)
+        except PaymentProviderTimeoutError:
+            raise
+        except PaymentProviderError:
+            return "not_verified"
+        if (details.status or "").upper() != "COMPLETED":
+            return f"refund_{(details.status or 'unknown').lower()}"
+        await self._mark_refunded(order_id, refund_id)
+        return "marked_refunded"
+
+    async def dispute_from_webhook(self, order_id: str, dispute_id: Optional[str], status: str) -> str:
+        async with self._lock:
+            record = self._orders.get(order_id)
+            if record is None:
+                return "unknown_order"
+            self._orders[order_id] = record.model_copy(update={"dispute_id": dispute_id, "dispute_status": status})
+            self._persist()
+        return "dispute_recorded"
+
+    async def sync_subscription_from_webhook(self, ref: str) -> str:
+        """BILLING.SUBSCRIPTION.*: read the authoritative status from PayPal."""
+        async with self._lock:
+            record = self._subscriptions.get(ref)
+        if record is None or not record.provider_subscription_id:
+            return "unknown_subscription"
+        result = await self._provider.get_subscription(subscription_id=record.provider_subscription_id)
+        update: dict[str, Any] = {"next_billing_time": result.next_billing_time}
+        if result.status == "ACTIVE" and record.status != "ACTIVE":
+            update.update(status="ACTIVE", activated_at=utc_now_iso(), approval_url=None)  # token on the agent's next call
+        elif result.status in ("CANCELLED", "SUSPENDED", "EXPIRED") and record.status != result.status:
+            update["status"] = result.status
+            if result.status == "CANCELLED":
+                update["cancelled_at"] = utc_now_iso()
+        async with self._lock:
+            self._subscriptions[ref] = self._subscriptions[ref].model_copy(update=update)
+            self._persist()
+            status = self._subscriptions[ref].status
+        return f"status_{status.lower()}"
+
+    async def subscription_payment_from_webhook(self, ref: str) -> str:
+        async with self._lock:
+            record = self._subscriptions.get(ref)
+            if record is None:
+                return "unknown_subscription"
+            self._subscriptions[ref] = record.model_copy(
+                update={"payments_received": record.payments_received + 1, "last_payment_at": utc_now_iso()}
+            )
+            self._persist()
+        return "payment_recorded"
 
     # --- paid content -----------------------------------------------------------------
 
@@ -684,6 +904,9 @@ class CommerceManager:
             "active_subscriptions": len(active),
             "pending_subscriptions": sum(1 for s in subs if s.status in ("APPROVAL_PENDING", "APPROVED")),
             "cancelled_subscriptions": sum(1 for s in subs if s.status == "CANCELLED"),
+            "refunded_orders": sum(1 for o in orders if o.status == "REFUNDED"),
+            "open_disputes": sum(1 for o in orders if o.dispute_status and o.dispute_status != "RESOLVED"),
+            "webhook_events": len(self._webhooks),
             "orders": [o.model_dump(mode="json", exclude={"access_token_hash"}) for o in orders[:200]],
             "subscriptions": [s.model_dump(mode="json", exclude={"access_token_hash"}) for s in subs[:200]],
         }

@@ -16,14 +16,14 @@
 <body>
 <header class="appbar">
   <div class="appbar-inner">
-    <a class="brand-mark" href="/agent" aria-label="AgentTrust home">
+    <a class="brand-mark" href="/" aria-label="AgentTrust home">
       <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="var(--accent)"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
       <span class="brand-name">AgentTrust</span>
       <span class="brand-tag">Agent studio</span>
     </a>
     <nav class="nav" aria-label="Pages">
-      <a href="/agent" aria-current="page">Agent studio</a>
-      <a href="/">Crawler demo</a>
+      <a href="/" aria-current="page">Agent studio</a>
+      <a href="/crawler">Crawler demo</a>
       <a href="/console">Publisher console</a>
       <a href="/docs">API docs</a>
     </nav>
@@ -55,11 +55,35 @@
 
   <section class="banner" id="banner" role="status" hidden></section>
 
+  <section class="how" aria-labelledby="how-title">
+    <h2 class="strip-title" id="how-title">How it works</h2>
+    <ol class="how-steps">
+      <li><span class="how-num">1</span><div><strong>The site publishes its offers</strong><span>A machine-readable catalog, and an <code>HTTP 402</code> on paid content that says how to pay. Also available to any AI assistant as an MCP storefront.</span></div></li>
+      <li><span class="how-num">2</span><div><strong>You set a mandate</strong><span>A budget, the payment types allowed, and an amount above which the agent must ask you. Recurring charges always ask.</span></div></li>
+      <li><span class="how-num">3</span><div><strong>The agent pays through PayPal</strong><span>Refundable crawl deposits, pay-per-access, subscriptions, and product orders, each on the PayPal API built for it.</span></div></li>
+      <li><span class="how-num">4</span><div><strong>The site verifies with PayPal</strong><span>Nothing unlocks or ships until PayPal confirms the payment. Webhooks keep orders and subscriptions in sync; the publisher sees every payment in the console.</span></div></li>
+    </ol>
+  </section>
+
   <section class="offer-strip" aria-labelledby="offers-title">
     <h2 class="strip-title" id="offers-title">What <span id="merchant-name">this site</span> sells to agents</h2>
     <div class="offer-grid" id="offer-grid">
       <p class="empty">Loading the offer catalog...</p>
     </div>
+  </section>
+
+  <section class="card human-buy" id="human-buy" aria-labelledby="human-title" hidden>
+    <div class="card-head">
+      <div class="section-title">
+        <span class="section-icon" aria-hidden="true">P</span>
+        <div>
+          <h2 id="human-title">Or buy it yourself with PayPal</h2>
+          <p class="card-sub">The same offers, the same site-set prices and PayPal checks: people pay with PayPal's buttons (JS SDK v6), agents through the API.</p>
+        </div>
+      </div>
+    </div>
+    <div class="human-grid" id="human-grid"></div>
+    <div class="human-result" id="human-result" role="status" hidden></div>
   </section>
 
   <section class="card launch" aria-label="Task and spending mandate">
@@ -75,6 +99,10 @@
           <label class="money-field"><span>Budget</span><span class="money-input"><span class="cur" data-currency>$</span><input type="number" id="budget" min="1" max="200" step="1" value="60"></span></label>
           <label class="money-field"><span>Ask me above</span><span class="money-input"><span class="cur" data-currency>$</span><input type="number" id="threshold" min="0" max="200" step="1" value="10"></span></label>
         </div>
+        <div class="mandate-fields">
+          <label class="money-field"><span>Max per purchase</span><span class="money-input"><span class="cur" data-currency>$</span><input type="number" id="max-per" min="0" max="200" step="1" placeholder="no cap"></span></label>
+          <label class="money-field"><span>Allowed merchants</span><span class="money-input"><input type="text" id="merchants" placeholder="any merchant" maxlength="200" style="padding-left:8px;font-family:var(--font)"></span></label>
+        </div>
         <fieldset class="type-toggles">
           <legend>Allowed payment types</legend>
           <label><input type="checkbox" name="ptype" value="deposit" checked> Crawl deposits</label>
@@ -82,6 +110,7 @@
           <label><input type="checkbox" name="ptype" value="subscription" checked> Subscriptions</label>
           <label><input type="checkbox" name="ptype" value="product" checked> Products</label>
         </fieldset>
+        <label class="review-toggle"><input type="checkbox" id="purchase-review" checked> AI purchase review <span class="muted">(a second model checks each purchase against your request)</span></label>
         <p class="hint">Recurring charges always come to you for approval.</p>
       </div>
     </div>
@@ -101,6 +130,7 @@
       <h2 id="decision-title"></h2>
       <p class="decision-amount" id="decision-amount"></p>
       <p class="decision-reason" id="decision-reason"></p>
+      <p class="decision-review" id="decision-review" hidden></p>
       <p class="hint" id="decision-meta"></p>
     </div>
     <div class="decision-actions">

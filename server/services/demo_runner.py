@@ -27,6 +27,7 @@ from client.agent import PERSONAS, CrawlerAgent
 from client.agent_tools import GatewayToolbox
 from client.assistant_agent import DEFAULT_TASK, make_persona
 from client.assistant_tools import ASSISTANT_TOOL_DEFINITIONS, PAYMENT_TYPES, AssistantToolbox, SpendingMandate
+from client.purchase_critic import Critic, build_llm_critic
 from client.scripted_agent import ScriptedDriver
 from server.core.quotas import HourlyQuota
 from server.core.security import utc_now_iso
@@ -50,6 +51,7 @@ MAX_CONTENT_PREVIEW = 700
 
 HttpFactory = Callable[[str], AbstractContextManager[Any]]
 LlmFactory = Callable[[str], Any]
+CriticFactory = Callable[[Any, str, str], Critic]
 
 
 class DemoRunError(RuntimeError):
@@ -210,8 +212,10 @@ class DemoRunner:
         llm_factory: Optional[LlmFactory] = None,
         sleep: Optional[Callable[[float], None]] = None,
         max_deposit: Decimal = MAX_DEPOSIT,
+        critic_factory: Optional[CriticFactory] = None,
     ) -> None:
         self._max_deposit = max_deposit
+        self._critic_factory = critic_factory or build_llm_critic
         self._http_factory = http_factory or _default_http_factory
         self._llm_factory = llm_factory or _default_llm_factory
         self._sleep = sleep  # tests skip real waits; runs otherwise wait (interruptibly)
@@ -253,6 +257,9 @@ class DemoRunner:
         budget: Optional[str] = None,
         approval_threshold: Optional[str] = None,
         allowed_types: Optional[list[str]] = None,
+        max_per_purchase: Optional[str] = None,
+        allowed_merchants: Optional[list[str]] = None,
+        purchase_review: bool = True,
     ) -> DemoRun:
         mandate_config: Optional[dict[str, Any]] = None
         if persona == "assistant":
@@ -265,7 +272,16 @@ class DemoRunner:
             types = sorted(set(allowed_types)) if allowed_types else list(PAYMENT_TYPES)
             if not types:
                 raise DemoRunError("Allow at least one payment type.")
-            mandate_config = {"budget": f"{spend:.2f}", "approval_threshold": f"{threshold:.2f}", "allowed_types": types}
+            cap = Decimal(max_per_purchase).quantize(Decimal("0.01")) if max_per_purchase else None
+            merchants = sorted({m.strip()[:80] for m in (allowed_merchants or []) if m and m.strip()})
+            mandate_config = {
+                "budget": f"{spend:.2f}",
+                "approval_threshold": f"{threshold:.2f}",
+                "allowed_types": types,
+                "max_per_purchase": f"{cap:.2f}" if cap is not None else None,
+                "allowed_merchants": merchants,
+                "purchase_review": bool(purchase_review),
+            }
             task = " ".join((task or DEFAULT_TASK).split())
         elif persona not in PERSONAS:
             raise DemoRunError(f"Unknown persona {persona!r}.")
@@ -455,6 +471,8 @@ class DemoRunner:
             budget=Decimal(config.get("budget", DEFAULT_BUDGET)),
             approval_threshold=Decimal(config.get("approval_threshold", DEFAULT_APPROVAL_THRESHOLD)),
             allowed_types=frozenset(config.get("allowed_types") or PAYMENT_TYPES),
+            max_per_purchase=Decimal(config["max_per_purchase"]) if config.get("max_per_purchase") else None,
+            allowed_merchants=frozenset(config.get("allowed_merchants") or []),
         )
         run.update(mandate=mandate.snapshot())
         run.emit(
@@ -472,11 +490,16 @@ class DemoRunner:
         )
         try:
             with self._http_factory(base_url) as http:
+                assert run.provider is not None
+                llm = self._llm_factory(run.provider)
                 toolbox = AssistantToolbox(
                     http=http,
                     agent_id=run.crawler_id,
                     mandate=mandate,
                     sleep=self._sleep or (lambda seconds: run.cancel_event.wait(seconds)),
+                    task=persona.task,
+                    critic=self._critic_factory(llm, run.provider, run.model or "") if config.get("purchase_review", True) else None,
+                    on_review=lambda review: run.emit("purchase_review", review),
                 )
                 toolbox.decision_handler = lambda request: self._await_decision(run, toolbox, request)
                 toolbox.checkout_handler = lambda url: self._await_approval(run, toolbox.crawler, http, url)
@@ -490,9 +513,8 @@ class DemoRunner:
                     else:
                         run.emit(kind, dict(payload))
 
-                assert run.provider is not None
                 agent = CrawlerAgent(
-                    llm=self._llm_factory(run.provider),
+                    llm=llm,
                     toolbox=toolbox,
                     persona=persona,
                     model=run.model,

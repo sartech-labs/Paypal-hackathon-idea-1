@@ -11,6 +11,7 @@ from server.schemas import (
     PayPalAssistantRequest,
     PayPalAssistantResponse,
     PayPalAssistantStatus,
+    PayPalOrderVerificationResponse,
     PayPalVerificationResponse,
 )
 from server.services.ai_client import AIRefusalError, AIServiceError, AIUnavailableError
@@ -80,6 +81,30 @@ async def assistant_status(
         access=access,  # type: ignore[arg-type]
         questions_remaining_this_hour=container.paypal_quota.remaining() if access == "public" else None,
     )
+
+
+@router.post(
+    "/orders/{order_id}/verify",
+    response_model=PayPalOrderVerificationResponse,
+    summary="Compare a commerce order (pay-per-access or products) with PayPal's records, through PayPal's MCP server",
+)
+async def verify_order(
+    order_id: str,
+    container: AppContainer = Depends(get_container),
+    x_admin_token: Optional[str] = Header(default=None),
+) -> PayPalOrderVerificationResponse:
+    access = _require_access(container, x_admin_token)
+    orders = {o.order_id: o for o in await container.commerce.list_orders()}
+    order = orders.get(order_id)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"error": "order_not_found", "message": f"Unknown order_id: {order_id}"})
+    _spend_quota(container, access)
+    try:
+        return await container.paypal_assistant.verify_order(order)
+    except PayPalAssistantError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"error": "nothing_to_verify", "message": str(exc)}) from exc
+    except PayPalMCPError as exc:
+        raise _mcp_error(exc) from exc
 
 
 @router.post(

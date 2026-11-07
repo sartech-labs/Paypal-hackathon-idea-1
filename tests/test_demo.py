@@ -70,8 +70,11 @@ def _results(run: dict[str, Any], name: str) -> list[dict[str, Any]]:
 
 
 def test_demo_page_console_and_assets_are_served(demo_client: TestClient) -> None:
-    page = demo_client.get("/")
+    page = demo_client.get("/crawler")
     assert page.status_code == 200 and "AgentTrust Live Demo" in page.text
+    landing = demo_client.get("/")
+    assert landing.status_code == 200 and "AgentTrust Agent Studio" in landing.text
+    assert demo_client.get("/agent").text == landing.text
     assert demo_client.get("/demo").status_code == 200
     assert "AgentTrust publisher console" in demo_client.get("/console").text
     for asset in ("/static/demo.js", "/static/demo.css", "/static/paypal_panel.js"):

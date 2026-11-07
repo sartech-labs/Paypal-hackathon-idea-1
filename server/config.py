@@ -32,6 +32,8 @@ class Settings(BaseModel):
     # Sandbox only: pay deposits with PayPal's Sandbox test card instead of buyer approval,
     # so AI agents (and demo viewers) can complete real Sandbox payments without a login.
     paypal_sandbox_autopay: bool = Field(default=False)
+    # Webhook ID from the PayPal app's webhook settings; events are verified against it.
+    paypal_webhook_id: str = Field(default="", max_length=64)
 
     # PayPal MCP server used by the publisher's PayPal assistant (read-only tools).
     # "local" runs PayPal's @paypal/mcp package over stdio; "hosted" connects to PayPal's
@@ -218,6 +220,7 @@ def load_settings_from_env() -> Settings:
         paypal_currency=os.getenv("PAYPAL_CURRENCY", "USD"),
         paypal_timeout_seconds=float(os.getenv("PAYPAL_TIMEOUT_SECONDS", "15.0")),
         paypal_sandbox_autopay=_env_bool("PAYPAL_SANDBOX_AUTOPAY", False),
+        paypal_webhook_id=os.getenv("PAYPAL_WEBHOOK_ID", "").strip(),
         paypal_mcp_enabled=_env_bool("PAYPAL_MCP_ENABLED", True),
         paypal_mcp_transport=os.getenv("PAYPAL_MCP_TRANSPORT", "local").strip().lower() or "local",  # type: ignore[arg-type]
         paypal_mcp_command=os.getenv("PAYPAL_MCP_COMMAND", "").strip() or "npx -y @paypal/mcp@1.8.1",

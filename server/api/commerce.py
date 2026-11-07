@@ -17,12 +17,14 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from server.api.dashboard import _dashboard_access
 from server.core.security import utc_now_iso, validate_crawler_id
-from server.dependencies import AppContainer, extract_optional_bearer_token, get_container
+from server.dependencies import AppContainer, extract_optional_bearer_token, get_container, is_valid_admin_token
 from server.schemas import (
     AgentActionRequest,
     CheckoutRequest,
     CommerceOrderResponse,
+    RefundOrderRequest,
     SubscribeRequest,
+    TrackingRequest,
     SubscriptionResponse,
 )
 from server.services.commerce import CommerceError
@@ -127,6 +129,7 @@ async def checkout(payload: CheckoutRequest, container: AppContainer = Depends(g
             item_id=payload.item_id,
             items=[(line.sku, line.quantity) for line in payload.items],
             purpose=payload.purpose,
+            buyer=payload.buyer,
         )
     except CommerceError as exc:
         _raise(exc)
@@ -156,6 +159,41 @@ async def cancel_order(order_id: str, payload: AgentActionRequest, container: Ap
     agent_id = _agent_id(payload.agent_id)
     try:
         record = await container.commerce.cancel_order(order_id=order_id, agent_id=agent_id)
+    except CommerceError as exc:
+        _raise(exc)
+    return container.commerce.order_response(record)
+
+
+def _require_admin(container: AppContainer, x_admin_token: Optional[str]) -> None:
+    if not is_valid_admin_token(container, x_admin_token):
+        raise HTTPException(status_code=401, detail={"error": "admin_required", "message": "This publisher action needs the admin token."})
+
+
+@router.post("/commerce/orders/{order_id}/refund", response_model=CommerceOrderResponse, summary="Publisher: refund a paid order through PayPal")
+async def refund_order(
+    order_id: str,
+    payload: RefundOrderRequest,
+    container: AppContainer = Depends(get_container),
+    x_admin_token: Optional[str] = Header(default=None),
+) -> CommerceOrderResponse:
+    _require_admin(container, x_admin_token)
+    try:
+        record = await container.commerce.refund_order(order_id=order_id, reason=payload.reason)
+    except CommerceError as exc:
+        _raise(exc)
+    return container.commerce.order_response(record)
+
+
+@router.post("/commerce/orders/{order_id}/tracking", response_model=CommerceOrderResponse, summary="Publisher: add shipment tracking at PayPal")
+async def add_tracking(
+    order_id: str,
+    payload: TrackingRequest,
+    container: AppContainer = Depends(get_container),
+    x_admin_token: Optional[str] = Header(default=None),
+) -> CommerceOrderResponse:
+    _require_admin(container, x_admin_token)
+    try:
+        record = await container.commerce.add_tracking(order_id=order_id, tracking_number=payload.tracking_number, carrier=payload.carrier)
     except CommerceError as exc:
         _raise(exc)
     return container.commerce.order_response(record)

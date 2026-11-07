@@ -239,6 +239,7 @@ class PaymentProvider(abc.ABC):
         items: Optional[list[OrderLineItem]] = None,
         shipping: Decimal = Decimal("0.00"),
         callback_path: str = "/deposits/paypal",
+        autopay: Optional[bool] = None,
     ) -> OrderCreationResult:
         """Create an order with intent CAPTURE or AUTHORIZE.
 
@@ -357,6 +358,18 @@ class PaymentProvider(abc.ABC):
         """Cancel a subscription (no further billing cycles)."""
         raise PaymentProviderError(f"{type(self).__name__} does not support subscriptions.")
 
+    # --- Webhooks and shipment tracking (agent commerce) ------------------------------------
+
+    async def verify_webhook_signature(self, *, headers: dict[str, str], event: dict[str, Any], webhook_id: str) -> bool:
+        """True only when the provider confirms the webhook event is authentic."""
+        return False
+
+    async def add_tracking(
+        self, *, order_id: str, capture_id: str, tracking_number: str, carrier: str, request_id: str
+    ) -> dict[str, Any]:
+        """Attach shipment tracking to a captured order (Orders v2 track)."""
+        raise PaymentProviderError(f"{type(self).__name__} does not support shipment tracking.")
+
 
 class MockPaymentProvider(PaymentProvider):
     """
@@ -389,6 +402,7 @@ class MockPaymentProvider(PaymentProvider):
         items: Optional[list[OrderLineItem]] = None,
         shipping: Decimal = Decimal("0.00"),
         callback_path: str = "/deposits/paypal",
+        autopay: Optional[bool] = None,
     ) -> OrderCreationResult:
         if items:
             total, _ = build_amount_breakdown(items=items, shipping=shipping, currency=currency.upper())
@@ -731,6 +745,20 @@ class MockPaymentProvider(PaymentProvider):
             raise PaymentProviderError(f"Mock subscription not found: {subscription_id}")
         return found
 
+    async def verify_webhook_signature(self, *, headers: dict[str, str], event: dict[str, Any], webhook_id: str) -> bool:
+        # Simulated events (mock mode only) carry this fixed signature; nothing else verifies.
+        lowered = {k.lower(): v for k, v in headers.items()}
+        return lowered.get("paypal-transmission-sig") == MOCK_WEBHOOK_SIGNATURE
+
+    async def add_tracking(
+        self, *, order_id: str, capture_id: str, tracking_number: str, carrier: str, request_id: str
+    ) -> dict[str, Any]:
+        order = self._orders.get(order_id)
+        if order is None or order.get("capture_id") != capture_id:
+            raise PaymentProviderError(f"Mock order {order_id} has no capture {capture_id}.")
+        order.setdefault("trackers", []).append({"tracking_number": tracking_number, "carrier": carrier})
+        return {"id": order_id, "status": order["status"], "trackers": list(order["trackers"])}
+
     async def cancel_subscription(self, *, subscription_id: str, reason: str) -> SubscriptionResult:
         found = await self.get_subscription(subscription_id=subscription_id)
         cancelled = SubscriptionResult(
@@ -742,6 +770,9 @@ class MockPaymentProvider(PaymentProvider):
         self._subscriptions[subscription_id] = cancelled
         return cancelled
 
+
+# Signature carried by simulated webhook events in mock mode (never accepted by the Sandbox provider).
+MOCK_WEBHOOK_SIGNATURE = "mock-webhook-signature"
 
 # PayPal's published Sandbox test card. Used only when PAYPAL_SANDBOX_AUTOPAY=true, which
 # settings validation allows only against api-m.sandbox.paypal.com. With a card payment
@@ -982,8 +1013,10 @@ class PayPalSandboxProvider(PaymentProvider):
         items: Optional[list[OrderLineItem]] = None,
         shipping: Decimal = Decimal("0.00"),
         callback_path: str = "/deposits/paypal",
+        autopay: Optional[bool] = None,
     ) -> OrderCreationResult:
         quantized = amount.quantize(Decimal("0.01"))
+        use_card = self._autopay if autopay is None else (autopay and self._autopay)
         if intent.upper() not in ("CAPTURE", "AUTHORIZE"):
             raise PaymentProviderError(f"Unsupported PayPal order intent: {intent!r}")
         async with self._build_client() as client:
@@ -1018,7 +1051,7 @@ class PayPalSandboxProvider(PaymentProvider):
                 "purchase_units": [unit],
                 "payment_source": (
                     {"card": dict(SANDBOX_TEST_CARD)}
-                    if self._autopay
+                    if use_card
                     else {
                         "paypal": {
                             "experience_context": {
@@ -2435,3 +2468,40 @@ class PayPalSandboxProvider(PaymentProvider):
             ok=(200, 204),
         )
         return await self.get_subscription(subscription_id=subscription_id)
+
+    async def verify_webhook_signature(self, *, headers: dict[str, str], event: dict[str, Any], webhook_id: str) -> bool:
+        """POST /v1/notifications/verify-webhook-signature: PayPal checks the transmission."""
+        if not webhook_id:
+            return False
+        lowered = {k.lower(): v for k, v in headers.items()}
+        needed = {
+            "auth_algo": lowered.get("paypal-auth-algo"),
+            "cert_url": lowered.get("paypal-cert-url"),
+            "transmission_id": lowered.get("paypal-transmission-id"),
+            "transmission_sig": lowered.get("paypal-transmission-sig"),
+            "transmission_time": lowered.get("paypal-transmission-time"),
+        }
+        if not all(needed.values()):
+            return False
+        try:
+            result = await self._subscriptions_request(
+                "POST",
+                "/v1/notifications/verify-webhook-signature",
+                json_body={**needed, "webhook_id": webhook_id, "webhook_event": event},
+                ok=(200,),
+            )
+        except PaymentProviderError:
+            return False
+        return result.get("verification_status") == "SUCCESS"
+
+    async def add_tracking(
+        self, *, order_id: str, capture_id: str, tracking_number: str, carrier: str, request_id: str
+    ) -> dict[str, Any]:
+        """POST /v2/checkout/orders/{id}/track: attach a shipment to the captured order."""
+        return await self._subscriptions_request(
+            "POST",
+            f"/v2/checkout/orders/{quote(order_id, safe='')}/track",
+            json_body={"capture_id": capture_id, "tracking_number": tracking_number[:64], "carrier": carrier[:64], "notify_payer": False},
+            request_id=request_id,
+            ok=(200, 201),
+        )

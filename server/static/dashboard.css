@@ -856,6 +856,14 @@ footer a { color: var(--text-secondary); }
 .source-strip { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* --- Clickable KPI cards (drill-down) ------------------------------------------ */
+.order-verify { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.order-verify h3 { margin: 0 0 6px; font-size: 14px; }
+.order-verify table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.order-verify th, .order-verify td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
+.order-verify .ok { color: var(--good-text); font-weight: 600; }
+.order-verify .bad { color: var(--critical-text); font-weight: 600; }
+.cell-actions { display: inline-flex; gap: 4px; }
+
 .tile-link {
   display: block;
   width: 100%;

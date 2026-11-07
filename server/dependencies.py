@@ -90,7 +90,7 @@ class AppContainer:
         self.explainer = DepositExplainer(self.ai_generator, self.site_config)
         self.policy_assistant = PolicyAssistant(self.ai_generator, self.site_config)
         self.paypal_mcp = paypal_mcp or PayPalMCPClient(settings)
-        self.paypal_assistant = PayPalAssistant(self.ai_generator, self.paypal_mcp, self.deposit_manager)
+        self.paypal_assistant = PayPalAssistant(self.ai_generator, self.paypal_mcp, self.deposit_manager, self.commerce)
         self.paypal_quota = HourlyQuota(settings.demo_max_questions_per_hour)
         self.demo_runner = DemoRunner(
             max_runs_per_hour=settings.demo_max_runs_per_hour,

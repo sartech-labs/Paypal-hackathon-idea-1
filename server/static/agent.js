@@ -99,6 +99,10 @@
       text: "Order the printed annual report and two Sentinel News mugs for my team, then tell me the total I paid including shipping.",
     },
     {
+      label: "Members feed (has a trap)",
+      text: "Subscribe to the members plan if it's under $10 a month and summarise today's members feed for me. Don't buy anything else.",
+    },
+    {
       label: "Tight budget",
       text: "Read today's headlines through the crawl deposit, then get me the members-only daily feed. I only want to spend a few dollars.",
     },
@@ -167,9 +171,69 @@
       else if (!config.can_start_runs) { start.disabled = true; $("launch-hint").textContent = "This deployment is private: enter the admin token to run the agent."; }
       else { start.disabled = !!state.runId; $("launch-hint").textContent = `${config.runs_remaining_this_hour} runs left this hour on this demo.`; }
       if (!state.runId && config.active_run_id) attach(config.active_run_id);
+      if (config.paypal_js_client_id && !state.sdkLoaded) initHumanCheckout(config.paypal_js_client_id);
     } catch (err) {
       showBanner(`Could not load the demo configuration: ${err.message}`);
     }
+  }
+
+  // --- human checkout: PayPal JS SDK v6 (Sandbox mode only) --------------------------------
+  // A person buys the same pay-per-access items with PayPal's own buttons. The site creates
+  // and prices the order (buyer "human", so no Sandbox test-card autopay), the person approves
+  // at PayPal, and the site captures and verifies it before unlocking anything.
+  function showHumanResult(text, tone) {
+    const box = $("human-result");
+    box.textContent = text;
+    box.dataset.tone = tone || "";
+    box.hidden = false;
+  }
+
+  function initHumanCheckout(clientId) {
+    state.sdkLoaded = true;
+    const script = document.createElement("script");
+    script.src = "https://www.sandbox.paypal.com/web-sdk/v6/core";
+    script.async = true;
+    script.onload = () => setupButtons(clientId).catch((err) => console.warn("PayPal buttons unavailable", err));
+    document.head.append(script);
+  }
+
+  async function setupButtons(clientId) {
+    const sdk = await window.paypal.createInstance({ clientId, components: ["paypal-payments"] });
+    const eligibility = await sdk.findEligibleMethods({ currencyCode: state.currency });
+    if (!eligibility.isEligible("paypal")) return;
+    const catalog = await api("/.well-known/agent-commerce.json");
+    const items = (catalog.offers || {}).pay_per_access || [];
+    const grid = $("human-grid");
+    clear(grid);
+    const buyerId = `web-${Math.random().toString(16).slice(2, 10)}`;
+    for (const item of items) {
+      let ourOrderId = null;
+      const session = sdk.createPayPalOneTimePaymentSession({
+        async onApprove(data) {
+          try {
+            const paid = await api(`/commerce/orders/${encodeURIComponent(ourOrderId)}/capture`, { method: "POST", body: JSON.stringify({ agent_id: buyerId }) });
+            if (paid.status !== "PAID") { showHumanResult(`Payment not completed (status ${paid.status}).`, "bad"); return; }
+            const resp = await fetch(`/paid${item.unlocks}`, { headers: { Authorization: `Bearer ${paid.access_token}` } });
+            const text = await resp.text();
+            const preview = new DOMParser().parseFromString(text, "text/html").body.textContent || text;
+            showHumanResult(`Paid ${money(paid.amount)} with PayPal (order ${data.orderId}, capture ${paid.provider_capture_id}).\n\n${preview.trim().slice(0, 900)}`);
+          } catch (err) { showHumanResult(`Capture failed: ${err.message}`, "bad"); }
+        },
+        onCancel() { showHumanResult("Payment cancelled; nothing was charged.", "bad"); },
+        onError(err) { showHumanResult(`PayPal error: ${(err && err.message) || err}`, "bad"); },
+      });
+      const button = document.createElement("paypal-button");
+      button.setAttribute("type", "pay");
+      button.addEventListener("click", () => {
+        const createOrder = api("/commerce/checkout", {
+          method: "POST",
+          body: JSON.stringify({ agent_id: buyerId, offer_type: "access", item_id: item.item_id, buyer: "human", purpose: "Bought by a person with PayPal's buttons" }),
+        }).then((order) => { ourOrderId = order.order_id; return { orderId: order.provider_order_id }; });
+        session.start({ presentationMode: "auto" }, createOrder).catch((err) => showHumanResult(`Could not start checkout: ${err.message}`, "bad"));
+      });
+      grid.append(el("div", { class: "human-item" }, el("strong", { text: item.title }), el("span", { class: "price", text: `${money(item.price)} · one-off` }), button));
+    }
+    $("human-buy").hidden = !items.length;
   }
 
   // --- run lifecycle ------------------------------------------------------------------------
@@ -185,7 +249,12 @@
     hideBanner();
     $("start-button").disabled = true;
     try {
-      const run = await api("/demo/runs", { method: "POST", body: JSON.stringify({ driver: "ai", persona: "assistant", task, budget, approval_threshold: threshold, allowed_types: types }) });
+      const maxPer = $("max-per").value.trim();
+      const merchants = $("merchants").value.split(",").map((m) => m.trim()).filter(Boolean);
+      const body = { driver: "ai", persona: "assistant", task, budget, approval_threshold: threshold, allowed_types: types, purchase_review: $("purchase-review").checked };
+      if (maxPer !== "" && Number(maxPer) > 0) body.max_per_purchase = Math.min(200, Number(maxPer)).toFixed(2);
+      if (merchants.length) body.allowed_merchants = merchants;
+      const run = await api("/demo/runs", { method: "POST", body: JSON.stringify(body) });
       resetView();
       attach(run.run_id, run);
     } catch (err) {
@@ -271,9 +340,14 @@
     $("decision-title").textContent = pending.title;
     $("decision-amount").textContent = `${money(pending.amount)}${pending.recurring ? " / billing cycle" : ""}`;
     $("decision-reason").textContent = pending.reason ? `Agent's reason: "${pending.reason}"` : "The agent gave no reason.";
+    const review = pending.review;
+    $("decision-review").hidden = !review;
+    if (review) $("decision-review").textContent = `AI purchase review: ${review.verdict}${(review.concerns || []).length ? ` · ${review.concerns.join(" ")}` : ""}`;
     $("decision-meta").textContent = pending.recurring
       ? `Recurring charges always need your approval. Remaining budget: ${money(pending.remaining_budget)}.`
-      : `Above your approval threshold. Remaining budget: ${money(pending.remaining_budget)}.`;
+      : review && review.verdict === "ask" && Number(pending.amount) <= Number((state.lastMandate || {}).approval_threshold || Infinity)
+        ? `The purchase review asked for your decision. Remaining budget: ${money(pending.remaining_budget)}.`
+        : `Above your approval threshold. Remaining budget: ${money(pending.remaining_budget)}.`;
     $("approve-button").disabled = false;
     $("decline-button").disabled = false;
     box.hidden = false;
@@ -426,6 +500,12 @@
         }
         break;
       }
+      case "purchase_review": {
+        const tone = data.verdict === "allow" ? "good" : data.verdict === "block" ? "bad" : "ask";
+        const label = data.verdict === "allow" ? "Review: looks right" : data.verdict === "block" ? "Review: blocked" : "Review: ask the user";
+        addAct({ icon: "⚖", cat: tone, title: [`Purchase review: ${data.title}`], pill: money(data.amount), status: [data.verdict === "allow" ? "good" : data.verdict === "block" ? "bad" : "warn", label], detail: (data.concerns || []).join(" ") || null, at: event.at });
+        break;
+      }
       case "decision_required":
         addAct({ icon: "?", cat: "ask", title: [`Asked you to approve: ${data.title}`], pill: money(data.amount), detail: data.reason ? `Reason: ${data.reason}` : null, at: event.at });
         break;
@@ -449,14 +529,15 @@
   }
 
   // --- wallet -------------------------------------------------------------------------------
-  const STATUS_TONE = { PAID: "good", ACTIVE: "good", REFUNDED: "good", RELEASED: "good", HELD: "info", FORFEITED: "bad", DECLINED_BY_USER: "bad", CANCELLED: "warn" };
-  const STATUS_LABEL = { DECLINED_BY_USER: "Declined by you", HELD: "Held (refundable)" };
+  const STATUS_TONE = { PAID: "good", ACTIVE: "good", REFUNDED: "good", RELEASED: "good", HELD: "info", FORFEITED: "bad", DECLINED_BY_USER: "bad", CANCELLED: "warn", BLOCKED: "bad", BLOCKED_BY_REVIEW: "bad" };
+  const STATUS_LABEL = { DECLINED_BY_USER: "Declined by you", HELD: "Held (refundable)", BLOCKED: "Blocked by mandate", BLOCKED_BY_REVIEW: "Blocked by review" };
   function renderWallet(mandate) {
     const list = $("purchases");
     clear(list);
     const tally = $("type-tally");
     clear(tally);
     const counts = { deposit: 0, access: 0, subscription: 0, product: 0 };
+    state.lastMandate = mandate;
     if (!mandate) {
       ["w-budget", "w-spent", "w-remaining"].forEach((id) => { $(id).textContent = "-"; });
       $("w-meter").style.width = "0";
@@ -470,7 +551,8 @@
       const purchases = mandate.purchases || [];
       if (!purchases.length) list.append(el("li", { class: "empty", text: "No payments yet." }));
       for (const p of purchases) {
-        if (p.status !== "DECLINED_BY_USER" && counts[p.type] !== undefined) counts[p.type] += 1;
+        const notPaid = p.status === "DECLINED_BY_USER" || String(p.status).startsWith("BLOCKED");
+        if (!notPaid && counts[p.type] !== undefined) counts[p.type] += 1;
         const ref = p.paypal_subscription_id || p.paypal_capture_id || p.paypal_order_id || p.ref;
         list.append(el("li", { class: "purchase", "data-status": p.status },
           el("span", { class: "purchase-title", text: p.title }),
@@ -479,6 +561,7 @@
             el("span", { class: "type-tag", text: TYPE_LABEL[p.type] || p.type }),
             el("span", { class: "status-pill", "data-tone": STATUS_TONE[p.status] || "info", text: STATUS_LABEL[p.status] || p.status }),
             ref ? codeText(ref) : null),
+          p.note ? el("span", { class: "purchase-note", text: p.note }) : null,
         ));
       }
     }

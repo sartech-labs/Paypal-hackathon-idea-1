@@ -231,3 +231,26 @@ async def test_subscription_calls_paypal_subscriptions_api(test_settings: Settin
     await provider.cancel_subscription(subscription_id="I-SUB", reason="done")
     assert any(r.url.path == "/v1/billing/subscriptions/I-SUB/cancel" for r in requests)
     assert all(r.headers.get("Authorization") == "Bearer tok" for r in requests if r.url.path != "/v1/oauth2/token")
+
+
+async def test_human_checkout_never_uses_the_sandbox_test_card(test_settings: Settings) -> None:
+    requests: list[httpx.Request] = []
+    settings = test_settings.model_copy(update={"payment_mode": "paypal_sandbox", "paypal_sandbox_autopay": True})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/v1/oauth2/token":
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 3600})
+        return httpx.Response(201, json={"id": f"ORDER{len(requests)}", "status": "CREATED"})
+
+    provider = PayPalSandboxProvider(settings, transport=httpx.MockTransport(handler))
+    item = [OrderLineItem(name="Video", unit_amount=Decimal("2.00"), sku="v")]
+    await provider.create_order(deposit_id="ord_a", amount=Decimal("2.00"), currency="USD", request_id="a", description="x", items=item)
+    await provider.create_order(deposit_id="ord_h", amount=Decimal("2.00"), currency="USD", request_id="h", description="x", items=item, autopay=False)
+    agent_body, human_body = (json.loads(r.content) for r in requests if r.url.path == "/v2/checkout/orders")
+    assert "card" in agent_body["payment_source"]
+    assert "paypal" in human_body["payment_source"] and "card" not in human_body["payment_source"]
+
+
+def test_js_sdk_client_id_is_only_exposed_in_sandbox_mode(client: TestClient) -> None:
+    assert client.get("/demo/config").json()["paypal_js_client_id"] is None

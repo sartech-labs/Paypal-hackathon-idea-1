@@ -61,13 +61,20 @@ def _internal_base_url(request: Request) -> str:
 
 
 @router.get("/", include_in_schema=False)
-async def demo_page() -> FileResponse:
-    return FileResponse(STATIC_DIR / "demo.html", media_type="text/html")
+async def agent_studio_page() -> FileResponse:
+    """The landing page: the personal agent paying a website four ways through PayPal."""
+    return FileResponse(STATIC_DIR / "agent.html", media_type="text/html")
 
 
 @router.get("/agent", include_in_schema=False)
-async def agent_studio_page() -> FileResponse:
+async def agent_studio_alias() -> FileResponse:
     return FileResponse(STATIC_DIR / "agent.html", media_type="text/html")
+
+
+@router.get("/crawler", include_in_schema=False)
+async def demo_page() -> FileResponse:
+    """The crawler deposit demo: compliant and rogue crawlers against the 402 gateway."""
+    return FileResponse(STATIC_DIR / "demo.html", media_type="text/html")
 
 
 @router.get("/demo", include_in_schema=False)
@@ -103,6 +110,11 @@ async def demo_config(
         paypal_mcp_configured=container.paypal_mcp.is_configured(),
         paypal_mcp_transport=container.paypal_mcp.transport,  # type: ignore[arg-type]
         demo_public=container.settings.demo_public,
+        paypal_js_client_id=(
+            container.settings.paypal_client_id or None
+            if container.payment_provider.mode.value == "paypal_sandbox"
+            else None
+        ),
         access=access,  # type: ignore[arg-type]
         can_start_runs=can_start,
         runs_remaining_this_hour=runner.runs_remaining(),
@@ -243,6 +255,9 @@ async def start_run(
             budget=payload.budget,
             approval_threshold=payload.approval_threshold,
             allowed_types=list(payload.allowed_types) if payload.allowed_types else None,
+            max_per_purchase=payload.max_per_purchase,
+            allowed_merchants=payload.allowed_merchants,
+            purchase_review=payload.purchase_review,
         )
     except DemoRunError as exc:
         raise HTTPException(

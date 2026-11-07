@@ -9,6 +9,15 @@
 .tagline { margin: 10px 0 0; color: var(--text-secondary); max-width: 82ch; font-size: 14.5px; line-height: 1.55; }
 .studio-hero .badges { margin-top: 14px; }
 
+/* --- How it works ---------------------------------------------------------------- */
+.how { margin-bottom: 18px; }
+.how-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.how-steps li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 12px 14px; border-radius: var(--radius); background: var(--surface-1); border: 1px solid var(--border); }
+.how-num { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 800; }
+.how-steps strong { display: block; font-size: 13.5px; margin-bottom: 3px; }
+.how-steps span:not(.how-num) { display: block; color: var(--text-muted); font-size: 12.5px; line-height: 1.45; }
+.how-steps code { font-family: var(--mono); font-size: 11.5px; }
+
 /* --- Offer strip --------------------------------------------------------------- */
 .offer-strip { margin-bottom: 16px; }
 .strip-title { margin: 0 0 10px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); }
@@ -39,6 +48,17 @@
 .offer-list li { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; color: var(--text-secondary); }
 .offer-list li span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .offer-list .price { font-family: var(--mono); color: var(--text-primary); flex: none; }
+
+/* --- Human checkout (PayPal JS SDK v6) -------------------------------------------- */
+.human-buy { margin-bottom: 16px; }
+.human-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.human-item { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.human-item strong { font-size: 13.5px; }
+.human-item .price { font-family: var(--mono); color: var(--text-secondary); font-size: 12.5px; }
+.human-item paypal-button { display: block; min-height: 40px; }
+.human-result { margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--good-soft); font-size: 13px; white-space: pre-wrap; max-height: 14em; overflow: auto; }
+.human-result[data-tone="bad"] { background: var(--critical-soft); }
+@media (max-width: 900px) { .human-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* --- Launcher -------------------------------------------------------------------- */
 .launch { padding: 0; margin-bottom: 16px; overflow: hidden; }
@@ -71,7 +91,11 @@ textarea#task:focus-visible, .money-input input:focus-visible { outline: 2px sol
 .type-toggles { border: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
 .type-toggles legend { padding: 0; margin-bottom: 6px; font-size: 12.5px; color: var(--text-secondary); }
 .type-toggles label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.mandate-col .mandate-fields + .mandate-fields { margin-top: 10px; }
 .mandate-col .hint { margin: 10px 0 0; }
+.review-toggle { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; font-size: 13px; }
+.review-toggle .muted { font-size: 12px; }
+.decision-review { margin: 6px 0 0; padding: 6px 10px; border-radius: 6px; background: var(--surface-2); font-size: 12.5px; color: var(--text-secondary); }
 .launch-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--border); background: var(--surface-2); }
 .launch-foot .hint { margin: 0; }
 .launch-actions { display: flex; gap: 8px; margin-left: auto; }
@@ -186,8 +210,9 @@ button.go { font-size: 15px; padding: 10px 24px; border-radius: 10px; box-shadow
 .purchase-amount { font-family: var(--mono); font-weight: 700; font-size: 13px; text-align: right; }
 .purchase-meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 11.5px; color: var(--text-muted); }
 .purchase-meta code { font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
-.purchase[data-status="DECLINED_BY_USER"] { opacity: 0.7; }
-.purchase[data-status="DECLINED_BY_USER"] .purchase-amount { text-decoration: line-through; }
+.purchase[data-status="DECLINED_BY_USER"], .purchase[data-status^="BLOCKED"] { opacity: 0.75; }
+.purchase[data-status="DECLINED_BY_USER"] .purchase-amount, .purchase[data-status^="BLOCKED"] .purchase-amount { text-decoration: line-through; }
+.purchase-note { grid-column: 1 / -1; font-size: 11.5px; color: var(--critical-text); }
 .type-tag { padding: 1px 6px; border-radius: 4px; background: var(--chip-bg); color: var(--text-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10.5px; }
 
 .type-tally { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
@@ -201,13 +226,13 @@ footer a { color: var(--text-secondary); }
 
 /* --- Responsive ------------------------------------------------------------------------- */
 @media (max-width: 1100px) {
-  .offer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .offer-grid, .how-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .studio-layout { grid-template-columns: minmax(0, 1fr); }
   .studio-side { position: static; }
 }
 @media (max-width: 720px) {
   .studio-hero h1 { font-size: 24px; }
-  .offer-grid { grid-template-columns: minmax(0, 1fr); }
+  .offer-grid, .how-steps { grid-template-columns: minmax(0, 1fr); }
   .launch-grid { grid-template-columns: minmax(0, 1fr); }
   .launch-col + .launch-col { border-left: none; border-top: 1px solid var(--border); }
   .decision { grid-template-columns: auto minmax(0, 1fr); }

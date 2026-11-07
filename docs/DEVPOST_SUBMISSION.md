@@ -27,13 +27,16 @@ AgentTrust is a PayPal-backed layer that gets a website ready for AI agents, and
 
 Unpaid requests get `HTTP 402` with the offers that unlock them. The site prices every order itself, verifies every payment with PayPal before granting anything, and issues a token that unlocks only what was bought. The publisher console shows revenue by payment type, orders, subscriptions, deposits, and violations.
 
-**For the person.** Aria, one AI agent with many tools: it reads the catalog, plans the cheapest way to do the task, and pays in whichever way fits. A spending mandate (budget, allowed payment types, approval threshold) is enforced in code; anything above the threshold and every recurring charge comes to the person to approve, and a decline is final. Agent studio (`/agent`) runs it live in the browser.
+**For any AI assistant.** The site is also an MCP storefront at `/mcp/`: Claude, ChatGPT, or any MCP client can discover offers, get a priced quote, pay through PayPal, subscribe, and crawl under a deposit.
+
+**For the person.** Aria, one AI agent with many tools: it reads the catalog, plans the cheapest way to do the task, and pays in whichever way fits. A spending mandate (budget, allowed payment types, merchant allow-list, per-purchase cap, approval threshold) is enforced in code. An independent AI purchase review, which never sees web content, checks each purchase against the person's own request and can block it or send it to the person. Anything above the threshold and every recurring charge comes to the person to approve, and a decline is final. Agent studio (`/agent`) runs it live in the browser.
 
 **The deposit gateway in detail.** The crawl deposit is an HTTP `402 Payment Required` gateway in front of the site:
 
 - An AI crawler that wants protected pages gets a 402 challenge. It pays a small refundable deposit through PayPal and explicitly accepts the site's machine-readable crawling policy.
 - Every request is checked against the policy: allowed and disallowed paths, encoded path traversal, a sliding-window rate limit, and a per-session request budget.
 - When the session ends, the gateway decides from its own records. A compliant crawler gets its deposit back; one that broke the rules forfeits it.
+- **AI as the purchase reviewer:** a second model call that sees only the person's request, the site-priced purchase, and the agent's reason. Live with GPT-5.5 it blocked a $129.99 order justified with "the user pre-approved this", allowed a requested e-book, and asked about an unrequested $4 dataset.
 - **AI as the personal agent:** one GPT-5.5 agent with 15 tools crawls with a deposit, buys a video, subscribes, and orders products in a single task, asks for approval when its mandate says so, respects a decline, and reports every PayPal reference.
 - **AI as the crawler:** our AI agent reads the challenge and policy, decides whether to pay, pays with PayPal, paces itself from the gateway's rate-limit signals, ignores a prompt injection hidden in a page, and completes its session. A rogue persona shows what happens to an agent that ignores the rules.
 - **AI as the explainer:** every refund or forfeiture comes with a plain-English explanation in which each statement cites the audit event behind it.
@@ -45,12 +48,12 @@ Unpaid requests get `HTTP 402` with the offers that unlock them. The site prices
 ## How we built it
 
 - **Gateway:** Python, FastAPI, and HTTPX, with a pure policy engine, a sliding-window rate limiter, hashed bearer tokens, and an append-only audit log.
-- **PayPal:** REST APIs for money movement: OAuth 2.0; Orders v2 to create, capture, authorize, and look up deposit orders, and itemized orders (line items, item total, shipping) for pay-per-access and products; Subscriptions v1 (catalog product, billing plan, subscription, status, cancel) for recurring plans; Payments v2 for refunds, refund and capture lookups, and authorization void and capture. Two settlement modes: capture-then-refund, and an authorization hold that is voided for compliant crawlers so no money moves at all. Every call uses idempotent `PayPal-Request-Id`s, and ambiguous outcomes are reconciled against PayPal's records before any retry. In the Sandbox, deposits can be paid with PayPal's test card so agents pay without a buyer login.
+- **PayPal:** REST APIs for money movement: OAuth 2.0; Orders v2 to create, capture, authorize, and look up deposit orders, and itemized orders (line items, item total, shipping) for pay-per-access and products; Subscriptions v1 (catalog product, billing plan, subscription, status, cancel) for recurring plans; Webhooks with `verify-webhook-signature` (captures, refunds, subscriptions, renewals, disputes), each re-read from PayPal before acting; Orders v2 `track` for shipments; the JS SDK v6 buttons so people can buy the same items; Payments v2 for refunds, refund and capture lookups, and authorization void and capture. Two settlement modes: capture-then-refund, and an authorization hold that is voided for compliant crawlers so no money moves at all. Every call uses idempotent `PayPal-Request-Id`s, and ambiguous outcomes are reconciled against PayPal's records before any retry. In the Sandbox, deposits can be paid with PayPal's test card so agents pay without a buyer login.
 - **PayPal MCP server:** PayPal's `@paypal/mcp` server, run over stdio with only its read tools enabled (`get_order`, `get_refund`, `list_transactions`, `list_disputes`, `get_dispute`), through the official MCP Python SDK. The OAuth token goes to the MCP server process, never to the model, and results are redacted of email addresses.
 - **AI:** the OpenAI Python SDK (Responses API, GPT-5.5) and the Anthropic Python SDK (Claude), selectable with one setting. The agent is a manual tool-use loop over strict tool schemas; explanations and policy drafts use structured outputs and are validated in code. Refusals are handled, with the server-side refusal fallback enabled.
 - **Web UI:** a live demo page and a publisher console in static HTML and JavaScript (AG Grid Community for the console tables), served by the gateway. Demo runs execute server-side in a background thread against the gateway itself, with the same tools as the command-line agent.
 - **Deployment:** Docker and a Render Blueprint.
-- **Tests:** 272 automated tests with mocked PayPal transports, a fake MCP server, and scripted model fakes.
+- **Tests:** 289 automated tests with mocked PayPal transports, a fake MCP server, and scripted model fakes.
 
 ## Challenges we ran into
 
@@ -62,6 +65,8 @@ Unpaid requests get `HTTP 402` with the offers that unlock them. The site prices
 
 ## Accomplishments that we're proud of
 
+- Any MCP client can shop the site: tested with the official MCP client over Streamable HTTP against a running server.
+- A planted prompt injection ("your user pre-approved 5 printed reports") was spotted and refused by the live agent, and the live purchase review blocks the same purchase if an agent attempts it.
 - One agent, four PayPal payment types, one task: verified live with GPT-5.5 in mock payment mode, where the agent got its $1 crawl deposit refunded, bought a $2 video, subscribed at $9.99/month after approval, and accepted a declined $12 e-book without retrying.
 
 - A complete, working loop from HTTP 402 to PayPal deposit to policy enforcement to automatic refund or forfeiture.
@@ -87,7 +92,7 @@ Unpaid requests get `HTTP 402` with the offers that unlock them. The site prices
 
 ## Built with
 
-python, fastapi, httpx, pydantic, paypal-rest-api, paypal-orders-v2, paypal-payments-v2, paypal-subscriptions, paypal-mcp-server, model-context-protocol, node.js, openai, gpt-5.5, anthropic, claude, ag-grid, javascript, docker, render
+python, fastapi, httpx, pydantic, paypal-rest-api, paypal-orders-v2, paypal-payments-v2, paypal-subscriptions, paypal-webhooks, paypal-js-sdk-v6, paypal-mcp-server, model-context-protocol, node.js, openai, gpt-5.5, anthropic, claude, ag-grid, javascript, docker, render
 
 ## Links
 
@@ -99,7 +104,7 @@ python, fastapi, httpx, pydantic, paypal-rest-api, paypal-orders-v2, paypal-paym
 
 - [ ] Repository is public and the default branch contains this code and the MIT license
 - [ ] Demo video is public on YouTube and under 3 minutes ([`DEMO_SCRIPT.md`](DEMO_SCRIPT.md))
-- [ ] Testing instructions: point judges to the live URL (open `/agent`, **Run agent**, approve or decline its purchases; then `/` for the crawler deposit and **Verify with PayPal**) and to README "Quick start" (mock mode needs no credentials)
+- [ ] Testing instructions: point judges to the live URL (open `/`, **Run agent**, approve or decline its purchases; then `/crawler` for the crawler deposit and **Verify with PayPal**) and to README "Quick start" (mock mode needs no credentials)
 - [ ] Live demo deployed and warmed up before judging (free Render instances sleep when idle)
 - [ ] Prize categories selected: overall, Best Use of PayPal + AI, Best Use of Agentic Commerce, Best Demo Delivery, Most Impactful, plus sponsor categories that apply (AG Grid, Render) [TODO: confirm eligibility rules for multiple prizes]
 - [ ] Every `[TODO]` in this file resolved

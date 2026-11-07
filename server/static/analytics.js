@@ -13,6 +13,7 @@
 
   const PAGES = [
     ["overview", "Overview"],
+    ["commerce", "Agent commerce"],
     ["finance", "Deposits & refunds"],
     ["security", "Security"],
     ["agents", "AI agents"],
@@ -166,7 +167,7 @@
   const cash = (id, name) => ({ id, name, format: "currencyFormat", formatOptions: { format: "$#,##0.00" } });
   const int = (id, name) => ({ id, name, format: "integerFormat" });
 
-  function buildSources(data, requests, runs) {
+  function buildSources(data, requests, runs, commerce) {
     const h = state.ctx.helpers;
     chooseBucket([
       ...(requests || []).map((r) => r.timestamp),
@@ -238,7 +239,7 @@
       return {
         run_id: run.run_id,
         driver: run.driver === "ai" ? "AI agent" : "Scripted",
-        persona: run.persona === "rogue" ? "Rogue scraper" : "Compliant crawler",
+        persona: run.persona === "rogue" ? "Rogue scraper" : run.persona === "assistant" ? "Personal agent" : "Compliant crawler",
         status: h.humanize(run.status),
         outcome: run.deposit_state ? outcome(run.deposit_state) : "No deposit",
         tier: run.pricing_tier ? h.humanize(run.pricing_tier) : "Base",
@@ -251,8 +252,58 @@
       };
     });
 
+    // Agent commerce: one row per payment, whatever its type, so revenue mixes cleanly.
+    const ORDER_STATE = { PAID: "Paid", REFUNDED: "Refunded", CANCELLED: "Cancelled", CREATED: "Awaiting payment", APPROVAL_REQUIRED: "Awaiting payment", FAILED: "Failed" };
+    const payments = [];
+    for (const o of (commerce && commerce.orders) || []) {
+      const amount = Number(o.amount) || 0;
+      payments.push({
+        payment_id: o.order_id,
+        type: o.kind === "access" ? "Pay-per-access" : "Product order",
+        item: (o.lines || []).map((l) => `${l.quantity > 1 ? `${l.quantity}x ` : ""}${l.name}`).join(", "),
+        agent_id: o.agent_id,
+        status: ORDER_STATE[o.status] || h.humanize(o.status),
+        amount,
+        revenue: o.status === "PAID" ? amount : 0,
+        rail: o.simulated ? "Mock (simulated)" : "PayPal Sandbox",
+        created_minute: minute(o.created_at),
+      });
+    }
+    for (const s of (commerce && commerce.subscriptions) || []) {
+      const amount = Number(s.amount) || 0;
+      payments.push({
+        payment_id: s.subscription_ref,
+        type: "Subscription",
+        item: `${s.plan_name} (per ${String(s.interval_unit || "").toLowerCase()})`,
+        agent_id: s.agent_id,
+        status: h.humanize(s.status),
+        amount,
+        revenue: s.status === "ACTIVE" ? amount : 0,
+        rail: s.simulated ? "Mock (simulated)" : "PayPal Sandbox",
+        created_minute: minute(s.created_at),
+      });
+    }
+    for (const d of deposits) {
+      payments.push({
+        payment_id: d.deposit_id,
+        type: "Crawl deposit",
+        item: `${d.tier} tier deposit`,
+        agent_id: d.crawler_id,
+        status: d.outcome,
+        amount: d.amount,
+        revenue: d.forfeited_amount,
+        rail: d.rail,
+        created_minute: d.created_minute,
+      });
+    }
+
     return {
       sources: [
+        { id: "payments", name: "Agent payments (all types)", primaryKeyField: "payment_id", data: payments, fields: [
+          text("payment_id", "Payment ID"), text("type", "Payment type"), text("item", "Item"), text("agent_id", "Agent"),
+          text("status", "Status"), cash("amount", "Amount"), cash("revenue", "Revenue kept"), text("rail", "Payment rail"),
+          text("created_minute", "Created"),
+        ] },
         { id: "deposits", name: "Deposits", primaryKeyField: "deposit_id", data: deposits, fields: [
           text("deposit_id", "Deposit ID"), text("crawler_id", "Crawler"), text("tier", "Pricing tier"), cash("amount", "Deposit amount"),
           text("currency", "Currency"), text("outcome", "Outcome"), text("state", "Deposit state"), text("settlement", "Settlement"),
@@ -288,7 +339,7 @@
         { id: "violation-deposit", source: "violations.deposit_id", target: "deposits.deposit_id", type: "many-to-one" },
         { id: "run-deposit", source: "runs.deposit_id", target: "deposits.deposit_id", type: "many-to-one" },
       ],
-      counts: { deposits: deposits.length, sessions: sessions.length, requests: requestRows.length, violations: violations.length, audit: audit.length, runs: runRows.length },
+      counts: { payments: payments.length, deposits: deposits.length, sessions: sessions.length, requests: requestRows.length, violations: violations.length, audit: audit.length, runs: runRows.length },
     };
   }
 
@@ -341,6 +392,40 @@
             "activity": { xTrack: 8, yTrack: 6, xSpan: 16, ySpan: 18 },
             "tier-filter": { xTrack: 0, yTrack: 24, xSpan: 6, ySpan: 16 },
             "by-crawler": { xTrack: 6, yTrack: 24, xSpan: 18, ySpan: 16 },
+          },
+        },
+        {
+          id: "commerce",
+          widgets: {
+            "c-revenue": kpi("payments.revenue", "sum", "Revenue kept"),
+            "c-payments": kpi("payments.payment_id", "countd", "Agent payments"),
+            "c-agents": kpi("payments.agent_id", "countd", "Paying agents"),
+            "c-mix": { type: "donut-chart", dataMapping: { categoryKey: [{ id: "payments.type" }], valueKey: [{ id: "payments.revenue", aggregation: "sum" }] }, sort: asc("payments.type"), format: titled("Revenue by payment type") },
+            "c-status": {
+              type: "bar-chart-stacked",
+              dataMapping: { categoryKey: [{ id: "payments.type" }], valueKey: [{ id: "payments.payment_id", aggregation: "count" }], legendKey: [{ id: "payments.status" }] },
+              sort: asc("payments.type"),
+              format: titled("Payments by type and status"),
+            },
+            "c-type-filter": { type: "button-filter", dataMapping: { value: [{ id: "payments.type" }] }, format: title("Payment type") },
+            "c-grid": {
+              type: "grid",
+              dataMapping: { cols: [
+                { id: "payments.created_minute" }, { id: "payments.type" }, { id: "payments.item" }, { id: "payments.agent_id" },
+                { id: "payments.status" }, { id: "payments.amount" }, { id: "payments.revenue" }, { id: "payments.rail" },
+              ] },
+              sort: desc("payments.amount"),
+              format: title("Every agent payment"),
+            },
+          },
+          widgetLayout: {
+            "c-revenue": { xTrack: 0, yTrack: 0, xSpan: 8, ySpan: 6 },
+            "c-payments": { xTrack: 8, yTrack: 0, xSpan: 8, ySpan: 6 },
+            "c-agents": { xTrack: 16, yTrack: 0, xSpan: 8, ySpan: 6 },
+            "c-mix": { xTrack: 0, yTrack: 6, xSpan: 9, ySpan: 18 },
+            "c-status": { xTrack: 9, yTrack: 6, xSpan: 15, ySpan: 18 },
+            "c-type-filter": { xTrack: 0, yTrack: 24, xSpan: 24, ySpan: 5 },
+            "c-grid": { xTrack: 0, yTrack: 29, xSpan: 24, ySpan: 16 },
           },
         },
         {
@@ -462,11 +547,12 @@
 
   // --- lifecycle ---------------------------------------------------------------------------
   async function collect() {
-    const [requests, runs] = await Promise.all([
+    const [requests, runs, commerce] = await Promise.all([
       state.ctx.loadRequests().catch(() => null),
       state.ctx.loadRuns().catch(() => []),
+      (state.ctx.loadCommerce ? state.ctx.loadCommerce() : Promise.resolve(null)).catch(() => null),
     ]);
-    return buildSources(state.ctx.getData(), requests, runs);
+    return buildSources(state.ctx.getData(), requests, runs, commerce);
   }
 
   function renderSourceStrip(counts) {

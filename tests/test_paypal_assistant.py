@@ -297,7 +297,7 @@ async def test_ask_uses_gateway_records_and_paypal_mcp_tools(test_settings: Sett
     answer = await assistant.ask("Check the last deposit against PayPal.")
 
     loop = generator.tool_loops[0]
-    assert loop["tools"] == ["list_agenttrust_deposits", "get_order", "get_refund", "list_transactions", "list_disputes", "get_dispute"]
+    assert loop["tools"] == ["list_agenttrust_deposits", "list_agenttrust_orders", "get_order", "get_refund", "list_transactions", "list_disputes", "get_dispute"]
     assert "<publisher_question>" in loop["prompt"]
     listed = json.loads(loop["results"][0]["content"])
     assert listed["deposits"][0]["paypal_order_id"] == ORDER_ID
@@ -438,3 +438,57 @@ async def test_api_reports_mcp_failures(test_settings: Settings) -> None:
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
         resp = await client.post(f"/paypal/deposits/{record.deposit_id}/verify", headers=ADMIN)
         assert resp.status_code == 503 and resp.json()["error"] == "paypal_mcp_unavailable"
+
+
+# --- commerce orders -------------------------------------------------------------------------
+
+
+def _commerce_order(**changes: Any) -> Any:
+    from server.schemas import CommerceOrderRecord, OrderLine, PaymentMode
+
+    base = dict(
+        order_id="ord_abc123", kind="product", agent_id="aria-1", status="PAID", amount="44.99", currency="USD",
+        lines=[
+            OrderLine(ref="ebook-agent-economy", name="E-book", unit_price="12.00", quantity=1, category="DIGITAL_GOODS"),
+            OrderLine(ref="mug-sentinel", name="Mug", unit_price="14.00", quantity=2, category="PHYSICAL_GOODS"),
+        ],
+        shipping="4.99", payment_mode=PaymentMode.PAYPAL_SANDBOX, simulated=False,
+        provider_order_id="ORD-COMMERCE-1", provider_capture_id="CAP-COMMERCE-1", created_at="2026-11-07T10:00:00Z",
+    )
+    base.update(changes)
+    return CommerceOrderRecord(**base)
+
+
+def _paypal_commerce_order(capture_status: str = "COMPLETED", items: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
+    return {
+        "id": "ORD-COMMERCE-1",
+        "status": "COMPLETED",
+        "purchase_units": [{
+            "custom_id": "ord_abc123",
+            "amount": {"currency_code": "USD", "value": "44.99"},
+            "items": items if items is not None else [{"sku": "ebook-agent-economy", "quantity": "1"}, {"sku": "mug-sentinel", "quantity": "2"}],
+            "payments": {"captures": [{"id": "CAP-COMMERCE-1", "status": capture_status}]},
+        }],
+    }
+
+
+@pytest.mark.asyncio
+async def test_verify_commerce_order_matches_paypal_items_and_capture(test_settings: Settings) -> None:
+    raw = FakeMCPRawSession({"get_order": _paypal_commerce_order()})
+    assistant = PayPalAssistant(FakeTextGenerator(), _client(test_settings, raw), _Deposits([]))
+    result = await assistant.verify_order(_commerce_order())
+    assert result.consistent, result.checks
+    assert {c.label for c in result.checks} == {"PayPal order", "Order reference (custom_id)", "Amount", "Items", "Capture"}
+    wrong = await PayPalAssistant(
+        FakeTextGenerator(), _client(test_settings, FakeMCPRawSession({"get_order": _paypal_commerce_order(items=[{"sku": "mug-sentinel", "quantity": "5"}])})), _Deposits([])
+    ).verify_order(_commerce_order())
+    assert not wrong.consistent and next(c for c in wrong.checks if c.label == "Items").status == "mismatch"
+
+
+@pytest.mark.asyncio
+async def test_verify_commerce_order_refuses_mock_payments(test_settings: Settings) -> None:
+    from server.schemas import PaymentMode
+
+    assistant = PayPalAssistant(FakeTextGenerator(), _client(test_settings, FakeMCPRawSession({})), _Deposits([]))
+    with pytest.raises(PayPalAssistantError):
+        await assistant.verify_order(_commerce_order(payment_mode=PaymentMode.MOCK, simulated=True))
