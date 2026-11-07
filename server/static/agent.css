@@ -7,7 +7,7 @@ body.studio-body { height: 100vh; display: flex; flex-direction: column; overflo
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(400px, 34vw);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   max-width: 1680px;
   width: 100%;
   margin: 0 auto;
@@ -129,11 +129,12 @@ body.studio-body { height: 100vh; display: flex; flex-direction: column; overflo
 
 /* Human checkout (PayPal JS SDK v6) */
 .human-buy { margin-bottom: 16px; }
-.human-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.human-item { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
-.human-item strong { font-size: 13.5px; }
+/* PayPal's button has a minimum width, so cards wrap to as many per row as fit. */
+.human-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.human-item { display: grid; gap: 8px; align-content: start; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); min-width: 0; overflow: hidden; }
+.human-item strong { font-size: 13.5px; overflow-wrap: anywhere; }
 .human-item .price { font-family: var(--mono); color: var(--text-secondary); font-size: 12.5px; }
-.human-item paypal-button { display: block; min-height: 40px; }
+.human-item paypal-button { display: block; width: 100%; max-width: 100%; min-height: 40px; }
 .human-result { margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--good-soft); font-size: 13px; white-space: pre-wrap; max-height: 14em; overflow: auto; }
 .human-result[data-tone="bad"] { background: var(--critical-soft); }
 
