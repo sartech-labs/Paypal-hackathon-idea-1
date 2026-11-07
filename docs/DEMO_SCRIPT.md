@@ -2,7 +2,21 @@
 
 The Devpost submission needs a public YouTube video shorter than 3 minutes. The whole demo runs in the browser: the live demo page at `/` and the publisher console at `/console`. No terminal is needed on camera.
 
-**Automated recording.** `scripts/demo_video/make_video.sh ai video-out` records this storyboard in a real browser against the PayPal Sandbox and renders a narrated, captioned MP4 (see [`scripts/demo_video/README.md`](../scripts/demo_video/README.md)). The narration is generated from what each take actually did, and a take that goes off-script is rejected. The submitted video was made this way: 2 min 14 s, GPT-5.5 as both crawler personas, OpenAI `gpt-4o-mini-tts` narration. The manual storyboard below is for recording by hand.
+**The submitted video** is built by [`scripts/explainer_video`](../scripts/explainer_video/README.md): a 2 min 58 s motion-graphic explainer with real screen recordings from the live PayPal Sandbox, word-synced captions, and OpenAI `gpt-4o-mini-tts` narration. It is website-first:
+
+| Time | Section | On screen |
+| :--- | :--- | :--- |
+| 0:00 | AI agents are your website's new visitors | Motion graphics |
+| 0:07 | The website's problems: agents take but don't pay (Cloudflare data), ignore the rules, and good agents can't pay; today it is block them all or get scraped | Motion graphics |
+| 0:39 | AgentTrust, a gateway in front of the site: rules and prices, 402, refundable PayPal deposit, checks on every request, refund or keep | Gateway diagram; honest vs rogue |
+| 1:05 | Live: a rogue scraper hits the gateway (402, deposit, 403 and 429, deposit kept, AI explanation) | Recording of `/crawler` |
+| 1:20 | Selling to agents: pay-per-access, subscriptions, products | Offer cards |
+| 1:27 | The owner's dashboard: deposits, security log, AG Grid tables, revenue by payment type, Verify with PayPal (MCP), AG Studio | Recording of `/console` |
+| 1:57 | A person using an agent: task and budget, deposit, mandate approvals, AI purchase review, deposit back; any AI assistant via the MCP storefront | Recording of `/`; real MCP session |
+| 2:32 | Why it is good for PayPal: every agent payment on PayPal, a package for websites, new merchants and volume | Motion graphics |
+| 2:45 | One gateway, three winners; end card | Motion graphics |
+
+The older automated recorder, `scripts/demo_video/make_video.sh`, records Storyboard B below as a plain screen recording. The storyboards below are for recording by hand.
 
 ## Storyboard A: the agentic era (Agent studio, recommended)
 

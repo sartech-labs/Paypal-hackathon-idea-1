@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AgentTrust explainer engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden;background:#000}
+#root{position:absolute;inset:0;font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.scene{position:absolute;inset:0;display:none;overflow:hidden}
+.scene.on{display:block}
+
+/* themes */
+.paper{--bg:#F3EEE4;--ink:#141414;--muted:#6E6A62;--accent:#E0352B;--card:#FFFDF8;--line:#141414;color:var(--ink);background:var(--bg);
+  background-image:radial-gradient(circle,rgba(20,20,20,.13) 1.6px,transparent 1.7px);background-size:34px 34px}
+.midnight{--bg:#060A1A;--ink:#F2F5FF;--muted:#94A0C4;--accent:#5B8CFF;--accent2:#B06BFF;--good:#3DDC84;--bad:#FF5D5D;--warn:#FFC24B;--card:rgba(255,255,255,.06);--line:rgba(255,255,255,.14);color:var(--ink);background:#060A1A}
+.glow{position:absolute;border-radius:50%;filter:blur(110px);opacity:.5;pointer-events:none}
+.g1{width:900px;height:900px;left:-250px;top:-200px;background:#2F5BFF}.g2{width:800px;height:800px;right:-260px;bottom:-300px;background:#9A3CFF;opacity:.35}
+
+/* HUD */
+.hud{position:absolute;left:84px;right:84px;top:42px;display:flex;justify-content:space-between;align-items:center;font:600 22px 'JetBrains Mono',monospace;letter-spacing:.04em;color:var(--muted)}
+.hud .ctr{display:flex;gap:14px;align-items:center}
+.hud .ctr b{display:inline-grid;place-items:center;min-width:46px;height:46px;padding:0 10px;border-radius:12px;font-size:26px;color:#fff;background:var(--accent)}
+.paper .hud .ctr b{border:3px solid var(--ink);box-shadow:4px 4px 0 var(--ink)}
+.brandmark{display:flex;align-items:center;gap:10px;color:var(--ink);font:700 22px Inter}
+.brandmark svg{width:30px;height:30px}
+
+/* captions */
+.cap{position:absolute;left:84px;right:84px;top:104px;height:220px}
+.page{position:absolute;inset:0;font-weight:700;font-size:62px;line-height:1.12;letter-spacing:-.025em}
+.w{display:inline-block;margin-right:.24em;opacity:0}
+.w.acc{color:var(--accent)}
+.paper .w.acc{font-family:'Instrument Serif',serif;font-style:italic;font-weight:400;font-size:1.16em;letter-spacing:-.005em;line-height:.9}
+.cap.demo .page{font-size:46px;line-height:1.16}
+.cap.demo{top:96px;height:130px}
+
+/* stage */
+.stage{position:absolute;left:84px;right:84px;top:300px;bottom:60px;display:flex;align-items:center;justify-content:center}
+.it{will-change:transform,opacity}
+
+/* sticker cards (paper) / glass cards (midnight) */
+.card{background:var(--card);border-radius:22px;padding:26px 30px}
+.paper .card{border:3px solid var(--ink);box-shadow:8px 8px 0 var(--ink)}
+.midnight .card{border:1px solid var(--line);backdrop-filter:blur(8px);box-shadow:0 20px 60px rgba(0,0,0,.35)}
+
+/* orbit */
+.orbit{position:relative;width:1200px;height:640px}
+.orbit .core{position:absolute;left:50%;top:50%;width:300px;height:300px;margin:-150px 0 0 -150px;border-radius:50%;display:grid;place-items:center;text-align:center;font:800 40px Inter;color:#fff;background:linear-gradient(135deg,#2F5BFF,#9A3CFF);border:4px solid var(--ink);box-shadow:10px 10px 0 var(--ink)}
+.orbit .ring{position:absolute;left:50%;top:50%;width:560px;height:560px;margin:-280px 0 0 -280px;border-radius:50%;border:3px dashed rgba(20,20,20,.35)}
+.chip{position:absolute;padding:16px 26px;border-radius:999px;font:700 30px Inter;background:var(--card);border:3px solid var(--ink);box-shadow:5px 5px 0 var(--ink);white-space:nowrap}
+
+/* bars */
+.bars{width:1500px}
+.bars h3{font:700 34px Inter;margin-bottom:26px}
+.br{display:grid;grid-template-columns:260px 1fr 260px;align-items:center;gap:22px;margin:22px 0}
+.br .l{font:700 34px Inter}
+.br .t{height:58px;border-radius:14px;background:rgba(20,20,20,.08);overflow:hidden;border:3px solid var(--ink)}
+.br .t i{display:block;height:100%;width:0;background:var(--accent)}
+.br .v{font:800 46px 'JetBrains Mono',monospace;text-align:right}
+.src{margin-top:18px;font:500 22px 'JetBrains Mono',monospace;color:var(--muted)}
+
+/* compare */
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:56px;width:1560px}
+.cmp .card h4{font:800 38px Inter;margin-bottom:18px;display:flex;gap:14px;align-items:center}
+.cmp li{list-style:none;font:600 32px Inter;margin:14px 0;display:flex;gap:14px;align-items:flex-start}
+.cmp li .m{flex:none;width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font:800 24px Inter;color:#fff}
+.m.x{background:var(--bad,#E0352B)}.m.ok{background:var(--good,#1F9D55)}
+.stamp{position:absolute;right:28px;top:22px;transform:rotate(8deg);font:800 30px Inter;color:var(--accent);border:4px solid var(--accent);border-radius:10px;padding:4px 14px;letter-spacing:.06em}
+
+/* stack */
+.stack{display:flex;gap:30px;align-items:flex-end}
+.wall{width:430px;height:320px;display:flex;flex-direction:column;justify-content:space-between}
+.wall .ico{font-size:72px}
+.wall b{font:800 36px Inter}
+.wall span{font:500 24px Inter;color:var(--muted)}
+.wall .no{font:800 26px Inter;color:var(--accent)}
+
+/* chat */
+.chat{width:1300px}
+.chat .head{display:flex;gap:16px;align-items:center;font:700 30px Inter;margin-bottom:18px}
+.av{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;font:800 26px Inter;color:#fff;background:linear-gradient(135deg,#2F5BFF,#9A3CFF);flex:none}
+.msg{font:500 31px/1.35 Inter;padding:18px 24px;border-radius:18px;margin:12px 0;max-width:1120px}
+.msg.pg{background:rgba(20,20,20,.06);border:2px dashed rgba(20,20,20,.35)}
+.msg.hidden{background:#FFE3DF;border:3px solid var(--accent);color:#7A1410}
+.msg.ai{background:#141414;color:#fff;margin-left:auto}
+.midnight .msg.ai{background:rgba(91,140,255,.18);color:var(--ink);border:1px solid rgba(91,140,255,.4)}
+.midnight .msg.me{background:rgba(255,255,255,.08)}
+.tag{display:inline-block;font:700 20px 'JetBrains Mono',monospace;letter-spacing:.05em;padding:4px 10px;border-radius:8px;margin-bottom:8px}
+.tag.red{background:var(--accent);color:#fff}
+
+/* reveal */
+.reveal{text-align:center}
+.orb{width:220px;height:220px;margin:0 auto 34px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#9DB8FF,#2F5BFF 45%,#7A2CFF);box-shadow:0 0 120px 30px rgba(91,140,255,.55);display:grid;place-items:center}
+.orb svg{width:120px;height:120px}
+.reveal h2{font:800 120px Inter;letter-spacing:-.04em}
+.reveal p{font:500 40px Inter;color:var(--muted);margin-top:14px}
+.reveal .pp{display:inline-flex;gap:12px;align-items:center;margin-top:30px;padding:14px 26px;border-radius:999px;border:1px solid var(--line);background:var(--card);font:700 30px Inter}
+
+/* offer cards */
+.grid4{display:grid;grid-template-columns:1fr 1fr;gap:28px;width:1500px}
+.offer{display:grid;grid-template-columns:auto 1fr auto;gap:22px;align-items:center}
+.offer .ic{width:76px;height:76px;border-radius:20px;display:grid;place-items:center;font:800 38px Inter;background:rgba(91,140,255,.18);color:var(--accent)}
+.offer b{font:800 36px Inter;display:block}
+.offer span{font:500 24px Inter;color:var(--muted)}
+.offer .api{font:600 20px 'JetBrains Mono',monospace;color:var(--muted);text-align:right}
+.offer .price{font:800 34px 'JetBrains Mono',monospace;text-align:right;color:var(--ink)}
+
+/* flow */
+.flow{display:flex;align-items:center;gap:0}
+.node{width:270px;padding:28px 18px;text-align:center}
+.node .k{font:700 22px 'JetBrains Mono',monospace;color:var(--accent);margin-bottom:10px}
+.node b{font:800 34px Inter;display:block}
+.node span{font:500 22px Inter;color:var(--muted);display:block;margin-top:8px}
+.conn{width:62px;height:6px;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:3px;transform-origin:left center}
+
+/* checklist */
+.checks{width:1300px}
+.checks li{width:100%;list-style:none;display:flex;gap:22px;align-items:center;font:700 40px Inter;margin:20px 0}
+.checks li .m{margin-left:0!important;flex:none;width:56px;height:56px;border-radius:16px;display:grid;place-items:center;font:800 30px Inter;color:#06240F;background:var(--good)}
+.checks li span{font:500 28px Inter;color:var(--muted);margin-left:auto}
+
+/* verdicts */
+.verdicts{display:grid;grid-template-columns:1fr 1fr 1fr;gap:28px;width:1640px}
+.vd{position:relative}
+.vd .vlabel{font:800 26px 'JetBrains Mono',monospace;letter-spacing:.06em;padding:6px 14px;border-radius:10px;display:inline-block;margin-bottom:16px}
+.vd.allow .vlabel{background:rgba(61,220,132,.18);color:var(--good)}
+.vd.ask .vlabel{background:rgba(255,194,75,.18);color:var(--warn)}
+.vd.block .vlabel{background:rgba(255,93,93,.2);color:var(--bad)}
+.vd.block{border-color:rgba(255,93,93,.6)!important;box-shadow:0 0 60px rgba(255,93,93,.25)}
+.vd b{font:800 32px Inter;display:block}
+.vd .amt{font:800 40px 'JetBrains Mono',monospace;margin:10px 0}
+.vd p{font:500 24px/1.35 Inter;color:var(--muted)}
+.vd q{display:block;font:italic 500 23px/1.35 Inter;color:var(--ink);margin-top:12px;quotes:none}
+
+/* recording */
+.rec{position:absolute;left:50%;top:250px;width:1340px;margin-left:-670px;border-radius:18px;overflow:hidden;border:1px solid rgba(255,255,255,.18);box-shadow:0 40px 120px rgba(0,0,0,.6),0 0 0 8px rgba(255,255,255,.03)}
+.rec .bar{height:40px;background:#11172B;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid rgba(255,255,255,.08)}
+.rec .bar i{width:13px;height:13px;border-radius:50%;background:#3a4363}
+.rec .bar .url{margin-left:18px;flex:1;height:26px;border-radius:8px;background:#0A0F20;font:500 16px 'JetBrains Mono',monospace;color:#9AA6C8;display:flex;align-items:center;padding:0 12px}
+.rec img{display:block;width:1340px;height:754px;object-fit:cover;background:#0a0e15}
+.badge-live{position:absolute;right:16px;top:7px;font:700 15px 'JetBrains Mono',monospace;color:#06240F;background:var(--good);padding:4px 10px;border-radius:7px}
+.speed{position:absolute;right:296px;top:196px;font:800 24px 'JetBrains Mono',monospace;background:rgba(6,10,26,.85);color:#fff;border:1px solid rgba(255,255,255,.2);padding:6px 12px;border-radius:10px;z-index:3}
+.callout{position:absolute;z-index:4;padding:14px 22px;border-radius:14px;font:700 26px Inter;background:#FFC24B;color:#1b1300;box-shadow:0 14px 40px rgba(0,0,0,.45)}
+
+/* mcp terminal */
+.term{width:1500px;font:500 26px/1.5 'JetBrains Mono',monospace}
+.term .row{display:grid;grid-template-columns:330px 1fr;gap:20px;padding:14px 0;border-bottom:1px solid var(--line)}
+.term .fn{color:var(--accent)}
+.term .res{color:var(--ink)}
+.term .ok{color:var(--good)}
+
+/* end */
+.end{text-align:center}
+.end h2{font:800 100px Inter;letter-spacing:-.04em}
+.end p{font:500 38px Inter;color:var(--muted);margin-top:16px}
+.end .repo{margin-top:46px;font:600 30px 'JetBrains Mono',monospace;color:var(--ink);padding:16px 28px;border:1px solid var(--line);border-radius:14px;display:inline-block;background:var(--card)}
+.end .pills{display:flex;gap:16px;justify-content:center;margin-top:34px}
+.end .pills span{font:700 26px Inter;padding:12px 22px;border-radius:999px;background:rgba(91,140,255,.15);border:1px solid rgba(91,140,255,.4)}
+.big3{display:flex;gap:30px}
+.big3 .card{width:480px;text-align:left}
+.big3 b{font:800 40px Inter;display:block;margin-bottom:10px}
+.big3 span{font:500 26px Inter;color:var(--muted)}
+.triad{display:flex;flex-direction:column;align-items:center;gap:44px}
+.triad .hub{display:flex;align-items:center;gap:16px;font:800 46px Inter;padding:16px 34px;border-radius:999px;background:var(--card);border:1px solid var(--line)}
+.triad .hub svg{width:48px;height:48px}
+.triad .row3{display:flex;gap:30px}
+.who{width:500px;text-align:left;position:relative;transition:none}
+.who .ico{font-size:58px;line-height:1;margin-bottom:12px}
+.who .n{position:absolute;right:26px;top:22px;font:700 22px 'JetBrains Mono',monospace;color:var(--muted)}
+.who b{font:800 40px Inter;display:block;margin-bottom:8px}
+.who span{font:500 25px/1.35 Inter;color:var(--muted);display:block}
+.who .gets{margin-top:18px;font:700 25px/1.35 Inter;color:var(--ink);padding-top:16px;border-top:1px solid var(--line)}
+.who.dim{filter:grayscale(1) brightness(.6)}
+.who.dim b,.who.dim span,.who.dim .gets{opacity:.45}
+.who.on{border-color:var(--accent)!important;box-shadow:0 0 0 3px var(--accent),0 30px 80px rgba(91,140,255,.25)}
+.paper .who.on{box-shadow:0 0 0 3px var(--accent),8px 8px 0 #111}
+.gw{display:flex;align-items:center;gap:0;width:1720px;justify-content:center}
+.gcol{display:flex;flex-direction:column;gap:16px;width:330px}
+.gh{font:700 22px 'JetBrains Mono',monospace;color:var(--muted);margin-bottom:4px}
+.gagent{font:700 27px Inter;padding:16px 20px;border-radius:14px;background:var(--card);border:1px solid var(--line)}
+.gagent.bad{border-color:rgba(255,93,93,.7);color:#FF8A8A}
+.garrow{width:70px;height:6px;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--accent2));transform-origin:left center}
+.gate{width:820px;border:2px solid var(--accent)!important;box-shadow:0 0 0 6px rgba(91,140,255,.12),0 30px 90px rgba(91,140,255,.25)}
+.gate .gtop{display:flex;align-items:center;gap:14px}
+.gate .gtop svg{width:46px;height:46px}
+.gate .gtop b{font:800 40px Inter}
+.gate .gsub{font:500 22px Inter;color:var(--muted);margin:6px 0 10px}
+.gate ol{list-style:none;padding:0;margin:0}
+.gate li{display:flex;align-items:baseline;gap:16px;font:700 29px/1.25 Inter;padding:11px 0;border-top:1px solid var(--line)}
+.gate li .k{flex:none;width:36px;height:36px;border-radius:10px;display:grid;place-items:center;font:800 20px 'JetBrains Mono',monospace;background:rgba(91,140,255,.2);color:var(--accent);transform:translateY(4px)}
+.gate li em{font:500 21px Inter;color:var(--muted);font-style:normal;margin-left:auto;text-align:right;white-space:nowrap}
+.site{width:290px;text-align:left}
+.site .ico{font-size:52px;margin-bottom:8px}
+.site b{font:800 34px Inter;display:block}
+.site span{font:500 22px/1.35 Inter;color:var(--muted);display:block;margin-top:8px}
+.tiles{width:1600px;text-align:center}
+.tiles h3{font:800 48px Inter;margin-bottom:34px}
+.tiles .tg{display:grid;grid-template-columns:repeat(4,1fr);gap:24px}
+.tile{text-align:left}
+.tile .ico{font-size:44px;margin-bottom:10px}
+.tile b{font:800 40px Inter;display:block;margin-bottom:8px}
+.tile span{font:500 24px/1.35 Inter;color:var(--muted);display:block}
+.tile em{display:block;margin-top:14px;font:600 19px 'JetBrains Mono',monospace;color:var(--accent);font-style:normal}
+.tiles .src{margin-top:26px}
+.headline{width:1300px}
+.headline .meta{font:600 24px 'JetBrains Mono',monospace;color:var(--muted);margin-bottom:12px}
+.headline h3{font:800 52px/1.15 Inter}
+.headline mark{background:linear-gradient(transparent 55%,rgba(224,53,43,.35) 55%);color:inherit;padding:0 4px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const SHIELD = '<svg viewBox="0 0 32 32"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="#5B8CFF"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>';
+const SHIELD_W = '<svg viewBox="0 0 32 32"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="#fff"/><path d="m10 16 4 4 8-8" stroke="#2F5BFF" stroke-width="3" fill="none" stroke-linecap="round"/></svg>';
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const rich = (s) => esc(s).replace(/\*([^*]+)\*/g, '<em style="font-style:inherit;color:var(--accent)">$1</em>');
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const ease = (k) => 1 - Math.pow(1 - k, 3);
+const back = (k) => { const c = 1.6; return 1 + (c + 1) * Math.pow(k - 1, 3) + c * Math.pow(k - 1, 2); };
+const norm = (w) => w.toLowerCase().replace(/[^a-z0-9$%,.]/g, '').replace(/[.,]+$/, '');
+
+let SB = null, SCENES = [];
+
+function cueTimes(scene) {
+  const words = scene.words || [];
+  let from = 0;
+  return (cue, fallback) => {
+    if (cue === undefined || cue === null) return fallback;
+    if (typeof cue === 'number') return cue;
+    const c = norm(cue);
+    for (let i = from; i < words.length; i++) {
+      if (norm(words[i].w).startsWith(c)) { from = i + 1; return words[i].start; }
+    }
+    return fallback;
+  };
+}
+
+// Each animated element: {el, at, dur, kind, ...}
+function anim(list, el, at, kind = 'pop', dur = 0.5, extra = {}) { list.push(Object.assign({ el, at, dur, kind }, extra)); return el; }
+function h(html) { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; }
+
+function buildCaption(scene, root, demo) {
+  const cap = h(`<div class="cap ${demo ? 'demo' : ''}"></div>`);
+  root.append(cap);
+  const words = scene.words || [];
+  const tokens = [];
+  // caption text: tokens; "*" marks accent spans; " / " forces a page break.
+  const raw = (scene.caption || scene.vo).split(/\s+/).filter(Boolean);
+  let acc = false;
+  for (const tok of raw) {
+    if (tok === '/') { tokens.push({ brk: true }); continue; }
+    let t = tok, a = acc;
+    if (t.startsWith('*')) { a = true; t = t.slice(1); acc = true; }
+    let endAcc = false;
+    if (t.endsWith('*') || /\*[.,!?:;]+$/.test(t)) { t = t.replace('*', ''); endAcc = true; }
+    tokens.push({ text: t, acc: a || endAcc && acc });
+    if (endAcc) acc = false;
+  }
+  const real = tokens.filter((t) => !t.brk);
+  // map caption words to spoken word times (same count expected; else proportional)
+  const n = real.length, m = words.length;
+  real.forEach((t, i) => {
+    let st;
+    if (m === n) st = words[i].start;
+    else if (m) st = words[Math.min(m - 1, Math.floor(i * m / n))].start;
+    else st = scene.lead + i * 0.35;
+    t.start = st;
+  });
+  // pages: explicit breaks, else ~ maxChars
+  const maxChars = demo ? 70 : 92;
+  const pages = []; let cur = [], len = 0;
+  for (const t of tokens) {
+    if (t.brk) { if (cur.length) pages.push(cur); cur = []; len = 0; continue; }
+    if (len + t.text.length > maxChars && cur.length) { pages.push(cur); cur = []; len = 0; }
+    cur.push(t); len += t.text.length + 1;
+  }
+  if (cur.length) pages.push(cur);
+  const out = [];
+  pages.forEach((p, pi) => {
+    const pg = h('<div class="page"></div>');
+    p.forEach((t) => { const s = h(`<span class="w${t.acc ? ' acc' : ''}">${esc(t.text)}</span>`); pg.append(s); t.el = s; });
+    cap.append(pg);
+    out.push({ el: pg, start: p[0].start, words: p });
+  });
+  return out;
+}
+
+const V = {}; // visual builders: (v, scene, cue, A) => element
+
+V.orbit = (v, s, cue, A) => {
+  const el = h(`<div class="orbit it"><div class="ring"></div><div class="core">${v.core}</div></div>`);
+  anim(A, el.querySelector('.core'), 0.1, 'pop', 0.6);
+  anim(A, el.querySelector('.ring'), 0.2, 'fade', 0.6);
+  const pos = [[90, 70], [880, 60], [40, 470], [900, 470], [470, 0], [470, 560]];
+  v.chips.forEach((c, i) => {
+    const ch = h(`<div class="chip">${esc(c.text || c)}</div>`);
+    ch.style.left = pos[i][0] + 'px'; ch.style.top = pos[i][1] + 'px';
+    el.append(ch); anim(A, ch, cue(c.cue, 0.5 + i * 0.35), 'pop', 0.45);
+  });
+  return el;
+};
+
+V.bars = (v, s, cue, A) => {
+  const el = h(`<div class="bars it"><h3>${rich(v.title)}</h3></div>`);
+  const max = Math.max(...v.items.map((x) => x.value));
+  v.items.forEach((x, i) => {
+    const r = h(`<div class="br"><div class="l">${esc(x.text)}</div><div class="t"><i></i></div><div class="v" data-n="${x.value}">0${x.suffix || ''}</div></div>`);
+    el.append(r);
+    const at = cue(x.cue, 0.4 + i * 0.5);
+    anim(A, r, at, 'rise', 0.4);
+    anim(A, r.querySelector('i'), at + 0.1, 'grow', 1.1, { to: Math.max(2, Math.log10(x.value) / Math.log10(max) * 100) });
+    anim(A, r.querySelector('.v'), at + 0.1, 'count', 1.1, { to: x.value, suffix: x.suffix || ':1' });
+  });
+  if (v.source) { const sr = h(`<div class="src">${esc(v.source)}</div>`); el.append(sr); anim(A, sr, 0.6, 'fade', 0.6); }
+  anim(A, el.querySelector('h3'), 0.05, 'rise', 0.4);
+  return el;
+};
+
+V.compare = (v, s, cue, A) => {
+  const side = (x, mk) => {
+    const c = h(`<div class="card it" style="position:relative"><h4>${rich(x.title)}</h4><ul></ul>${x.stamp ? `<div class="stamp">${esc(x.stamp)}</div>` : ''}</div>`);
+    x.items.forEach((t, i) => { const li = h(`<li><span class="m ${t.ok ? 'ok' : mk}">${t.ok ? '✓' : '✕'}</span><span>${rich(t.text || t)}</span></li>`); c.querySelector('ul').append(li); anim(A, li, cue(t.cue, 0.6 + i * 0.4), 'rise', 0.35); });
+    return c;
+  };
+  const el = h('<div class="cmp"></div>');
+  const L = side(v.left, v.left.mark || 'x'), R = side(v.right, v.right.mark || 'x');
+  el.append(L, R);
+  anim(A, L, cue(v.left.cue, 0.15), 'pop', 0.5); anim(A, R, cue(v.right.cue, 0.5), 'pop', 0.5);
+  if (v.left.stamp) anim(A, L.querySelector('.stamp'), cue(v.left.stampCue, 1.6), 'slam', 0.35);
+  if (v.right.stamp) anim(A, R.querySelector('.stamp'), cue(v.right.stampCue, 2.2), 'slam', 0.35);
+  return el;
+};
+
+V.walls = (v, s, cue, A) => {
+  const el = h('<div class="stack"></div>');
+  v.items.forEach((x, i) => {
+    const c = h(`<div class="card wall it"><div class="ico">${x.icon}</div><div><b>${esc(x.text)}</b><br><span>${esc(x.sub)}</span></div><div class="no">${esc(x.no || v.no || '✕ agents stuck')}</div></div>`);
+    el.append(c); anim(A, c, cue(x.cue, 0.3 + i * 0.45), 'drop', 0.55);
+    anim(A, c.querySelector('.no'), cue(x.cue, 0.3 + i * 0.45) + 0.5, 'fade', 0.3);
+  });
+  return el;
+};
+
+V.chat = (v, s, cue, A) => {
+  const el = h(`<div class="card chat it"><div class="head"><div class="av">${esc(v.initial || 'A')}</div>${esc(v.name)}</div></div>`);
+  anim(A, el, 0.05, 'pop', 0.5);
+  v.messages.forEach((m, i) => {
+    const b = h(`<div class="msg ${m.kind === 'page' ? 'pg' : m.kind}">${m.tag ? `<span class="tag ${m.tagClass || ''}">${esc(m.tag)}</span><br>` : ''}${rich(m.text)}</div>`);
+    el.append(b); anim(A, b, cue(m.cue, 0.4 + i * 0.8), m.kind === 'ai' ? 'type' : 'rise', m.kind === 'ai' ? 1.2 : 0.4);
+  });
+  return el;
+};
+
+V.reveal = (v, s, cue, A) => {
+  const el = h(`<div class="reveal"><div class="orb it">${SHIELD_W}</div><h2 class="it">${rich(v.title)}</h2><p class="it">${rich(v.sub)}</p>${v.pill ? `<div class="pp it">${esc(v.pill)}</div>` : ''}</div>`);
+  const at = cue(v.cue, 0.1);
+  anim(A, el.querySelector('.orb'), at, 'pop', 0.7); anim(A, el.querySelector('h2'), at + 0.25, 'rise', 0.5);
+  anim(A, el.querySelector('p'), at + 0.6, 'rise', 0.5); if (v.pill) anim(A, el.querySelector('.pp'), cue(v.pillCue, at + 1.0), 'pop', 0.5);
+  return el;
+};
+
+V.offers = (v, s, cue, A) => {
+  const el = h('<div class="grid4"></div>');
+  v.items.forEach((x, i) => {
+    const c = h(`<div class="card offer it"><div class="ic">${x.icon}</div><div><b>${esc(x.title)}</b><span>${esc(x.sub)}</span></div><div><div class="price">${esc(x.price)}</div><div class="api">${esc(x.api)}</div></div></div>`);
+    el.append(c); anim(A, c, cue(x.cue, 0.3 + i * 0.5), 'pop', 0.5);
+  });
+  return el;
+};
+
+V.flow = (v, s, cue, A) => {
+  const el = h('<div class="flow"></div>');
+  v.nodes.forEach((x, i) => {
+    if (i) { const cn = h('<div class="conn"></div>'); el.append(cn); anim(A, cn, cue(x.cue, 0.4 + i * 0.6) - 0.2, 'growx', 0.3); }
+    const c = h(`<div class="card node it"><div class="k">${esc(x.k)}</div><b>${esc(x.text)}</b><span>${esc(x.sub || '')}</span></div>`);
+    el.append(c); anim(A, c, cue(x.cue, 0.4 + i * 0.6), 'pop', 0.45);
+  });
+  return el;
+};
+
+V.checks = (v, s, cue, A) => {
+  const el = h('<ul class="checks"></ul>');
+  v.items.forEach((x, i) => {
+    const li = h(`<li class="it"><span class="m">✓</span>${rich(x.text)}<span>${esc(x.sub || '')}</span></li>`);
+    el.append(li); anim(A, li, cue(x.cue, 0.3 + i * 0.5), 'rise', 0.4);
+  });
+  return el;
+};
+
+V.verdicts = (v, s, cue, A) => {
+  const el = h('<div class="verdicts"></div>');
+  v.items.forEach((x, i) => {
+    const c = h(`<div class="card vd ${x.verdict} it"><span class="vlabel">${x.verdict.toUpperCase()}</span><b>${esc(x.title)}</b><div class="amt">${esc(x.amount)}</div><p>${esc(x.why)}</p>${x.reason ? `<q>Agent: “${esc(x.reason)}”</q>` : ''}</div>`);
+    el.append(c); anim(A, c, cue(x.cue, 0.3 + i * 0.6), x.verdict === 'block' ? 'shake' : 'pop', x.verdict === 'block' ? 0.6 : 0.45);
+  });
+  return el;
+};
+
+V.headline = (v, s, cue, A) => {
+  const el = h(`<div class="card headline it"><div class="meta">${esc(v.meta)}</div><h3>${v.title}</h3></div>`);
+  anim(A, el, cue(v.cue, 0.2), 'drop', 0.55);
+  return el;
+};
+
+V.term = (v, s, cue, A) => {
+  const el = h(`<div class="card term it"></div>`);
+  anim(A, el, 0.05, 'pop', 0.4);
+  v.rows.forEach((r, i) => {
+    const row = h(`<div class="row"><div class="fn">${esc(r.fn)}</div><div class="res">${r.res}</div></div>`);
+    el.append(row); anim(A, row, cue(r.cue, 0.4 + i * 0.9), 'rise', 0.35);
+  });
+  return el;
+};
+
+V.big3 = (v, s, cue, A) => {
+  const el = h('<div class="big3"></div>');
+  v.items.forEach((x, i) => { const c = h(`<div class="card it"><b>${rich(x.title)}</b><span>${esc(x.sub)}</span></div>`); el.append(c); anim(A, c, cue(x.cue, 0.3 + i * 0.5), 'pop', 0.45); });
+  return el;
+};
+
+// Three stakeholders around AgentTrust; `active` (0-2) highlights one and dims the others.
+V.triad = (v, s, cue, A) => {
+  const el = h(`<div class="triad"><div class="hub it">${SHIELD}<span>${rich(v.hub || 'Agent*Trust*')}</span></div><div class="row3"></div></div>`);
+  anim(A, el.querySelector('.hub'), cue(v.hubCue, 0.05), 'pop', 0.5);
+  v.items.forEach((x, i) => {
+    const on = v.active === undefined || v.active === i;
+    const c = h(`<div class="card who it ${on ? 'on' : 'dim'}"><div class="ico">${x.icon}</div><div class="n">${esc(x.n || '0' + (i + 1))}</div><b>${rich(x.title)}</b><span>${esc(x.sub)}</span>${x.gets ? `<div class="gets">${rich(x.gets)}</div>` : ''}</div>`);
+    el.querySelector('.row3').append(c);
+    const at = cue(x.cue, 0.3 + i * 0.45);
+    anim(A, c, at, 'pop', 0.45);
+    if (x.gets) anim(A, c.querySelector('.gets'), cue(x.getsCue, at + 0.4), 'rise', 0.4);
+  });
+  return el;
+};
+
+// The mechanism: agents -> AgentTrust gateway (rules, 402, deposit, checks) -> the website.
+V.gateway = (v, s, cue, A) => {
+  const el = h(`<div class="gw"><div class="gcol agents"><div class="gh">${esc(v.leftTitle || 'Any AI agent')}</div></div><div class="garrow a1"></div><div class="card gate it"><div class="gtop">${SHIELD}<b>${rich(v.title || 'Agent*Trust* gateway')}</b></div><div class="gsub">${esc(v.sub || '')}</div><ol></ol></div><div class="garrow a2"></div><div class="card site it"><div class="ico">🌐</div><b>${esc(v.siteTitle || 'Your website')}</b><span>${esc(v.siteSub || '')}</span></div></div>`);
+  v.agents.forEach((x, i) => { const c = h(`<div class="gagent it ${x.bad ? 'bad' : ''}">${esc(x.text)}</div>`); el.querySelector('.agents').append(c); anim(A, c, cue(x.cue, 0.2 + i * 0.25), 'pop', 0.4); });
+  const gate = el.querySelector('.gate');
+  anim(A, gate, cue(v.cue, 0.4), 'pop', 0.5);
+  anim(A, el.querySelector('.a1'), cue(v.cue, 0.4) + 0.2, 'growx', 0.35);
+  v.steps.forEach((x, i) => { const li = h(`<li class="it"><span class="k">${i + 1}</span>${rich(x.text)}${x.sub ? `<em>${esc(x.sub)}</em>` : ''}</li>`); gate.querySelector('ol').append(li); anim(A, li, cue(x.cue, 0.9 + i * 0.5), 'rise', 0.35); });
+  const site = el.querySelector('.site');
+  const st = cue(v.siteCue, 0.6);
+  anim(A, site, st, 'pop', 0.5); anim(A, el.querySelector('.a2'), st - 0.15, 'growx', 0.3);
+  return el;
+};
+
+// Big money/number tiles (used for the PayPal business case).
+V.tiles = (v, s, cue, A) => {
+  const el = h(`<div class="tiles">${v.title ? `<h3 class="it">${rich(v.title)}</h3>` : ''}<div class="tg"></div>${v.note ? `<div class="src it">${esc(v.note)}</div>` : ''}</div>`);
+  if (v.title) anim(A, el.querySelector('h3'), 0.05, 'rise', 0.4);
+  if (v.note) anim(A, el.querySelector('.src'), 0.8, 'fade', 0.5);
+  v.items.forEach((x, i) => {
+    const c = h(`<div class="card tile it"><div class="ico">${x.icon || ''}</div><b>${rich(x.value)}</b><span>${esc(x.label)}</span>${x.api ? `<em>${esc(x.api)}</em>` : ''}</div>`);
+    el.querySelector('.tg').append(c); anim(A, c, cue(x.cue, 0.3 + i * 0.4), 'pop', 0.45);
+  });
+  return el;
+};
+
+V.end = (v, s, cue, A) => {
+  const el = h(`<div class="end"><div class="orb it">${SHIELD_W}</div><h2 class="it">${rich(v.title)}</h2><p class="it">${rich(v.sub)}</p><div class="pills it">${v.pills.map((p) => `<span>${esc(p)}</span>`).join('')}</div><div class="repo it">${esc(v.repo)}</div></div>`);
+  ['.orb', 'h2', 'p', '.pills', '.repo'].forEach((q, i) => anim(A, el.querySelector(q), 0.1 + i * 0.35, i ? 'rise' : 'pop', 0.5));
+  return el;
+};
+
+function buildScene(scene, idx) {
+  const theme = scene.theme;
+  const root = h(`<div class="scene ${theme}"></div>`);
+  if (theme === 'midnight') root.append(h('<div class="glow g1"></div>'), h('<div class="glow g2"></div>'));
+  const hud = h(`<div class="hud"><div>${esc(scene.chapter || '')}</div><div class="ctr"></div></div>`);
+  if (scene.counter) hud.querySelector('.ctr').innerHTML = `${esc(scene.counter.label)} <b>${esc(scene.counter.value)}</b>`;
+  else hud.querySelector('.ctr').innerHTML = `<span class="brandmark">${SHIELD}AgentTrust</span>`;
+  root.append(hud);
+  const A = [];
+  const cue = cueTimes(scene);
+  const v = scene.visual || {};
+  const isRec = v.type === 'rec';
+  const pages = scene.caption === '' ? [] : buildCaption(scene, root, isRec);
+  if (isRec) {
+    const rec = h(`<div class="rec"><div class="bar"><i></i><i></i><i></i><div class="url">${esc(v.url)}</div><span class="badge-live">${esc(v.badge || 'LIVE · PayPal Sandbox')}</span></div><img></div>`);
+    root.append(rec);
+    if (v.speed && v.speed > 1.4) root.append(h(`<div class="speed">⏩ ${(Math.round(v.speed * 2) / 2).toString()}× speed</div>`));
+    (v.callouts || []).forEach((c) => { const co = h(`<div class="callout">${rich(c.text)}</div>`); co.style.left = c.x + 'px'; co.style.top = c.y + 'px'; root.append(co); anim(A, co, cue(c.cue, c.at ?? 1), 'pop', 0.4, { until: c.until }); });
+    anim(A, rec, 0, 'fade', 0.35);
+    scene._img = rec.querySelector('img');
+  } else if (V[v.type]) {
+    const stage = h('<div class="stage"></div>');
+    stage.append(V[v.type](v, scene, cue, A));
+    root.append(stage);
+  }
+  document.getElementById('root').append(root);
+  return { scene, root, A, pages, idx, img: scene._img || null };
+}
+
+function applyAnim(a, t) {
+  const k = clamp((t - a.at) / a.dur);
+  const el = a.el;
+  if (a.until !== undefined && t > a.until) { el.style.opacity = 0; return; }
+  switch (a.kind) {
+    case 'pop': { const e = back(k); el.style.opacity = clamp(k * 2.2); el.style.transform = `scale(${0.82 + 0.18 * e})`; break; }
+    case 'rise': { const e = ease(k); el.style.opacity = e; el.style.transform = `translateY(${(1 - e) * 34}px)`; break; }
+    case 'drop': { const e = back(k); el.style.opacity = clamp(k * 2.5); el.style.transform = `translateY(${(1 - e) * -60}px) rotate(${(1 - e) * -4}deg)`; break; }
+    case 'fade': el.style.opacity = ease(k); break;
+    case 'slam': { const e = back(k); el.style.opacity = clamp(k * 3); el.style.transform = `rotate(8deg) scale(${2.2 - 1.2 * e})`; break; }
+    case 'shake': { const e = back(k); el.style.opacity = clamp(k * 2.2); const sh = k < 1 ? Math.sin(k * 40) * (1 - k) * 14 : 0; el.style.transform = `scale(${0.85 + 0.15 * e}) translateX(${sh}px)`; break; }
+    case 'grow': el.style.width = (ease(k) * a.to) + '%'; break;
+    case 'growx': el.style.transform = `scaleX(${ease(k)})`; break;
+    case 'count': { const val = Math.round(ease(k) * a.to); el.textContent = val.toLocaleString('en-US') + a.suffix; break; }
+    case 'type': { el.style.opacity = k > 0 ? 1 : 0; if (!el.dataset.full) el.dataset.full = el.innerHTML; const full = el.dataset.full; const txt = el.textContent; break; }
+  }
+}
+
+function renderScene(S, t) {
+  for (const a of S.A) applyAnim(a, t);
+  // captions: current page = last page whose start <= t (first page always shown)
+  let cur = 0;
+  S.pages.forEach((p, i) => { if (t >= p.start - 0.05) cur = i; });
+  S.pages.forEach((p, i) => {
+    p.el.style.display = i === cur ? 'block' : 'none';
+    if (i === cur) p.words.forEach((w) => { const k = clamp((t - w.start + 0.05) / 0.16); w.el.style.opacity = 0.0 + k; w.el.style.transform = `translateY(${(1 - ease(k)) * 14}px)`; });
+  });
+}
+
+window.__load = (storyboard) => {
+  SB = storyboard;
+  // The HUD counter carries over from the previous scene until a scene sets it (null clears it).
+  let ctr = null;
+  SB.scenes.forEach((s) => { if ('counter' in s) ctr = s.counter; else s.counter = ctr; });
+  SCENES = SB.scenes.map(buildScene);
+  return SCENES.length;
+};
+
+// t: global seconds. frameSrc: optional image URL for recording scenes.
+window.__render = (sceneIndex, localT, frameSrc) => new Promise((resolve) => {
+  SCENES.forEach((S, i) => S.root.classList.toggle('on', i === sceneIndex));
+  const S = SCENES[sceneIndex];
+  renderScene(S, localT);
+  if (S.img && frameSrc) {
+    if (S.img.getAttribute('src') === frameSrc) return resolve(true);
+    S.img.onload = () => resolve(true);
+    S.img.onerror = () => resolve(false);
+    S.img.src = frameSrc;
+  } else resolve(true);
+});
+</script>
+</body>
+</html>

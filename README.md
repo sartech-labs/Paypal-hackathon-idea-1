@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/sartech-labs/Paypal-hackathon-idea-1/actions/workflows/ci.yml/badge.svg)](https://github.com/sartech-labs/Paypal-hackathon-idea-1/actions/workflows/ci.yml) ![PayPal Sandbox](https://img.shields.io/badge/PayPal-Sandbox-003087) ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
-AI agents are starting to browse, read, subscribe, and shop for people. Most websites can only block them or get scraped by them. **AgentTrust is a PayPal-backed layer that lets a website do business with AI agents instead.**
+AI agents are starting to browse, read, subscribe, and shop for people. Most websites can only block them or get scraped by them. **AgentTrust is a gateway in front of a website that lets it do business with AI agents instead, backed by PayPal.** The site itself does not change. Every agent comes through the gateway, which publishes the site's rules and prices, answers with `HTTP 402`, takes a refundable PayPal deposit, checks every request (`403` for forbidden paths, `429` for bursts), and at the end releases the deposit to an agent that followed the rules or keeps it from one that did not. The owner sees every deposit, blocked request, session, and sale in an AG Grid dashboard.
 
 A site publishes one machine-readable offer catalog (`/.well-known/agent-commerce.json`) and answers unpaid requests with `HTTP 402 Payment Required` and a way to pay. An agent can then pay it through PayPal in four ways:
 
@@ -15,7 +15,7 @@ A site publishes one machine-readable offer catalog (`/.well-known/agent-commerc
 
 On the user's side, **one AI agent** (Aria) has a toolbox that covers all four. Give it a task in plain English and a **spending mandate** (budget, allowed payment types, an approval threshold) and it decides what to pay for. The mandate is enforced in code, not left to the model. Anything above the threshold, and every recurring charge, goes to the person for approval.
 
-**Positioning in one line:** HTTP 402 schemes such as Cloudflare Pay Per Crawl and x402 charge agents for *access*. AgentTrust gives websites the whole agent-commerce surface (refundable deposits that price *misbehaviour*, one-off access, subscriptions, and checkout) on PayPal's rails, which already carry buyer and merchant identity, disputes, and refunds.
+**Positioning in one line:** HTTP 402 schemes such as Cloudflare Pay Per Crawl and x402 charge agents for *access*. AgentTrust gives websites the whole agent-commerce surface (refundable deposits that price *misbehaviour*, one-off access, subscriptions, and checkout) on PayPal's rails, which already carry buyer and merchant identity, disputes, and refunds. It complements PayPal's own Agent Ready, which handles agent *checkout*: AgentTrust governs and monetises agent *traffic* to a site. See [how it fits with existing work](#how-agenttrust-fits-with-existing-work).
 
 > **Prototype notice.** Built for the PayPal AI Hackathon 2026. Payments run in mock mode or against the PayPal **Sandbox** with test funds; no real money moves.
 
@@ -70,6 +70,28 @@ The pressure is already visible. Cloudflare's 2025 data put AI crawling far ahea
 **Who it is for.** Publishers and online merchants who want revenue from AI agents instead of scraping costs, and people who want an agent that can pay for things without being able to overspend or be talked into purchases.
 
 AgentTrust answers all three with PayPal: a machine-readable catalog of offers, `402` responses that say how to pay, payments the site verifies with PayPal before granting anything, and a refundable deposit that makes honest crawling free and abusive crawling expensive.
+
+### How AgentTrust fits with existing work
+
+| | What it does | What AgentTrust adds |
+| :--- | :--- | :--- |
+| [Cloudflare Pay Per Crawl](https://siliconangle.com/2025/07/01/ai-game-changer-cloudflare-lets-websites-charge-ai-developers-content-access/) | `402` with a flat price per crawl; Cloudflare is merchant of record | Prices *behaviour* with a refundable deposit, enforces the rules on each request, and also sells items, subscriptions, and products, on PayPal |
+| [TollBit](https://pressgazette.co.uk/platforms/publishers-urged-to-embrace-future-where-bot-readers-provide-majority-of-revenue/) | Bot paywall for publishers, priced per 1,000 pages | As above; agents can also buy and subscribe, not only read |
+| [x402](https://www.spark.money/research/x402-protocol-ai-agent-payments) | Open `402` standard paid in stablecoins | `402` on PayPal: cards and wallets, buyer protection, refunds, disputes |
+| [RSL](https://rslstandard.org/press/rsl-standard) | Licensing terms declared in `robots.txt`; compliance is voluntary | Terms enforced by the gateway, with money at stake |
+| [PayPal Agent Ready and Store Sync](https://newsroom.paypal-corp.com/2025-10-28-PayPal-Launches-Agentic-Commerce-Services-to-Power-AI-Driven-Shopping) | PayPal merchants accept payments from AI agents; catalogs listed in AI apps | Complementary. Agent Ready handles checkout; AgentTrust governs agent traffic (crawling rules, deposits, pay-per-access) and could use Agent Ready as the agent's payment method |
+| Agent identity: [Visa Trusted Agent Protocol](https://hapakenya.com/2025/10/23/visa-launches-trusted-agent-protocol-to-secure-ai-driven-commerce/), [Skyfire KYAPay](https://www.businesswire.com/news/home/20251218520399/en/Skyfire-Demonstrates-Secure-Agentic-Commerce-Purchase-Using-the-KYAPay-Protocol-and-Visa-Intelligent-Commerce) | Verify who an agent is and what it may spend | Not built yet: on the [roadmap](#17-limitations-and-roadmap). AgentTrust would accept such identities to lower deposits for known agents |
+
+### What PayPal gets
+
+Every agent payment, whether deposit, refund, item sale, subscription, or product order, runs on PayPal's APIs (Orders v2, Payments v2, Subscriptions v1, Webhooks). AgentTrust is a package PayPal could offer any website: agent-ready for *content and traffic*, not only checkout. That brings PayPal merchants it does not reach today (publishers and content sites that cannot sell to agents) and volume from a customer that cannot pay at all today. This is the business case, not a shipped PayPal product: no PayPal pricing or merchant package exists in this code.
+
+### Deposit economics
+
+- A deposit covers a whole crawl session (up to `MAX_REQUESTS_PER_SESSION` requests), not a single page.
+- **Authorization mode** (`DEPOSIT_SETTLEMENT=authorization`, run end to end against the live Sandbox) makes the deposit a PayPal hold. It is voided for an honest agent, so nothing is captured and no money moves. It is captured only when an agent breaks the rules. This is the production setting.
+- **Refund mode** (the default, simpler to demo) captures the deposit and refunds it. PayPal charges a fixed fee per captured transaction that is large next to a $1 deposit, and the fees on a refunded payment are not fully returned ([PayPal fees](https://www.paypal.com/us/business/paypal-business-fees)), so in this mode the publisher absorbs that cost for every honest agent.
+- Pay-per-access items are small payments too. Pricing them well depends on the merchant's PayPal rate; PayPal offers a micropayments rate on request.
 
 ## 2. How it works
 
@@ -534,7 +556,8 @@ The suite (289 tests) needs no network access or credentials; PayPal, OpenAI, Cl
 
 **Known limitations**
 
-- A bearer token proves continuity of a paid session, not the real-world identity of an agent.
+- A bearer token proves continuity of a paid session, not the real-world identity of an agent. A determined operator can start over with a new crawler ID and a new deposit, so the deposit deters abuse in proportion to its price; it does not identify repeat offenders.
+- The gateway runs as its own FastAPI app in front of the demo site. There is no drop-in package (reverse proxy, CDN or edge worker, CMS plugin) for an existing website yet.
 - JSON persistence and in-memory rate limits support a single process only.
 - Autonomous agent payment exists only in the Sandbox (`PAYPAL_SANDBOX_AUTOPAY`, PayPal's test card). In production a buyer would approve once and save a PayPal payment method; that is not built yet, so without autopay a person approves each deposit.
 - The buyer-approval checkout path has been run against the live Sandbox up to the approval step (the demo shows the real checkout URL); completing it needs a Sandbox buyer login, so the capture after approval is covered by mocked-transport tests.
@@ -548,12 +571,13 @@ The suite (289 tests) needs no network access or credentials; PayPal, OpenAI, Cl
 
 **Roadmap**
 
-1. One-time buyer consent with a saved PayPal payment method (vaulting) and the spending mandate stored with it, so agents pay autonomously outside the Sandbox too.
+1. One-time buyer consent with a saved PayPal payment method (vaulting), or PayPal Agent Ready, with the spending mandate stored with it, so agents pay autonomously outside the Sandbox too.
 2. Mandates issued and verified by PayPal (budget, merchant allow-list, approval rules) instead of the agent's own toolbox, so merchants can trust them.
 3. Reputation-based deposits: a compliance history lowers an agent's future deposit.
 4. Optional pay-per-page fee captured from the hold, so publishers also earn from good crawlers.
-5. PostgreSQL and Redis for multi-instance deployments; PayPal webhooks for settlement events.
-6. Cryptographic agent identity (HTTP Message Signatures, RFC 9421) bound to deposit sessions.
+5. PostgreSQL and Redis for multi-instance deployments.
+6. Cryptographic agent identity (HTTP Message Signatures, RFC 9421, the basis of Cloudflare's Web Bot Auth) bound to deposit sessions, so deposits can rise for unknown agents and fall for known ones.
+7. Drop-in deployment: the gateway packaged as a reverse proxy and an edge worker that sits in front of an existing site without code changes.
 
 ## AI tools used
 
