@@ -246,6 +246,19 @@ body[data-mode="rogue"] .chat-head .chat-sub::after { content: " · watching a s
 .composer [hidden] { display: none; }
 .composer-hint { margin: 6px 4px 0; font-size: 11.5px; color: var(--text-muted); text-align: center; }
 
+/* --- What SARA does: one line above the chat ------------------------------------------------ */
+.sara-strip {
+  flex: none; display: flex; align-items: center; gap: 16px;
+  padding: 9px 20px; border-bottom: 1px solid var(--border);
+  background: var(--accent-soft); color: var(--text-primary); font-size: 13.5px;
+}
+.sara-strip[hidden] { display: none; }
+.sara-strip p { margin: 0; flex: 1; min-width: 0; line-height: 1.45; }
+.strip-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.strip-btn { font-size: 12.5px; padding: 6px 12px; border-radius: 999px; white-space: nowrap; }
+.strip-close { width: 28px; height: 28px; padding: 0; border-radius: 8px; font-size: 18px; line-height: 1; background: transparent; border-color: transparent; color: var(--text-secondary); }
+.strip-close:hover { color: var(--text-primary); }
+
 /* --- Responsive: stack, chat first ---------------------------------------------------------- */
 @media (max-width: 980px) {
   body.studio-body { height: auto; overflow: visible; display: block; }
@@ -254,6 +267,9 @@ body[data-mode="rogue"] .chat-head .chat-sub::after { content: " · watching a s
   .split:not(.details-open) .chat { height: calc(100vh - 110px); }
   .details-chip span:last-child { display: none; }
   .explain { overflow: visible; padding: 18px 16px 28px; }
+  .sara-strip { flex-wrap: wrap; padding: 10px 16px; gap: 8px 12px; }
+  .sara-strip p { flex-basis: calc(100% - 40px); }
+  .strip-actions { flex: 1; justify-content: space-between; }
 }
 @media (max-width: 560px) {
   .explain-intro h1 { font-size: 22px; }

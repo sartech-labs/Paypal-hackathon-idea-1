@@ -898,12 +898,28 @@
     $("details-toggle").addEventListener("click", () => setDetails(!$("split").classList.contains("details-open")));
   }
 
+  // --- the SARA strip: what the gateway does, and the quickest way to see it ----------------------------------
+  function initStrip() {
+    const strip = $("sara-strip");
+    if (store.get("localStorage", "sara-strip") === "hidden") strip.hidden = true;
+    $("strip-close").addEventListener("click", () => {
+      strip.hidden = true;
+      store.set("localStorage", "sara-strip", "hidden");
+    });
+    $("strip-rogue").addEventListener("click", () => {
+      if (state.runId) return;
+      setDetails(true);
+      sendRogue();
+    });
+  }
+
   // --- wiring ------------------------------------------------------------------------------------------------
   function init() {
     initTheme();
     initAdmin();
     initLimits();
     initDetails();
+    initStrip();
     renderWallet(null);
     renderSuggestions();
     $("composer").addEventListener("submit", (event) => { event.preventDefault(); send(); });
