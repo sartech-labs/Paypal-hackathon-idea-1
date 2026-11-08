@@ -1,7 +1,8 @@
-"""Record the crawler demo page: a rogue scraper hits the SARA gateway live.
+"""Record the rule-breaking scraper scenario in Agent studio: a rogue bot hits the SARA gateway live.
 
 It pays the refundable deposit through PayPal, then tries /admin, private data, a path trick and
-request bursts; the gateway answers 403/429, and the deposit is kept at the end.
+request bursts; the gateway answers 403/429, and the website's verdict (deposit kept, with the AI
+explanation) appears in the chat. The left side follows the steps.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import shutil
 import time
 from pathlib import Path
 
+import httpx
 from playwright.sync_api import sync_playwright
 
 W, H = 1536, 864
@@ -21,10 +23,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:8011")
     ap.add_argument("--out", default="video-out/rec_crawler")
-    ap.add_argument("--persona", default="rogue")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    api = httpx.Client(base_url=args.base, timeout=30)
     marks: dict[str, float] = {}
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
@@ -37,27 +39,35 @@ def main() -> None:
             marks[name] = round(time.monotonic() - t0, 2)
             print(f"{marks[name]:7.2f}s  {name}", flush=True)
 
-        page.goto(f"{args.base}/crawler", wait_until="networkidle")
+        def left_to(selector: str, block: str = "center") -> None:
+            page.evaluate("([s, b]) => { const n = document.querySelector(s); if (n) n.scrollIntoView({block: b, behavior: 'smooth'}); }", [selector, block])
+
+        page.goto(f"{args.base}/", wait_until="networkidle")
         page.wait_for_timeout(2000)
         mark("loaded")
-        page.locator("label.choice", has=page.locator(f"input[name='persona'][value='{args.persona}']")).click()
-        page.wait_for_timeout(900)
-        page.locator("label", has=page.locator("#driver-scripted")).first.click()
-        page.wait_for_timeout(900)
+        page.locator(".suggestion.rogue-pick").scroll_into_view_if_needed()
+        page.wait_for_timeout(1200)
         mark("configured")
-        page.locator("#start-button").click()
+        page.locator(".suggestion.rogue-pick").click()
         mark("started")
-        # Keep the live timeline in view while it runs.
-        page.evaluate("document.querySelector('#run-title').scrollIntoView({block: 'start', behavior: 'smooth'})")
-        page.wait_for_function("document.querySelector('#run-state')?.dataset.state && !['running','starting','waiting'].includes(document.querySelector('#run-state').dataset.state) && document.querySelector('#run-state').dataset.state !== 'idle'", timeout=180000)
+        run_id = None
+        for _ in range(100):
+            run_id = api.get("/demo/config").json().get("active_run_id")
+            if run_id:
+                break
+            time.sleep(0.2)
+        while True:
+            snap = api.get(f"/demo/runs/{run_id}").json()
+            if snap["status"] in ("completed", "failed", "cancelled"):
+                break
+            left_to('.stage[data-state="active"]')
+            time.sleep(0.5)
+        page.wait_for_selector(".msg.sara", timeout=60000)
         mark("finished")
-        page.wait_for_timeout(2500)
-        summary = page.locator("#run-summary")
-        if summary.count() and summary.is_visible():
-            summary.scroll_into_view_if_needed()
+        left_to('.stage[data-stage="settle"]')
         page.wait_for_timeout(5000)
         mark("summary")
-        page.evaluate("window.scrollBy({top: 700, behavior: 'smooth'})")
+        left_to(".wallet", "start")
         page.wait_for_timeout(4000)
         mark("end")
         video_path = page.video.path()

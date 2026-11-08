@@ -24,8 +24,8 @@ RANGES = {
     "wd4": ("rec_owner", ("verify_clicked", -0.3), ("verify_result", 5.2)),
     "wd5": ("rec_owner", ("analytics", -1.35), ("end", 0.0)),
     "ud1": ("rec", ("studio_loaded", 1.0), ("run_started", 1.2)),
-    "ud2": ("rec", ("call:fetch_page:0", -0.5), ("call:complete_session:0", 1.6)),
-    "ud3": ("rec", ("call:buy_access:0", -1.7), ("decision_approved:product", 2.6)),
+    "ud2": ("rec", ("call:fetch_page:0", -0.5), ("call:buy_access:0", -0.8)),
+    "ud3": ("rec", ("call:buy_access:0", -0.8), ("decision_declined:subscription", 2.4)),
 }
 
 
