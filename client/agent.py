@@ -48,6 +48,26 @@ class Persona:
     label: str
     system: str
     task: str
+    # Earlier turns of a chat, oldest first: ("user" | "assistant", text). The task is the newest message.
+    history: tuple[tuple[str, str], ...] = ()
+
+
+def opening_messages(persona: Persona) -> list[dict[str, Any]]:
+    """The conversation so far plus the new message, as alternating user/assistant turns.
+
+    Turns of the same role in a row are merged and a leading assistant turn is dropped, so
+    every provider accepts the list.
+    """
+    turns: list[dict[str, Any]] = []
+    for role, text in (*persona.history, ("user", persona.task)):
+        text = (text or "").strip()
+        if role not in ("user", "assistant") or not text or (not turns and role == "assistant"):
+            continue
+        if turns and turns[-1]["role"] == role:
+            turns[-1]["content"] += "\n\n" + text
+        else:
+            turns.append({"role": role, "content": text})
+    return turns
 
 
 COMPLIANT = Persona(
@@ -155,7 +175,7 @@ class ClaudeDriver:
         self._model = model
         self._effort = effort
         self._refusal_fallback = refusal_fallback
-        self.messages: list[dict[str, Any]] = [{"role": "user", "content": persona.task}]
+        self.messages: list[dict[str, Any]] = opening_messages(persona)
 
     def _request(self) -> dict[str, Any]:
         request: dict[str, Any] = {
@@ -257,7 +277,7 @@ class OpenAIDriver:
         self._persona = persona
         self._model = model
         self._effort = OPENAI_EFFORT.get(effort, "medium")
-        self.items: list[Any] = [{"role": "user", "content": persona.task}]
+        self.items: list[Any] = opening_messages(persona)
         self.tools = [
             {
                 "type": "function",

@@ -267,3 +267,12 @@ body[data-mode="rogue"] .chat-head .chat-sub::after { content: " · watching a s
   .msg, .step, .stage-live, .stage-list li { animation: none; }
   .run-state .pulse, .stage[data-state="active"] .stage-dot, .worklog .spinner, .step.pending .step-icon { animation: none; }
 }
+
+/* Typing indicator while Aria thinks, before any visible step */
+.msg.typing .bubble { display: flex; align-items: center; min-height: 26px; }
+.dots { display: inline-flex; gap: 5px; }
+.dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); animation: dot 1.2s infinite ease-in-out; }
+.dots i:nth-child(2) { animation-delay: 0.15s; }
+.dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes dot { 0%, 60%, 100% { opacity: 0.3; transform: none; } 30% { opacity: 1; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .dots i { animation: none; } }

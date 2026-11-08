@@ -784,6 +784,15 @@ class PayPalAssistantStatus(BaseModel):
 # --- Live demo runs ------------------------------------------------------------------------
 
 
+class ChatTurn(BaseModel):
+    """One earlier message in the person's chat with the assistant."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["user", "assistant"]
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
 class DemoRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -792,7 +801,9 @@ class DemoRunRequest(BaseModel):
     # Content access tier for the compliant crawler (validated against the site's tiers).
     tier: Optional[str] = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{1,31}$")
     # Personal agent (persona "assistant"): the person's request and spending mandate.
-    task: Optional[str] = Field(default=None, min_length=8, max_length=800)
+    task: Optional[str] = Field(default=None, min_length=1, max_length=800)
+    # The chat so far (oldest first), so follow-up messages keep their context.
+    history: list[ChatTurn] = Field(default_factory=list, max_length=20)
     budget: Optional[str] = Field(default=None, pattern=r"^\d{1,4}(\.\d{1,2})?$")
     approval_threshold: Optional[str] = Field(default=None, pattern=r"^\d{1,4}(\.\d{1,2})?$")
     allowed_types: Optional[list[Literal["deposit", "access", "subscription", "product"]]] = Field(default=None, max_length=4)

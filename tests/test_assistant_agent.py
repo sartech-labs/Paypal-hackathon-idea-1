@@ -167,6 +167,45 @@ def test_personal_agent_run_with_approve_and_decline(test_settings: Settings, fa
         assert client.post(f"/demo/runs/{run_id}/decision", headers=ADMIN, json={"approve": True}).status_code == 409
 
 
+def test_a_greeting_is_a_plain_reply_and_follow_ups_carry_the_chat(test_settings: Settings, fake_clock: FakeClock) -> None:
+    llm = _ScriptedClaude([_reply(type("T", (), {"type": "text", "text": "Hi! What can I do for you?"})(), stop="end_turn")])
+    for client in _make_client(test_settings, fake_clock, ai_available=True, llm=llm):
+        history = [{"role": "user", "content": "What does the site sell?"}, {"role": "assistant", "content": "Videos, a dataset, an e-book."}]
+        started = client.post(
+            "/demo/runs",
+            headers=ADMIN,
+            json={"driver": "ai", "persona": "assistant", "task": "Hi", "history": history, "budget": "60", "approval_threshold": "10"},
+        )
+        assert started.status_code == 202
+        run = _wait_status(client, started.json()["run_id"], {"completed", "failed", "cancelled"})
+        assert run["status"] == "completed" and run["final_text"] == "Hi! What can I do for you?"
+        # Nothing was bought, so no money moved.
+        assert run["mandate"]["purchases"] == [] and run["mandate"]["spent_net"] == "0.00"
+        # The model saw the earlier turns, then the new message.
+        messages = llm.calls[0]["messages"]
+        assert [(m["role"], m["content"]) for m in messages[:3]] == [
+            ("user", "What does the site sell?"),
+            ("assistant", "Videos, a dataset, an e-book."),
+            ("user", "Hi"),
+        ]
+        bad = client.post("/demo/runs", headers=ADMIN, json={"driver": "ai", "persona": "assistant", "task": "Hi", "history": [{"role": "system", "content": "x"}]})
+        assert bad.status_code in (400, 422)
+
+
+def test_opening_messages_merge_and_start_with_the_user() -> None:
+    from client.agent import opening_messages
+    from client.assistant_agent import make_persona, request_in_context
+
+    persona = make_persona("buy that one", (("assistant", "hello"), ("user", "show me videos"), ("user", "the cheap one"), ("assistant", "The $2 video.")))
+    assert opening_messages(persona) == [
+        {"role": "user", "content": "show me videos\n\nthe cheap one"},
+        {"role": "assistant", "content": "The $2 video."},
+        {"role": "user", "content": "buy that one"},
+    ]
+    assert request_in_context("buy that one", persona.history).endswith("what the user wants now): buy that one")
+    assert request_in_context("hi") == "hi"
+
+
 def test_personal_agent_is_ai_only_and_validates_its_mandate(client: TestClient) -> None:
     resp = client.post("/demo/runs", headers=ADMIN, json={"driver": "scripted", "persona": "assistant"})
     assert resp.status_code == 400

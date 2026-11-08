@@ -304,6 +304,7 @@ async def start_run(
             ai_available=generator.is_available(),
             tier=tier,
             task=payload.task,
+            history=[(turn.role, turn.content) for turn in payload.history],
             budget=payload.budget,
             approval_threshold=payload.approval_threshold,
             allowed_types=list(payload.allowed_types) if payload.allowed_types else None,

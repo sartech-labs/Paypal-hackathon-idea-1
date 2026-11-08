@@ -25,7 +25,7 @@ import httpx
 
 from client.agent import PERSONAS, CrawlerAgent
 from client.agent_tools import GatewayToolbox
-from client.assistant_agent import DEFAULT_TASK, make_persona
+from client.assistant_agent import DEFAULT_TASK, make_persona, request_in_context
 from client.assistant_tools import ASSISTANT_TOOL_DEFINITIONS, PAYMENT_TYPES, AssistantToolbox, SpendingMandate
 from client.purchase_critic import Critic, build_llm_critic
 from client.scripted_agent import ScriptedDriver
@@ -108,6 +108,7 @@ class DemoRun:
     usage: dict[str, Any] = field(default_factory=dict)
     pricing_tier: Optional[dict[str, Any]] = None
     task: Optional[str] = None
+    history: tuple[tuple[str, str], ...] = ()
     mandate_config: Optional[dict[str, Any]] = None
     pending_decision: Optional[dict[str, Any]] = None
     mandate: Optional[dict[str, Any]] = None
@@ -256,6 +257,7 @@ class DemoRunner:
         ai_available: bool = False,
         tier: Optional[PricingTier] = None,
         task: Optional[str] = None,
+        history: Optional[list[tuple[str, str]]] = None,
         budget: Optional[str] = None,
         approval_threshold: Optional[str] = None,
         allowed_types: Optional[list[str]] = None,
@@ -310,6 +312,7 @@ class DemoRunner:
                 persona=persona,
                 crawler_id=f"aria-{secrets.token_hex(4)}" if persona == "assistant" else f"{prefix}-{persona}-{secrets.token_hex(3)}",
                 task=task if persona == "assistant" else None,
+                history=tuple(history or ()) if persona == "assistant" else (),
                 mandate_config=mandate_config,
                 provider=provider,
                 model=ai_model if driver == "ai" else "scripted",
@@ -472,7 +475,7 @@ class DemoRunner:
 
     def _execute_assistant(self, run: DemoRun, base_url: str, effort: str) -> None:
         config = run.mandate_config or {}
-        persona = make_persona(run.task or DEFAULT_TASK)
+        persona = make_persona(run.task or DEFAULT_TASK, run.history)
         mandate = SpendingMandate(
             budget=Decimal(config.get("budget", DEFAULT_BUDGET)),
             approval_threshold=Decimal(config.get("approval_threshold", DEFAULT_APPROVAL_THRESHOLD)),
@@ -506,7 +509,7 @@ class DemoRunner:
                     agent_id=run.crawler_id,
                     mandate=mandate,
                     sleep=self._sleep or (lambda seconds: run.cancel_event.wait(seconds)),
-                    task=persona.task,
+                    task=request_in_context(persona.task, run.history),
                     critic=self._critic_factory(llm, run.provider, run.model or "") if config.get("purchase_review", True) else None,
                     on_review=lambda review: run.emit("purchase_review", review),
                 )

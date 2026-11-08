@@ -15,6 +15,9 @@
     log: null, steps: null, pending: new Map(), stepCount: 0, startedAt: null,
     askKey: null, askCard: null, paypalCard: null, approvalUrl: null,
     crawl: { pages: 0, blocked: 0, waits: 0 }, lastMandate: null,
+    // The conversation so far (sent with each message so follow-ups keep their context) and
+    // what this chat has spent, so the budget covers the whole chat, not each message.
+    history: [], chatSpent: 0, currentTask: null, typing: null,
   };
 
   const store = {
@@ -105,9 +108,10 @@
   function updateLimitsSummary() {
     const { budget, threshold } = limits();
     const short = (n) => money(n).replace(/\.00(?!\d)/, "");
-    const m = state.mode !== "rogue" && state.lastMandate;
-    $("limits-summary").textContent = m && m.budget
-      ? `${money(m.spent_net)} spent of ${short(m.budget)}`
+    const running = state.mode !== "rogue" && state.runId && state.lastMandate ? Number(state.lastMandate.spent_net) || 0 : 0;
+    const spent = state.chatSpent + running;
+    $("limits-summary").textContent = spent > 0
+      ? `${money(spent)} spent of ${short(budget)}`
       : `${short(budget)} budget · asks above ${short(threshold)}`;
   }
   function initLimits() {
@@ -211,6 +215,7 @@
     if (force || near) box.scrollTop = box.scrollHeight;
   }
   function addMessage(role, content, extraClass) {
+    if (role === "ai") hideTyping();
     const bubble = el("div", { class: "bubble" }, content);
     const who = role === "ai" && state.runId && state.mode === "rogue" ? " rogue" : "";
     const item = el("li", { class: `msg ${role}${who}${extraClass ? ` ${extraClass}` : ""}` }, bubble);
@@ -220,6 +225,7 @@
   }
   function ensureLog() {
     if (state.log) return state.steps;
+    hideTyping();
     const summaryText = el("span", { text: "Working…" });
     const steps = el("ol", { class: `steps${$("show-thinking").checked ? " with-thinking" : ""}` });
     const details = el("details", { class: "worklog", open: true }, el("summary", {}, el("span", { class: "spinner", "aria-hidden": "true" }), summaryText), steps);
@@ -228,6 +234,16 @@
     state.log = details;
     state.steps = steps;
     return steps;
+  }
+  function showTyping() {
+    hideTyping();
+    state.typing = el("li", { class: "msg ai typing", "aria-label": "Aria is typing" }, el("div", { class: "bubble" }, el("span", { class: "dots", "aria-hidden": "true" }, el("i"), el("i"), el("i"))));
+    $("messages").append(state.typing);
+    scrollChat(true);
+  }
+  function hideTyping() {
+    if (state.typing) state.typing.remove();
+    state.typing = null;
   }
   function closeLog(label) {
     if (!state.log) return;
@@ -527,14 +543,15 @@
     const task = $("task").value.trim();
     if (state.runId) return;
     if (state.blocked) { showBanner(state.blocked); return; }
-    if (task.length < 8) { $("task").focus(); return; }
+    if (!task) { $("task").focus(); return; }
     const { budget, threshold } = limits();
+    const left = Math.max(0.01, budget - state.chatSpent);
     hideBanner();
     $("start-button").disabled = true;
     try {
       const body = {
-        driver: "ai", persona: "assistant", task,
-        budget: budget.toFixed(2), approval_threshold: threshold.toFixed(2),
+        driver: "ai", persona: "assistant", task, history: state.history,
+        budget: left.toFixed(2), approval_threshold: threshold.toFixed(2),
         purchase_review: $("purchase-review").checked, save_payment_method: $("save-payment-method").checked,
       };
       const run = await api("/demo/runs", { method: "POST", body: JSON.stringify(body) });
@@ -573,7 +590,8 @@
     state.askCard = null;
     state.paypalCard = null;
     addMessage("user", task);
-    ensureLog();
+    state.currentTask = task;
+    showTyping();
   }
 
   function attach(runId, initial, resumed, task) {
@@ -680,7 +698,15 @@
     clearTimeout(state.timer);
     const secs = Math.max(1, Math.round((Date.now() - state.startedAt) / 1000));
     const took = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+    if (state.log && state.stepCount === 0) {
+      // Nothing was done (a greeting, a question): no "worked for" box.
+      const item = state.log.closest(".msg");
+      state.log = null;
+      state.steps = null;
+      if (item) item.remove();
+    }
     closeLog(`Worked for ${took} · ${state.stepCount} steps`);
+    hideTyping();
     if (state.askCard) resolveAsk("timeout");
     if (snap) {
       setRunState(snap.status);
@@ -691,17 +717,31 @@
         const answer = renderMarkdown(snap.final_text);
         answer.classList.add("answer");
         const m = snap.mandate || {};
-        const foot = m.budget ? el("p", { class: "answer-foot", text: `Spent ${money(m.spent_net)} net of returned deposits · ${money(m.remaining)} of ${money(m.budget)} left. Every payment and its PayPal reference is under “Behind the scenes”.` }) : null;
+        const paid = (m.purchases || []).length > 0 || Number(m.spent_net) > 0;
+        state.chatSpent += Number(m.spent_net) || 0;
+        const { budget } = limits();
+        const foot = paid ? el("p", { class: "answer-foot", text: `Spent ${money(m.spent_net)} net of returned deposits · ${money(Math.max(0, budget - state.chatSpent))} of ${money(budget)} left in this chat. Every payment and its PayPal reference is under “Behind the scenes”.` }) : null;
         addMessage("ai", [answer, foot]);
+        remember(state.currentTask, snap.final_text);
       } else if (snap.status === "cancelled") {
+        state.chatSpent += Number((snap.mandate || {}).spent_net) || 0;
+        remember(state.currentTask, null);
         addMessage("ai", el("p", { text: "Stopped. Anything I already paid for is listed under “Behind the scenes”; an open deposit is settled automatically." }), "note");
       } else {
         addMessage("ai", el("p", { text: `Sorry, I couldn't finish: ${snap.error || "the run failed."}` }), "note");
       }
     }
+    updateLimitsSummary();
     syncComposer();
     loadConfig();
     $("task").focus({ preventScroll: true });
+  }
+
+  function remember(task, reply) {
+    if (state.mode === "rogue" || !task || task === "…") return;
+    state.history.push({ role: "user", content: task.slice(0, 4000) });
+    if (reply) state.history.push({ role: "assistant", content: String(reply).slice(0, 4000) });
+    state.history = state.history.slice(-20);
   }
 
   function renderVerdict(snap) {
@@ -833,6 +873,9 @@
     renderSuggestions();
     resetFlow();
     state.lastMandate = null;
+    state.history = [];
+    state.chatSpent = 0;
+    updateLimitsSummary();
     state.mode = "assistant";
     document.body.dataset.mode = "assistant";
     renderWallet(null);
