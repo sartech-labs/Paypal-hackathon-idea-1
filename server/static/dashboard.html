@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SARA publisher console</title>
-  <meta name="description" content="Publisher console for SARA: AI crawler sessions, refundable PayPal deposits, policy violations, analytics, and AI explanations.">
+  <title>Owner dashboard · SARA demo</title>
+  <meta name="description" content="The website owner's dashboard in SARA: AI crawler sessions, refundable PayPal deposits, policy violations, analytics, and AI explanations.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%234c8dff'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <script>
     /* Apply the saved theme before first paint (dark by default). */
@@ -23,14 +23,16 @@
 <body>
 <header class="appbar">
   <div class="appbar-inner">
-    <a class="brand-mark" href="/console" aria-label="SARA publisher console">
+    <a class="brand-mark" href="/console" aria-label="SARA owner dashboard">
       <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="var(--accent)"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
       <span class="brand-name">SARA</span>
-      <span class="brand-tag">Publisher</span>
+      <span class="brand-tag">Demo</span>
     </a>
-    <nav class="nav" aria-label="Pages">
-      <a href="/">Agent studio</a>
-      <a href="/console" aria-current="page">Publisher console</a>
+    <nav class="nav" aria-label="Demo tabs">
+      <a href="/">Agent</a>
+      <a href="/website">Website</a>
+      <a href="/console" aria-current="page">Owner dashboard</a>
+      <a href="/about">About this demo</a>
     </nav>
     <div class="controls">
       <div class="admin-menu">
@@ -74,7 +76,7 @@
   <main class="console-main">
     <div class="page-head">
       <div>
-        <p class="eyebrow">Publisher console</p>
+        <p class="eyebrow">Owner dashboard · Sentinel News</p>
         <h1 id="page-title">Overview</h1>
         <p id="site-line">Refundable PayPal deposits that keep AI crawlers accountable</p>
         <div class="badges" id="badges" aria-label="Gateway configuration"></div>
@@ -92,7 +94,7 @@
         <span class="section-icon" aria-hidden="true">▶</span>
         <div>
           <h2>No crawler activity yet</h2>
-          <p class="card-sub">Ask the assistant in Agent studio to read the news, or watch the rule-breaking scraper there. Its deposit, requests, and violations appear here within a few seconds.</p>
+          <p class="card-sub">Ask the assistant in the Agent tab to read the news, or watch the rule-breaking scraper there. Its deposit, requests, and violations appear here within a few seconds.</p>
         </div>
         <a class="button-link primary" href="/">Open the agent studio</a>
       </section>
@@ -309,7 +311,9 @@
 
     <footer>
       SARA gateway ·
-      <a href="/">Agent studio</a> ·
+      <a href="/">Agent</a> ·
+      <a href="/website">Website</a> ·
+      <a href="/about">About this demo</a> ·
       <a href="/docs">API docs</a> ·
       <a href="/policies">Policy JSON</a> ·
       <a href="/robots.txt">robots.txt</a> ·

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sentinel News</title>
+  <meta name="description" content="Sentinel News, the demo website protected by SARA: what people see in a browser, and what they can buy with PayPal.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23b3261e'/%3E%3Ctext x='16' y='23' font-family='Georgia,serif' font-size='20' font-weight='700' fill='white' text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E">
+  <script>
+    try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
+  </script>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="stylesheet" href="/static/pages.css">
+  <script src="/static/shell.js" defer></script>
+  <script src="/static/site.js" defer></script>
+</head>
+<body class="site-body">
+<header class="appbar">
+  <div class="appbar-inner">
+    <a class="brand-mark" href="/" aria-label="SARA demo">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="var(--accent)"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+      <span class="brand-name">SARA</span>
+      <span class="brand-tag">Demo</span>
+    </a>
+    <nav class="nav" aria-label="Demo tabs">
+      <a href="/">Agent</a>
+      <a href="/website" aria-current="page">Website</a>
+      <a href="/console">Owner dashboard</a>
+      <a href="/about">About this demo</a>
+    </nav>
+    <div class="controls">
+      <button type="button" id="theme-toggle" aria-label="Switch color theme">Theme: dark</button>
+    </div>
+  </div>
+</header>
+
+<div class="site">
+  <header class="masthead">
+    <p class="mast-date" id="mast-date"></p>
+    <h1 class="mast-title">Sentinel News</h1>
+    <p class="mast-tag">Independent reporting on the agent economy</p>
+    <nav class="sections" aria-label="Sections">
+      <a href="#top-stories">Top stories</a>
+      <a href="#reports">Reports</a>
+      <a href="#shop">Shop</a>
+      <a href="#subscribe">Sentinel Pro</a>
+      <a href="#for-agents">For AI agents</a>
+    </nav>
+  </header>
+
+  <main class="site-main">
+    <p class="site-error" id="site-error" role="status" hidden></p>
+
+    <section id="top-stories" aria-labelledby="top-title">
+      <h2 class="section-label" id="top-title">Top stories</h2>
+      <div class="lead" id="lead"></div>
+      <div class="story-grid" id="stories"></div>
+    </section>
+
+    <section id="reports" aria-labelledby="reports-title">
+      <h2 class="section-label" id="reports-title">Reports and analysis</h2>
+      <div class="report-grid" id="report-grid"></div>
+    </section>
+
+    <section id="shop" aria-labelledby="shop-title">
+      <h2 class="section-label" id="shop-title">Shop</h2>
+      <p class="section-sub">Pay with PayPal. The same items are on sale to AI agents, at the same prices, through SARA.</p>
+      <h3 class="shelf-title">Briefings and data</h3>
+      <div class="shelf" id="shelf-access"></div>
+      <h3 class="shelf-title">Store</h3>
+      <div class="shelf" id="shelf-products"></div>
+      <div class="buy-result" id="buy-result" role="status" hidden></div>
+      <p class="paypal-note" id="paypal-note" hidden>PayPal buttons appear when the demo runs on the PayPal Sandbox.</p>
+    </section>
+
+    <section id="subscribe" class="pro" aria-labelledby="pro-title">
+      <div>
+        <p class="pro-kicker">Membership</p>
+        <h2 id="pro-title">Sentinel Pro</h2>
+        <p id="pro-desc">Unlimited members-only analysis, the daily agent-economy feed, and the weekly deep dive.</p>
+        <ul class="pro-benefits" id="pro-benefits"></ul>
+      </div>
+      <div class="pro-buy">
+        <p class="pro-price" id="pro-price">-</p>
+        <button type="button" class="pp-sub" id="subscribe-button">Subscribe with <b>PayPal</b></button>
+        <button type="button" class="ghost" id="confirm-sub" hidden>I approved it at PayPal</button>
+        <p class="pro-hint" id="sub-hint">You approve the subscription at PayPal. Cancel any time.</p>
+      </div>
+    </section>
+
+    <aside id="for-agents" class="agents-box" aria-labelledby="agents-title">
+      <div class="agents-icon" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="currentColor"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg></div>
+      <div>
+        <h2 id="agents-title">AI agents and crawlers: this site is protected by SARA</h2>
+        <p>People read Sentinel News for free. Automated agents go through SARA, which tells them the rules and holds a refundable PayPal deposit while they read. Follow the rules and the deposit is returned. Break them and Sentinel News keeps it.</p>
+        <ul class="agents-facts" id="agents-facts"></ul>
+        <p class="agents-links">
+          <a href="/robots.txt">robots.txt</a> ·
+          <a href="/.well-known/agent-commerce.json">Offer catalog for agents</a> ·
+          <a href="/policies">Rules (JSON)</a>
+        </p>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="site-foot">
+    <p>Sentinel News is a fictional publisher made for this demo. Its articles are synthetic. Payments run on the PayPal Sandbox, so no real money moves.</p>
+  </footer>
+</div>
+</body>
+</html>

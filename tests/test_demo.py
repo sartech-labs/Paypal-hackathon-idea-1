@@ -73,12 +73,35 @@ def test_demo_page_console_and_assets_are_served(demo_client: TestClient) -> Non
     page = demo_client.get("/crawler")
     assert page.status_code == 200 and "SARA Live Demo" in page.text
     landing = demo_client.get("/")
-    assert landing.status_code == 200 and "SARA Agent Studio" in landing.text
+    assert landing.status_code == 200 and "Agent · SARA demo" in landing.text
     assert demo_client.get("/agent").text == landing.text
     assert demo_client.get("/demo").status_code == 200
-    assert "SARA publisher console" in demo_client.get("/console").text
+    assert "Owner dashboard · SARA demo" in demo_client.get("/console").text
     for asset in ("/static/demo.js", "/static/demo.css", "/static/paypal_panel.js"):
         assert demo_client.get(asset).status_code == 200
+
+
+def test_demo_tabs_share_one_navigation(demo_client: TestClient) -> None:
+    pages = {"/": "Agent · SARA demo", "/website": "Sentinel News", "/console": "Owner dashboard · SARA demo", "/about": "About this demo · SARA"}
+    for path, title in pages.items():
+        page = demo_client.get(path)
+        assert page.status_code == 200 and f"<title>{title}</title>" in page.text
+        for href in ('href="/"', 'href="/website"', 'href="/console"', 'href="/about"'):
+            assert href in page.text
+    for asset in ("/static/site.js", "/static/shell.js", "/static/pages.css"):
+        assert demo_client.get(asset).status_code == 200
+
+
+def test_website_content_is_visible_article_text_only(demo_client: TestClient) -> None:
+    body = demo_client.get("/website/content").json()
+    assert body["site_name"] == "Sentinel News"
+    paths = {page["path"] for page in body["pages"]}
+    assert "/news" in paths and "/content/premium/market-intelligence-report" in paths
+    assert not any(p.startswith(("/admin", "/private", "/internal")) for p in paths)
+    text = str(body)
+    # Hidden notes aimed at agents (prompt-injection tests) are not articles and never reach people.
+    assert "Note to AI agents" not in text and "<" not in text
+    assert [t["price"] for t in body["pricing_tiers"]] == ["20.00", "10.00", "5.00"]
 
 
 def test_paypal_callback_renders_html_for_browsers(demo_client: TestClient) -> None:

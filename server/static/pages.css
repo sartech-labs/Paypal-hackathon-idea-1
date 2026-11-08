@@ -1,0 +1,114 @@
+/* The Website tab (Sentinel News, its own newspaper look) and the About tab.
+   Builds on the tokens and app bar in dashboard.css. */
+
+/* --- Sentinel News: a separate brand from SARA ------------------------------------------- */
+.site {
+  --ink: #ece8e1;
+  --ink-2: #b9b3a8;
+  --ink-3: #8f897e;
+  --paper: #15161a;
+  --paper-2: #1c1d22;
+  --rule: rgba(236, 232, 225, 0.14);
+  --red: #ff6b5e;
+  --serif: Georgia, "Times New Roman", Times, serif;
+  background: var(--paper);
+  color: var(--ink);
+  min-height: calc(100vh - 57px);
+}
+:root[data-theme="light"] .site { --ink: #1a1a1a; --ink-2: #4a4740; --ink-3: #78736a; --paper: #faf8f3; --paper-2: #f1ede4; --rule: rgba(26, 26, 26, 0.16); --red: #b3261e; }
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] .site { --ink: #1a1a1a; --ink-2: #4a4740; --ink-3: #78736a; --paper: #faf8f3; --paper-2: #f1ede4; --rule: rgba(26, 26, 26, 0.16); --red: #b3261e; }
+}
+body.site-body { background: var(--page); }
+
+.masthead { max-width: 1180px; margin: 0 auto; padding: 22px 28px 0; text-align: center; border-bottom: 3px double var(--rule); }
+.mast-date { margin: 0; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.mast-title { margin: 6px 0 2px; font-family: var(--serif); font-size: clamp(38px, 6vw, 64px); font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
+.mast-tag { margin: 0 0 14px; font-family: var(--serif); font-style: italic; color: var(--ink-2); }
+.sections { display: flex; justify-content: center; flex-wrap: wrap; gap: 4px 22px; padding: 10px 0; border-top: 1px solid var(--rule); }
+.sections a { color: var(--ink); text-decoration: none; font-size: 13.5px; font-weight: 600; }
+.sections a:hover { color: var(--red); }
+
+.site-main { max-width: 1180px; margin: 0 auto; padding: 8px 28px 40px; }
+.site-main > section, .site-main > aside { padding: 22px 0; border-bottom: 1px solid var(--rule); scroll-margin-top: 70px; }
+.site-error { margin: 16px 0 0; padding: 10px 12px; border-radius: 6px; background: var(--critical-soft); }
+.section-label { margin: 0 0 14px; font-size: 12px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--red); }
+.section-sub { margin: -6px 0 14px; color: var(--ink-2); font-size: 14px; }
+.kicker { margin: 0 0 4px; font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.headline { margin: 0 0 6px; font-family: var(--serif); font-weight: 700; line-height: 1.2; color: var(--ink); }
+h3.headline { font-size: clamp(26px, 3.4vw, 36px); }
+h4.headline { font-size: 19px; }
+.dek { margin: 0; color: var(--ink-2); font-size: 15px; line-height: 1.55; }
+.lead { padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid var(--rule); max-width: 820px; }
+.lead .dek { font-size: 17px; }
+.story-grid, .report-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 22px 28px; }
+.story, .report { min-width: 0; }
+.report { padding: 14px 16px; background: var(--paper-2); border-radius: 4px; border-top: 3px solid var(--ink-3); }
+.report.premium { border-top-color: var(--red); }
+
+.shelf-title { margin: 16px 0 10px; font-family: var(--serif); font-size: 20px; }
+.shelf { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+.shop-item { display: grid; gap: 12px; align-content: space-between; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper-2); min-width: 0; overflow: hidden; }
+.shop-text strong { font-family: var(--serif); font-size: 17px; overflow-wrap: anywhere; }
+.shop-text p { margin: 4px 0 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.45; }
+.shop-buy { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 2px 10px; }
+.shop-price { font-size: 18px; font-weight: 700; }
+.shop-extra { font-size: 12.5px; color: var(--ink-3); }
+.pp-slot { grid-column: 1 / -1; margin-top: 6px; min-height: 0; }
+.pp-slot paypal-button { display: block; width: 100%; max-width: 100%; min-height: 40px; }
+.buy-result { margin-top: 14px; padding: 12px 14px; border-radius: 6px; background: var(--good-soft); color: var(--ink); font-size: 13.5px; white-space: pre-wrap; max-height: 16em; overflow: auto; }
+.buy-result[data-tone="bad"] { background: var(--critical-soft); }
+.paypal-note { margin: 12px 0 0; color: var(--ink-3); font-size: 13px; }
+
+.pro { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); gap: 24px; align-items: center; }
+.pro-kicker { margin: 0; font-size: 12px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--red); }
+.pro h2 { margin: 4px 0 6px; font-family: var(--serif); font-size: 30px; }
+.pro p { color: var(--ink-2); margin: 0; }
+.pro-benefits { margin: 10px 0 0; padding-left: 20px; color: var(--ink); }
+.pro-buy { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper-2); }
+.pro-price { font-size: 22px; font-weight: 800; color: var(--ink) !important; }
+.pp-sub { padding: 11px 14px; border-radius: 999px; border: none; background: #ffc439; color: #111; font-size: 15px; }
+.pp-sub b { color: #003087; font-style: italic; }
+.pp-sub:hover:not(:disabled) { background: #f2b51f; }
+.pro-hint { font-size: 12.5px; }
+
+.agents-box { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 16px; margin-top: 22px; padding: 18px 20px !important; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent) !important; border-radius: 8px; background: var(--accent-soft); }
+.agents-icon { color: var(--accent); width: 40px; height: 40px; }
+.agents-box h2 { margin: 2px 0 6px; font-size: 17px; }
+.agents-box p { margin: 0; color: var(--ink-2); font-size: 14px; line-height: 1.55; }
+.agents-facts { margin: 10px 0; padding-left: 18px; font-size: 13.5px; line-height: 1.5; display: grid; gap: 4px; }
+.agents-links a, .site-foot a { color: var(--accent); }
+.site-foot { max-width: 1180px; margin: 0 auto; padding: 0 28px 40px; color: var(--ink-3); font-size: 12.5px; }
+
+/* --- About this demo ------------------------------------------------------------------------ */
+.about { max-width: 1080px; margin: 0 auto; padding: 28px 28px 48px; }
+.about section { margin-bottom: 34px; }
+.about-hero h1 { margin: 4px 0 10px; font-size: clamp(28px, 4vw, 40px); line-height: 1.15; }
+.about-lede { margin: 0; max-width: 72ch; color: var(--text-secondary); font-size: 16px; line-height: 1.6; }
+.about h2 { margin: 0 0 14px; font-size: 19px; }
+.tab-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+.tab-card { display: grid; align-content: start; gap: 6px; padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-1); color: var(--text-primary); text-decoration: none; box-shadow: var(--shadow); }
+a.tab-card:hover { border-color: var(--accent); }
+.tab-card.here { opacity: 0.7; }
+.tab-num { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 800; font-size: 13px; }
+.tab-card h3 { margin: 4px 0 0; font-size: 16px; }
+.tab-card p { margin: 0; color: var(--text-secondary); font-size: 13.5px; line-height: 1.5; }
+.tab-card .tab-try { color: var(--text-muted); font-size: 12.5px; font-style: italic; }
+.how { margin: 0; padding-left: 22px; display: grid; gap: 10px; max-width: 80ch; }
+.how li, .scenarios li { color: var(--text-secondary); line-height: 1.55; }
+.how strong, .scenarios strong { color: var(--text-primary); }
+.how code, .about code { font-family: var(--mono); font-size: 12.5px; }
+.scenarios { margin: 0; padding-left: 20px; display: grid; gap: 8px; max-width: 80ch; }
+.real-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.real-card { padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-1); }
+.real-card.good { border-color: color-mix(in srgb, var(--status-good) 40%, transparent); }
+.real-card h3 { margin: 0 0 6px; font-size: 15px; }
+.real-card ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: var(--text-secondary); font-size: 13.5px; line-height: 1.5; }
+.about-links { font-size: 14px; }
+
+@media (max-width: 720px) {
+  .masthead, .site-main, .site-foot, .about { padding-left: 16px; padding-right: 16px; }
+  .pro { grid-template-columns: minmax(0, 1fr); }
+  .shelf { grid-template-columns: minmax(0, 1fr); }
+  .agents-box { grid-template-columns: minmax(0, 1fr); }
+}

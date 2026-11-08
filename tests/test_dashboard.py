@@ -39,7 +39,7 @@ async def test_dashboard_page_and_assets_are_served(async_client: httpx.AsyncCli
     page = await async_client.get("/console")
     assert page.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
-    assert "SARA publisher console" in page.text
+    assert "Owner dashboard · SARA demo" in page.text
     assert "ag-grid-community@36.2.0" in page.text
     assert 'integrity="sha384-' in page.text
     assert (await async_client.get("/dashboard")).status_code == 200

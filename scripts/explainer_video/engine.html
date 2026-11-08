@@ -140,6 +140,12 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:#000}
 .rec .bar i{width:13px;height:13px;border-radius:50%;background:#3a4363}
 .rec .bar .url{margin-left:18px;flex:1;height:26px;border-radius:8px;background:#0A0F20;font:500 16px 'JetBrains Mono',monospace;color:#9AA6C8;display:flex;align-items:center;padding:0 12px}
 .rec img{display:block;width:1340px;height:754px;object-fit:cover;background:#0a0e15}
+/* real screen recordings: the whole Chrome window from this PC, no mock browser bar */
+.rec.device{top:246px;width:1440px;margin-left:-720px;overflow:visible;border:none;border-radius:0;box-shadow:none}
+.rec.device .view{width:1440px;height:774px;border-radius:12px;border:1px solid rgba(255,255,255,.22);box-shadow:0 40px 120px rgba(0,0,0,.6)}
+.rec.device .cam,.rec.device img{width:1440px;height:774px}
+.badge-device{position:absolute;right:22px;top:-19px;z-index:3;font:700 17px Inter;color:#06240F;background:var(--good);padding:7px 14px;border-radius:999px;box-shadow:0 8px 24px rgba(0,0,0,.4);white-space:nowrap}
+.badge-device::before{content:"";display:inline-block;width:9px;height:9px;border-radius:50%;background:#e5322d;margin-right:9px;vertical-align:1px}
 .badge-live{position:absolute;right:16px;top:7px;font:700 15px 'JetBrains Mono',monospace;color:#06240F;background:var(--good);padding:4px 10px;border-radius:7px}
 .speed{position:absolute;right:296px;top:196px;font:800 24px 'JetBrains Mono',monospace;background:rgba(6,10,26,.85);color:#fff;border:1px solid rgba(255,255,255,.2);padding:6px 12px;border-radius:10px;z-index:3}
 .callout{position:absolute;z-index:4;padding:14px 22px;border-radius:14px;font:700 26px Inter;background:#FFC24B;color:#1b1300;box-shadow:0 14px 40px rgba(0,0,0,.45)}
@@ -639,7 +645,9 @@ function buildScene(scene, idx) {
   const pages = scene.caption === '' ? [] : buildCaption(scene, root, isRec);
   if (isRec) {
     const patch = v.brandPatch === false || !(SB && SB.brandPatch) ? '' : `<div class="bpatch">${SHIELD}<b>${esc(SB.brand)}</b></div>`;
-    const rec = h(`<div class="rec"><div class="bar"><i></i><i></i><i></i><div class="url">${esc(v.url)}</div><span class="badge-live">${esc(v.badge || 'LIVE · PayPal Sandbox')}</span></div><div class="view"><div class="cam"><img>${patch}</div></div></div>`);
+    const rec = v.device
+      ? h(`<div class="rec device"><div class="view"><div class="cam"><img></div></div><span class="badge-device">${esc(v.badge || 'Screen recording on this PC · Chrome · PayPal Sandbox')}</span></div>`)
+      : h(`<div class="rec"><div class="bar"><i></i><i></i><i></i><div class="url">${esc(v.url)}</div><span class="badge-live">${esc(v.badge || 'LIVE · PayPal Sandbox')}</span></div><div class="view"><div class="cam"><img>${patch}</div></div></div>`);
     root.append(rec);
     scene._cam = rec.querySelector('.cam');
     // Camera keyframes: {cue|at, x, y (0-1 focus point in the frame), s (zoom), d (move seconds)}.
@@ -662,7 +670,8 @@ function renderCamera(S, t) {
   const sc = S.scene, dur = sc.dur || 6;
   if (sc._cam) {
     let cur = { x: 0.5, y: 0.5, s: 1 };
-    const keys = sc._camKeys.length ? sc._camKeys : [{ at: 0, x: 0.5, y: 0.45, s: 1.045, d: dur }];
+    // App recordings drift in slowly; real-screen clips stay whole (the browser's own bar is the proof).
+    const keys = sc._camKeys.length ? sc._camKeys : [{ at: 0, x: 0.5, y: 0.45, s: (sc.visual || {}).device ? 1 : 1.045, d: dur }];
     for (const kf of keys) {
       if (t <= kf.at) break;
       const k = ease(clamp((t - kf.at) / kf.d));

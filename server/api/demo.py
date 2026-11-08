@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import html
 import ipaddress
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -69,6 +71,56 @@ async def agent_studio_page() -> FileResponse:
 @router.get("/agent", include_in_schema=False)
 async def agent_studio_alias() -> FileResponse:
     return FileResponse(STATIC_DIR / "agent.html", media_type="text/html")
+
+
+@router.get("/website", include_in_schema=False)
+async def website_page() -> FileResponse:
+    """The protected website itself (Sentinel News), as a person sees it in a browser."""
+    return FileResponse(STATIC_DIR / "site.html", media_type="text/html")
+
+
+@router.get("/about", include_in_schema=False)
+async def about_page() -> FileResponse:
+    """What the demo is: the people involved, the tabs, and what is real."""
+    return FileResponse(STATIC_DIR / "about.html", media_type="text/html")
+
+
+_ARTICLE = re.compile(r"<article>\s*<h2>(.*?)</h2>\s*<p>(.*?)</p>\s*</article>", re.S)
+_HEADING = re.compile(r"<h1>(.*?)</h1>", re.S)
+_TAGS = re.compile(r"<[^>]+>")
+
+
+def _text(fragment: str) -> str:
+    return html.unescape(_TAGS.sub("", fragment)).strip()
+
+
+@router.get("/website/content", summary="The website's public pages as articles, for the human-facing site")
+async def website_content(container: AppContainer = Depends(get_container)) -> dict:
+    """Headlines and article text from the site's allowed pages, for people reading in a browser.
+
+    Only visible article text is returned: hidden notes in the pages (the prompt-injection traps
+    that test agents) are not articles, so they never reach the human page. Disallowed pages are
+    never part of the allowed set.
+    """
+    pages = []
+    for page in container.content_service.allowed_pages():
+        articles = [{"headline": _text(h), "text": _text(p)} for h, p in _ARTICLE.findall(page.body)]
+        if not articles:
+            continue
+        heading = _HEADING.search(page.body)
+        pages.append({
+            "path": page.path,
+            "category": page.category,
+            "heading": _text(heading.group(1)) if heading else page.title,
+            "articles": articles,
+        })
+    site = container.site_config
+    return {
+        "site_name": site.site_name,
+        "currency": site.currency,
+        "pages": pages,
+        "pricing_tiers": [{"name": t.name, "price": str(t.price)} for t in container.pricing.tiers],
+    }
 
 
 @router.get("/crawler", include_in_schema=False)

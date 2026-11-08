@@ -1,7 +1,8 @@
-/* SARA agent studio.
-   Right: an ordinary chat assistant (Aria). The person types a request; the assistant's
-   steps, approval requests and final answer appear as chat messages.
-   Left: what happens behind the scenes on the website (SARA) and at PayPal, step by step.
+/* SARA demo, Agent tab.
+   An ordinary chat assistant (Aria). The person types a request; the assistant's steps,
+   approval requests and final answer appear as chat messages.
+   "Behind the scenes" (closed by default) shows what happens on the website (SARA) and at
+   PayPal, step by step, and every payment with its PayPal reference.
    Talks to /demo/* (runs) and /.well-known/agent-commerce.json (the site's offer catalog). */
 (() => {
   "use strict";
@@ -104,7 +105,10 @@
   function updateLimitsSummary() {
     const { budget, threshold } = limits();
     const short = (n) => money(n).replace(/\.00(?!\d)/, "");
-    $("limits-summary").textContent = `${short(budget)} budget · asks above ${short(threshold)}`;
+    const m = state.mode !== "rogue" && state.lastMandate;
+    $("limits-summary").textContent = m && m.budget
+      ? `${money(m.spent_net)} spent of ${short(m.budget)}`
+      : `${short(budget)} budget · asks above ${short(threshold)}`;
   }
   function initLimits() {
     const pop = $("limits-pop");
@@ -151,13 +155,7 @@
     holder.append(rogue);
   }
 
-  // --- offer catalog (left) --------------------------------------------------------------------
-  function offerCard(type, icon, name, desc, rows) {
-    return el("article", { class: "offer", "data-type": type },
-      el("div", { class: "offer-head" }, el("span", { class: "offer-icon", "aria-hidden": "true", text: icon }), el("span", { class: "offer-name", text: name })),
-      el("p", { class: "offer-desc", text: desc }),
-      el("ul", { class: "offer-list" }, rows.map(([label, price]) => el("li", {}, el("span", { text: label, title: label }), el("span", { class: "price", text: price })))));
-  }
+  // --- offer catalog: names and currency for the chat ----------------------------------------
   async function loadCatalog() {
     try {
       const catalog = await api("/.well-known/agent-commerce.json");
@@ -172,23 +170,9 @@
       for (const i of offers.pay_per_access || []) state.names[i.item_id] = i.title;
       for (const p of offers.subscriptions || []) state.names[p.plan_id] = p.name;
       for (const p of offers.products || []) state.names[p.sku] = p.name;
-      const grid = $("offer-grid");
-      clear(grid);
-      grid.append(
-        offerCard("deposit", "↺", "Refundable crawl deposit", "To read protected pages under the site's rules. Returned in full if the agent follows them.",
-          ((offers.crawl_deposits || {}).tiers || []).map((t) => [`${t.name} content`, money(t.price)])),
-        offerCard("access", "▶", "Pay-per-access", "A one-off charge unlocks one video, dataset, or audio item.",
-          (offers.pay_per_access || []).map((i) => [i.title, money(i.price)])),
-        offerCard("subscription", "∞", "Subscriptions", "A recurring PayPal subscription for members-only pages.",
-          (offers.subscriptions || []).map((p) => [`${p.name} (${p.billing})`, money(p.price)])),
-        offerCard("product", "◫", "Products", "Digital downloads and shipped goods, in one itemized PayPal order.",
-          (offers.products || []).map((p) => [p.name, money(p.price)])),
-      );
       updateLimitsSummary();
       if (!state.runId && !$("messages").querySelector(".msg.user")) renderSuggestions();
     } catch (err) {
-      clear($("offer-grid"));
-      $("offer-grid").append(el("p", { class: "empty", text: `Could not load the offer catalog: ${err.message}` }));
       renderSuggestions();
     }
   }
@@ -215,64 +199,9 @@
       $("launch-hint").textContent = state.blocked || hint;
       syncComposer();
       if (!state.runId && config.active_run_id) attach(config.active_run_id, null, true);
-      if (config.paypal_js_client_id && !state.sdkLoaded) initHumanCheckout(config.paypal_js_client_id);
     } catch (err) {
       showBanner(`Could not load the demo configuration: ${err.message}`);
     }
-  }
-
-  // --- human checkout: PayPal JS SDK v6 (Sandbox mode only) -------------------------------------
-  function showHumanResult(text, tone) {
-    const box = $("human-result");
-    box.textContent = text;
-    box.dataset.tone = tone || "";
-    box.hidden = false;
-  }
-  function initHumanCheckout(clientId) {
-    state.sdkLoaded = true;
-    const script = document.createElement("script");
-    script.src = "https://www.sandbox.paypal.com/web-sdk/v6/core";
-    script.async = true;
-    script.onload = () => setupButtons(clientId).catch((err) => console.warn("PayPal buttons unavailable", err));
-    document.head.append(script);
-  }
-  async function setupButtons(clientId) {
-    const sdk = await window.paypal.createInstance({ clientId, components: ["paypal-payments"] });
-    const eligibility = await sdk.findEligibleMethods({ currencyCode: state.currency });
-    if (!eligibility.isEligible("paypal")) return;
-    const catalog = state.catalog || await api("/.well-known/agent-commerce.json");
-    const items = (catalog.offers || {}).pay_per_access || [];
-    const grid = $("human-grid");
-    clear(grid);
-    const buyerId = `web-${Math.random().toString(16).slice(2, 10)}`;
-    for (const item of items) {
-      let ourOrderId = null;
-      const session = sdk.createPayPalOneTimePaymentSession({
-        async onApprove(data) {
-          try {
-            const paid = await api(`/commerce/orders/${encodeURIComponent(ourOrderId)}/capture`, { method: "POST", body: JSON.stringify({ agent_id: buyerId }) });
-            if (paid.status !== "PAID") { showHumanResult(`Payment not completed (status ${paid.status}).`, "bad"); return; }
-            const resp = await fetch(`/paid${item.unlocks}`, { headers: { Authorization: `Bearer ${paid.access_token}` } });
-            const text = await resp.text();
-            const preview = new DOMParser().parseFromString(text, "text/html").body.textContent || text;
-            showHumanResult(`Paid ${money(paid.amount)} with PayPal (order ${data.orderId}, capture ${paid.provider_capture_id}).\n\n${preview.trim().slice(0, 900)}`);
-          } catch (err) { showHumanResult(`Capture failed: ${err.message}`, "bad"); }
-        },
-        onCancel() { showHumanResult("Payment cancelled; nothing was charged.", "bad"); },
-        onError(err) { showHumanResult(`PayPal error: ${(err && err.message) || err}`, "bad"); },
-      });
-      const button = document.createElement("paypal-button");
-      button.setAttribute("type", "pay");
-      button.addEventListener("click", () => {
-        const createOrder = api("/commerce/checkout", {
-          method: "POST",
-          body: JSON.stringify({ agent_id: buyerId, offer_type: "access", item_id: item.item_id, buyer: "human", purpose: "Bought by a person with PayPal's buttons" }),
-        }).then((order) => { ourOrderId = order.order_id; return { orderId: order.provider_order_id }; });
-        session.start({ presentationMode: "auto" }, createOrder).catch((err) => showHumanResult(`Could not start checkout: ${err.message}`, "bad"));
-      });
-      grid.append(el("div", { class: "human-item" }, el("strong", { text: item.title }), el("span", { class: "price", text: `${money(item.price)} · one-off` }), button));
-    }
-    $("human-buy").hidden = !items.length;
   }
 
   // --- chat: messages ----------------------------------------------------------------------------
@@ -634,6 +563,7 @@
   function startConversation(task) {
     $("suggestions").hidden = true;
     resetFlow();
+    state.lastMandate = null;
     renderWallet(null);
     state.pending.clear();
     state.stepCount = 0;
@@ -761,10 +691,10 @@
         const answer = renderMarkdown(snap.final_text);
         answer.classList.add("answer");
         const m = snap.mandate || {};
-        const foot = m.budget ? el("p", { class: "answer-foot", text: `Spent ${money(m.spent_net)} net of returned deposits · ${money(m.remaining)} of ${money(m.budget)} left. Every payment is listed on the left under “Your money”.` }) : null;
+        const foot = m.budget ? el("p", { class: "answer-foot", text: `Spent ${money(m.spent_net)} net of returned deposits · ${money(m.remaining)} of ${money(m.budget)} left. Every payment and its PayPal reference is under “Behind the scenes”.` }) : null;
         addMessage("ai", [answer, foot]);
       } else if (snap.status === "cancelled") {
-        addMessage("ai", el("p", { text: "Stopped. Anything I already paid for is listed on the left; an open deposit is settled automatically." }), "note");
+        addMessage("ai", el("p", { text: "Stopped. Anything I already paid for is listed under “Behind the scenes”; an open deposit is settled automatically." }), "note");
       } else {
         addMessage("ai", el("p", { text: `Sorry, I couldn't finish: ${snap.error || "the run failed."}` }), "note");
       }
@@ -797,6 +727,7 @@
   function renderWallet(mandate) {
     const list = $("purchases");
     clear(list);
+    updateLimitsSummary();
     if (!mandate) {
       ["w-budget", "w-spent", "w-remaining"].forEach((id) => { $(id).textContent = "-"; });
       $("w-meter").style.width = "0";
@@ -901,13 +832,27 @@
     $("suggestions").hidden = false;
     renderSuggestions();
     resetFlow();
-    renderWallet(null);
+    state.lastMandate = null;
     state.mode = "assistant";
     document.body.dataset.mode = "assistant";
+    renderWallet(null);
     $("wallet-title").textContent = "Your money";
     setRunState("idle");
     hideBanner();
     $("task").focus();
+  }
+
+  // --- behind the scenes (closed by default: the tab shows the assistant as a person uses it) ----------------
+  function setDetails(open) {
+    $("split").classList.toggle("details-open", open);
+    $("details-toggle").setAttribute("aria-expanded", String(open));
+    $("details-toggle").classList.toggle("on", open);
+    store.set("localStorage", "sara-details", open ? "1" : null);
+  }
+  function initDetails() {
+    const params = new URLSearchParams(location.search);
+    setDetails(params.has("details") ? params.get("details") !== "0" : store.get("localStorage", "sara-details") === "1");
+    $("details-toggle").addEventListener("click", () => setDetails(!$("split").classList.contains("details-open")));
   }
 
   // --- wiring ------------------------------------------------------------------------------------------------
@@ -915,6 +860,7 @@
     initTheme();
     initAdmin();
     initLimits();
+    initDetails();
     renderWallet(null);
     renderSuggestions();
     $("composer").addEventListener("submit", (event) => { event.preventDefault(); send(); });

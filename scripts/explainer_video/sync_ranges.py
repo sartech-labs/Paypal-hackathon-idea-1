@@ -15,17 +15,20 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE.parent.parent / "video-out"
 
 # scene id -> (clip folder, start = mark + offset, end = mark + offset)
+# Every live scene comes from one real-screen take of Chrome on this PC (record_device.py).
 RANGES = {
-    "g01": ("rec_crawler", ("started", -0.3), ("finished", -0.2)),
-    "g02": ("rec_crawler", ("finished", -0.2), ("summary", 0.2)),
-    "wd1": ("rec_owner", ("overview", -0.55), ("overview_explained", 0.1)),
-    "wd2": ("rec_owner", ("overview_explained", 0.7), ("operations", -1.7)),
-    "wd3": ("rec_owner", ("operations", -0.4), ("verify_clicked", -0.3)),
-    "wd4": ("rec_owner", ("verify_clicked", -0.3), ("verify_result", 5.2)),
-    "wd5": ("rec_owner", ("analytics", -1.35), ("end", 0.0)),
-    "ud1": ("rec", ("studio_loaded", 1.0), ("run_started", 1.2)),
-    "ud2": ("rec", ("call:fetch_page:0", -0.5), ("call:buy_access:0", -0.8)),
-    "ud3": ("rec", ("call:buy_access:0", -0.8), ("decision_declined:subscription", 2.4)),
+    "web1": ("rec_device", ("website", -0.5), ("for_agents", -1.2)),
+    "web2": ("rec_device", ("for_agents", -1.2), ("for_agents", 4.2)),
+    "g01": ("rec_device", ("scraper_started", -1.6), ("scraper_finished", -0.2)),
+    "g02": ("rec_device", ("scraper_finished", -0.2), ("scraper_verdict", 0.6)),
+    "wd1": ("rec_device", ("overview", -1.0), ("overview_explained", 0.1)),
+    "wd2": ("rec_device", ("security", -2.2), ("operations", -2.2)),
+    "wd3": ("rec_device", ("operations", -2.2), ("verify_clicked", -0.9)),
+    "wd4": ("rec_device", ("verify_clicked", -0.9), ("verify_result", 5.2)),
+    "wd5": ("rec_device", ("analytics", -1.4), ("analytics", 6.8)),
+    "ud1": ("rec_device", ("agent", 0.5), ("run_started", 1.2)),
+    "ud2": ("rec_device", ("call:fetch_page:0", -0.5), ("call:buy_access:0", -0.8)),
+    "ud3": ("rec_device", ("call:buy_access:0", -0.8), ("decision_declined:subscription", 2.4)),
 }
 
 

@@ -135,14 +135,16 @@ def cut_frames(sb: dict, tl: list[dict]) -> None:
         speed = (v["to"] - v["from"]) / info["dur"]
         v["speed"] = speed
         stamp = fdir / "spec.json"
-        spec = {"from": v["from"], "to": v["to"], "dur": info["dur"], "src": v["src"]}
+        # Real-screen clips (the whole browser window) are shown larger than app-only recordings.
+        size = "1440:774" if v.get("device") else "1340:754"
+        spec = {"from": v["from"], "to": v["to"], "dur": info["dur"], "src": v["src"], "size": size}
         if stamp.exists() and json.loads(stamp.read_text()) == spec:
             continue
         shutil.rmtree(fdir, ignore_errors=True)
         fdir.mkdir(parents=True)
         print(f"  frames {sc['id']}: {v['from']}-{v['to']}s at {speed:.2f}x", flush=True)
         run([FF, "-y", "-v", "error", "-ss", str(v["from"]), "-to", str(v["to"]), "-i", str(OUT / v["src"]),
-             "-vf", f"setpts=(PTS-STARTPTS)/{speed:.5f},fps={FPS},scale=1340:754:flags=lanczos", "-q:v", "3", str(fdir / "%05d.jpg")])
+             "-vf", f"setpts=(PTS-STARTPTS)/{speed:.5f},fps={FPS},scale={size}:flags=lanczos", "-q:v", "3", str(fdir / "%05d.jpg")])
         stamp.write_text(json.dumps(spec))
 
 

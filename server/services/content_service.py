@@ -105,6 +105,10 @@ class ContentService:
     def site_config(self) -> SiteConfig:
         return self._site_config
 
+    def allowed_pages(self) -> list[PageContent]:
+        """The allowed pages in file order (never includes disallowed pages)."""
+        return list(self._allowed_pages.values())
+
     @property
     def allowed_page_paths(self) -> set[str]:
         return set(self._allowed_pages.keys())
