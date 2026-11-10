@@ -104,6 +104,9 @@ class Settings(BaseModel):
     # A recognised browser User-Agent is human, everything else is an agent.
     detect_agent_user_agents: bool = Field(default=True)
     playground_max_runs_per_hour: int = Field(default=20, ge=1, le=1000)
+    playground_max_actions: int = Field(default=6, ge=1, le=20)
+    playground_agent_timeout_seconds: float = Field(default=180.0, gt=0.0, le=600.0)
+    playground_agent_max_turns: int = Field(default=12, ge=1, le=40)
     # Live demo page: when true, anyone may start crawler runs and ask the PayPal
     # assistant (read-only), within the hourly caps below. Admin token otherwise.
     demo_public: bool = Field(default=False)
@@ -297,6 +300,9 @@ def load_settings_from_env() -> Settings:
         config_max_writes_per_hour=int(os.getenv("CONFIG_MAX_WRITES_PER_HOUR", "30")),
         detect_agent_user_agents=_env_bool("DETECT_AGENT_USER_AGENTS", True),
         playground_max_runs_per_hour=int(os.getenv("PLAYGROUND_MAX_RUNS_PER_HOUR", "20")),
+        playground_max_actions=int(os.getenv("PLAYGROUND_MAX_ACTIONS", "6")),
+        playground_agent_timeout_seconds=float(os.getenv("PLAYGROUND_AGENT_TIMEOUT_SECONDS", "180")),
+        playground_agent_max_turns=int(os.getenv("PLAYGROUND_AGENT_MAX_TURNS", "12")),
         demo_public=_env_bool("DEMO_PUBLIC", False),
         demo_max_runs_per_hour=int(os.getenv("DEMO_MAX_RUNS_PER_HOUR", "20")),
         demo_max_questions_per_hour=int(os.getenv("DEMO_MAX_QUESTIONS_PER_HOUR", "30")),

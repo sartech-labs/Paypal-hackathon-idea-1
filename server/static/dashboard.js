@@ -1165,26 +1165,83 @@
     toast("accent", "↻", "robots.txt synced", "The target site's rules are now enforced live.");
   }
 
-  function renderPlaygroundActions(actions, canStart) {
+  function playgroundActionById(actionId) {
+    const actions = (state.playground && state.playground.actions) || [];
+    return actions.find((action) => action.action_id === actionId) || null;
+  }
+
+  function playgroundTone(outcome) {
+    if (outcome === "allowed") return "good";
+    if (outcome === "refused" || outcome === "mixed") return "critical";
+    return "neutral";
+  }
+
+  function playgroundIcon(outcome) {
+    if (outcome === "allowed") return "✓";
+    if (outcome === "refused") return "✕";
+    if (outcome === "mixed") return "◐";
+    return "●";
+  }
+
+  function updatePlaygroundSelection() {
+    const ai = (state.playground && state.playground.ai) || {};
+    const canStart = Boolean(state.playground && state.playground.can_start);
+    const maxActions = (state.playground && state.playground.max_actions) || 6;
+    const selected = Array.from(document.querySelectorAll("#pg-actions input[type=checkbox]:checked")).map((input) => input.value);
+    const button = $("pg-run-button");
+    const hint = $("pg-run-hint");
+    const selection = $("pg-selection");
+    if (selection) selection.textContent = `${selected.length} selected`;
+    if (!button || !hint) return;
+    let reason = "";
+    if (!canStart) reason = "Enter the admin token, or enable DEMO_PUBLIC=true on a demo deployment.";
+    else if (!ai.available) reason = "Agentic runs are disabled: set OPENAI_API_KEY or ANTHROPIC_API_KEY on the gateway.";
+    else if (!selected.length) reason = "Select at least one good or bad action.";
+    else if (selected.length > maxActions) reason = `Select at most ${maxActions} actions.`;
+    button.disabled = Boolean(reason);
+    button.textContent = selected.length ? `Run agent (${selected.length})` : "Run agent";
+    hint.textContent = reason || (selected.length
+      ? `${selected.length} selected — each action gets a fresh challenge, deposit, and session.`
+      : `Every run uses the agent and records its requests in the audit log.`);
+  }
+
+  function renderPlaygroundActions(actions, canStart, ai, maxActions) {
     const box = $("pg-actions");
     clear(box);
-    for (const action of actions) {
-      const button = el("button", {
-        type: "button",
-        className: action.tone === "bad" ? "danger" : "primary",
-        text: "Run",
-        disabled: canStart ? undefined : "disabled",
-        onclick: () => runPlayground(action.action_id, action),
-      });
-      box.append(el("div", { className: "pg-action", dataset: { tone: action.tone } }, [
-        el("span", { className: "pg-tone", text: action.tone === "good" ? "Good agent" : "Bad agent" }),
-        el("h3", { text: action.label }),
-        el("p", { text: action.description }),
-        el("p", { className: "pg-expect", text: `Expected: ${action.expected}` }),
-        button,
+    const disabled = !canStart || !ai || !ai.available;
+    for (const tone of ["good", "bad"]) {
+      const group = actions.filter((action) => action.tone === tone);
+      if (!group.length) continue;
+      const list = el("div", { className: "pg-group", dataset: { tone } });
+      list.append(el("div", { className: "pg-group-head" }, [
+        el("span", { className: "pg-tone", text: tone === "good" ? "Good agent" : "Bad agent" }),
+        el("span", { className: "muted", text: tone === "good" ? "Allowed by the policy" : "Expected to be blocked" }),
       ]));
+      for (const action of group) {
+        const input = el("input", {
+          type: "checkbox",
+          value: action.action_id,
+          disabled: disabled ? "disabled" : undefined,
+          "aria-label": action.label,
+        });
+        input.checked = Boolean(action.default_selected);
+        input.addEventListener("change", updatePlaygroundSelection);
+        list.append(el("label", { className: "pg-check", dataset: { tone } }, [
+          input,
+          el("span", { className: "pg-check-copy" }, [
+            el("strong", { text: action.label }),
+            el("span", { text: action.description }),
+            el("small", { text: `Expected: ${action.expected}` }),
+          ]),
+        ]));
+      }
+      box.append(list);
     }
     if (!actions.length) box.append(el("p", { className: "empty", text: "No playground actions configured." }));
+    const max = maxActions || 6;
+    const selection = $("pg-selection");
+    if (selection) selection.dataset.max = String(max);
+    updatePlaygroundSelection();
   }
 
   function renderRecentRuns(runs) {
@@ -1195,12 +1252,12 @@
       return;
     }
     for (const run of runs) {
-      const tone = run.outcome === "allowed" ? "good" : run.outcome === "refused" ? "critical" : "neutral";
-      const icon = run.outcome === "allowed" ? "✓" : run.outcome === "refused" ? "✕" : "●";
+      const tone = playgroundTone(run.outcome);
+      const count = run.action_count && run.action_count > 1 ? ` · ${run.action_count} actions` : "";
       box.append(el("div", { className: "pg-recent-row" }, [
-        chip(tone, icon, run.outcome || run.status),
+        chip(tone, playgroundIcon(run.outcome), run.outcome || run.status),
         el("strong", { text: run.label }),
-        el("span", { className: "muted", text: `${run.deposit_state || "no deposit"} · ${formatTime(run.started_at)}` }),
+        el("span", { className: "muted", text: `${run.driver || "scripted"}${count} · ${run.deposit_state || "no deposit"} · ${formatTime(run.started_at)}` }),
         el("button", { type: "button", className: "btn-sm", text: "Open", onclick: () => openPlaygroundRun(run.run_id) }),
       ]));
     }
@@ -1208,21 +1265,46 @@
 
   async function loadPlayground(force) {
     if (state.playground && !force) {
-      renderPlaygroundActions(state.playground.actions || [], state.playground.can_start);
+      renderPlaygroundActions(
+        state.playground.actions || [],
+        state.playground.can_start,
+        state.playground.ai || {},
+        state.playground.max_actions,
+      );
       renderRecentRuns(state.playground.recent_runs || []);
       return;
     }
     const result = await getJson("/playground/actions", { headers: authHeaders() });
     if (!result.ok) {
       $("pg-quota").textContent = "Unavailable";
+      const agent = $("pg-agent");
+      if (agent) agent.textContent = "AI unavailable";
+      $("pg-run-hint").textContent = result.status === 401
+        ? "Starting runs needs the admin token, or DEMO_PUBLIC=true on a demo deployment."
+        : `Could not load playground actions (HTTP ${result.status}).`;
+      $("pg-run-button").disabled = true;
       clear($("pg-actions"));
       $("pg-actions").append(el("p", { className: "empty", text: result.status === 401 ? "Starting runs needs the admin token, or DEMO_PUBLIC=true on a demo deployment." : `Could not load playground actions (HTTP ${result.status}).` }));
       return;
     }
     state.playground = result.body;
     $("pg-quota").textContent = `${result.body.runs_remaining_this_hour} runs left this hour`;
-    renderPlaygroundActions(result.body.actions || [], result.body.can_start);
+    const ai = result.body.ai || {};
+    const agent = $("pg-agent");
+    if (agent) {
+      agent.textContent = ai.available ? `Agent: ${ai.model || ai.provider || "ready"}` : "AI unavailable";
+      agent.dataset.tone = ai.available ? "good" : "warning";
+    }
+    renderPlaygroundActions(result.body.actions || [], result.body.can_start, ai, result.body.max_actions);
     renderRecentRuns(result.body.recent_runs || []);
+  }
+
+  function selectPlaygroundTone(tone) {
+    for (const input of document.querySelectorAll("#pg-actions input[type=checkbox]")) {
+      const action = playgroundActionById(input.value);
+      if (action) input.checked = action.tone === tone;
+    }
+    updatePlaygroundSelection();
   }
 
   function stopPlaygroundPoll() {
@@ -1236,10 +1318,12 @@
     for (const step of steps) {
       const tone = step.allowed === true ? "good" : step.allowed === false ? "critical" : "neutral";
       const icon = step.allowed === true ? "✓" : step.allowed === false ? "✕" : "•";
+      const action = step.action_id ? playgroundActionById(step.action_id) : null;
       list.append(el("li", { className: "pg-step", dataset: { tone } }, [
         el("span", { className: "pg-step-num", "aria-hidden": "true", text: icon }),
         el("div", null, [
           el("strong", { text: step.label }),
+          action ? el("small", { text: action.label }) : null,
           step.request ? el("small", { text: step.request }) : null,
           step.message ? el("small", { text: step.message }) : null,
           step.reason_code ? el("small", { text: step.reason_code }) : null,
@@ -1251,50 +1335,99 @@
 
   function renderPlaygroundRunHead(run) {
     const head = $("pg-run-head");
+    if (!head) return;
     clear(head);
     const status = run.status === "running" ? "Running" : run.status;
-    const tone = run.outcome === "allowed" ? "good" : run.outcome === "refused" ? "critical" : "neutral";
+    const tone = playgroundTone(run.outcome);
     head.append(el("h3", { text: run.label || "Playground run" }));
-    head.append(chip(tone, run.status === "running" ? "…" : run.outcome === "allowed" ? "✓" : run.outcome === "refused" ? "✕" : "●", status));
+    head.append(chip(tone, run.status === "running" ? "…" : playgroundIcon(run.outcome), status));
+    if (run.driver) head.append(chip("neutral", "⌁", run.driver));
+    if (run.selected_action_ids && run.selected_action_ids.length > 1) {
+      head.append(el("span", { className: "muted", text: `${run.selected_action_ids.length} actions` }));
+    }
     head.append(el("span", { className: "muted", text: run.run_id }));
   }
 
-  function renderPlaygroundResult(run) {
-    const box = $("pg-result");
-    clear(box);
-    box.hidden = false;
-    const tone = run.outcome === "allowed" ? "good" : run.outcome === "refused" ? "critical" : "neutral";
-    box.dataset.tone = tone;
-    const title = run.outcome === "allowed"
-      ? "Permitted: the page was returned"
-      : run.outcome === "refused"
-        ? "Refused: the gateway blocked the action"
-        : "Run failed";
-    box.append(el("h3", { text: title }));
-    if (run.error) box.append(el("p", { text: run.error }));
-
-    const violation = run.violation || {};
-    const deposit = run.deposit || {};
-    const facts = [
-      ["HTTP status", violation.http_status || (run.outcome === "allowed" ? 200 : "")],
+  function resultFacts(result) {
+    const violation = result.violation || {};
+    const deposit = result.deposit || {};
+    return [
+      ["HTTP status", violation.http_status || (result.outcome === "allowed" ? 200 : "")],
       ["Rule matched", violation.rule_matched],
       ["Reason code", violation.reason_code],
       ["Agent-facing reason", violation.agent_reason],
       ["Deposit consequence", violation.deposit_consequence || deposit.consequence],
       ["Deposit state", deposit.deposit_state],
       ["Deposit amount", deposit.amount ? money(deposit.amount, deposit.currency) : ""],
-      ["Session", run.session_id],
+      ["Session", result.session_id],
     ].filter(([, value]) => value !== null && value !== undefined && value !== "");
+  }
+
+  function renderFacts(container, result) {
+    const facts = resultFacts(result);
     if (facts.length) {
-      box.append(el("div", { className: "pg-facts" }, facts.map(([label, value]) =>
+      container.append(el("div", { className: "pg-facts" }, facts.map(([label, value]) =>
         el("div", { className: "pg-fact" }, [el("span", { text: label }), el("strong", { text: String(value) })])
       )));
     }
+    if (result.rendered_html) {
+      const frame = el("iframe", { className: "pg-frame", title: `Rendered page returned for ${result.label || "the action"}`, sandbox: "" });
+      frame.srcdoc = result.rendered_html;
+      container.append(el("div", { className: "pg-frame-wrap" }, [frame]));
+    }
+  }
 
-    if (run.rendered_html) {
-      const frame = el("iframe", { className: "pg-frame", title: "Rendered page returned by the gateway", sandbox: "" });
-      frame.srcdoc = run.rendered_html;
-      box.append(el("div", { className: "pg-frame-wrap" }, [frame]));
+  function renderActionResult(result) {
+    const card = el("div", { className: "pg-action-result", dataset: { tone: playgroundTone(result.outcome) } });
+    card.append(el("div", { className: "pg-action-result-head" }, [
+      el("div", null, [
+        el("h4", { text: result.label || result.action_id }),
+        el("small", { text: result.action_id }),
+      ]),
+      chip(playgroundTone(result.outcome), playgroundIcon(result.outcome), result.outcome || result.status),
+    ]));
+    if (result.error) card.append(el("p", { className: "empty", text: result.error }));
+    renderFacts(card, result);
+    return card;
+  }
+
+  function renderPlaygroundResult(run) {
+    const box = $("pg-result");
+    clear(box);
+    box.hidden = false;
+    const tone = playgroundTone(run.outcome);
+    box.dataset.tone = tone;
+    const title = run.outcome === "allowed"
+      ? "Permitted: every selected action was accepted"
+      : run.outcome === "refused"
+        ? "Refused: the gateway blocked every selected action"
+        : run.outcome === "mixed"
+          ? "Mixed outcome: some actions were allowed, some were refused"
+          : "Run failed";
+    box.append(el("h3", { text: title }));
+    if (run.error) box.append(el("p", { text: run.error }));
+
+    if (run.agent) {
+      const agent = el("div", { className: "pg-agent-summary" });
+      agent.append(el("div", { className: "pg-action-result-head" }, [
+        el("div", null, [
+          el("h4", { text: "Agent summary" }),
+          el("small", { text: `${run.agent.provider || "AI"} · ${run.agent.model || "model"} · ${run.agent.steps || 0} steps` }),
+        ]),
+        chip(run.agent.status === "completed" ? "good" : "neutral", "⌁", run.agent.status || "agent"),
+      ]));
+      if (run.agent.summary) agent.append(el("p", { text: run.agent.summary }));
+      if (run.agent.error) agent.append(el("p", { className: "empty", text: run.agent.error }));
+      box.append(agent);
+    }
+
+    const results = run.action_results || [];
+    if (results.length) {
+      for (const result of results) box.append(renderActionResult(result));
+    } else {
+      const fallback = el("div", { className: "pg-action-result", dataset: { tone } });
+      renderFacts(fallback, run);
+      box.append(fallback);
     }
     if (run.audit_event_ids && run.audit_event_ids.length) {
       box.append(el("p", { className: "muted", text: `Audit events: ${run.audit_event_ids.join(", ")}` }));
@@ -1322,7 +1455,11 @@
     state.pgTimer = setTimeout(pollPlayground, 450);
   }
 
-  async function runPlayground(actionId, action) {
+  async function runSelectedPlayground() {
+    const selected = Array.from(document.querySelectorAll("#pg-actions input[type=checkbox]:checked")).map((input) => input.value);
+    if (!selected.length) { showBanner("Select at least one playground action first."); return; }
+    const max = (state.playground && state.playground.max_actions) || 6;
+    if (selected.length > max) { showBanner(`Select at most ${max} actions per run.`); return; }
     stopPlaygroundPoll();
     state.pgRunId = null;
     state.pgNextSeq = 0;
@@ -1331,15 +1468,24 @@
     const runBox = $("pg-run");
     runBox.hidden = false;
     clear(runBox);
-    runBox.append(el("div", { className: "pg-run-head", id: "pg-run-head" }, [el("h3", { text: action ? action.label : "Playground run" }), chip("neutral", "…", "Starting")]));
+    const labels = selected.map((actionId) => {
+      const action = playgroundActionById(actionId);
+      return action ? action.label : actionId;
+    });
+    runBox.append(el("div", { className: "pg-run-head", id: "pg-run-head" }, [
+      el("h3", { text: `Agent run — ${selected.length} selected action${selected.length === 1 ? "" : "s"}` }),
+      chip("neutral", "…", "Starting"),
+    ]));
+    runBox.append(el("p", { className: "muted", text: labels.join(" · ") }));
     runBox.append(el("ol", { className: "pg-steps", id: "pg-steps" }));
     const result = await getJson("/playground/runs", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ action_id: actionId }),
+      body: JSON.stringify({ action_ids: selected }),
     });
     if (!result.ok) {
       runBox.append(el("p", { className: "empty", text: (result.body && (result.body.message || (result.body.detail && result.body.detail.message))) || `Could not start the run (HTTP ${result.status}).` }));
+      updatePlaygroundSelection();
       return;
     }
     state.pgRunId = result.body.run_id;
@@ -1878,6 +2024,13 @@
     $("cfg-test").addEventListener("click", testOrigin);
     $("cfg-sync").addEventListener("click", syncRobots);
     $("pg-refresh").addEventListener("click", () => loadPlayground(true));
+    $("pg-select-good").addEventListener("click", () => selectPlaygroundTone("good"));
+    $("pg-select-bad").addEventListener("click", () => selectPlaygroundTone("bad"));
+    $("pg-clear").addEventListener("click", () => {
+      for (const input of document.querySelectorAll("#pg-actions input[type=checkbox]")) input.checked = false;
+      updatePlaygroundSelection();
+    });
+    $("pg-run-button").addEventListener("click", runSelectedPlayground);
 
     $("chart-view-toggle").addEventListener("click", (event) => {
       state.chartAsTable = !state.chartAsTable;

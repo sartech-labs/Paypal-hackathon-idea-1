@@ -150,6 +150,10 @@ class AppContainer:
         self.demo_runner.agent_signer = self.demo_agent_signer
         self.playground_runner = PlaygroundRunner(
             max_runs_per_hour=settings.playground_max_runs_per_hour,
+            ai_generator=self.ai_generator,
+            max_actions=settings.playground_max_actions,
+            agent_timeout_seconds=settings.playground_agent_timeout_seconds,
+            agent_max_turns=settings.playground_agent_max_turns,
         )
 
     def load_persisted_state(self) -> None:

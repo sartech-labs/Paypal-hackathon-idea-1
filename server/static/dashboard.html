@@ -132,11 +132,26 @@
         <div class="card-head">
           <div>
             <h2>Crawler playground</h2>
-            <p class="card-sub">Pick a curated action and press Run. Permitted actions return the rendered page; refused actions return the matched rule, HTTP status, agent-facing reason, and deposit consequence. Every run is written to the audit log.</p>
+            <p class="card-sub">Select the good and bad actions for an AI agent to run. Each action gets its own real challenge, deposit, and session; allowed actions return the rendered page and refused actions return the matched rule, HTTP status, agent-facing reason, and deposit consequence. Every run is written to the audit log.</p>
           </div>
-          <span class="chip" id="pg-quota">Loading...</span>
+          <div class="setup-status">
+            <span class="chip" id="pg-agent">Checking AI...</span>
+            <span class="chip" id="pg-quota">Loading...</span>
+          </div>
+        </div>
+        <div class="pg-toolbar">
+          <div class="pg-select-actions">
+            <button type="button" class="btn-sm" id="pg-select-good">Select good</button>
+            <button type="button" class="btn-sm" id="pg-select-bad">Select bad</button>
+            <button type="button" class="btn-sm" id="pg-clear">Clear</button>
+          </div>
+          <span class="hint" id="pg-selection">0 selected</span>
         </div>
         <div id="pg-actions" class="pg-actions"><p class="empty">Loading actions...</p></div>
+        <div class="pg-run-controls">
+          <button type="button" class="primary" id="pg-run-button" disabled>Run agent</button>
+          <span class="hint" id="pg-run-hint">Loading the agent...</span>
+        </div>
         <div id="pg-run" class="pg-run" hidden></div>
         <div id="pg-result" class="pg-result" hidden></div>
       </section>

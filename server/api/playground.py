@@ -19,13 +19,15 @@ from server.services.playground import (
     PlaygroundActionError,
     PlaygroundBusyError,
     PlaygroundQuotaError,
+    PlaygroundUnavailableError,
     action_infos,
+    default_action_ids,
 )
 
 router = APIRouter(prefix="/playground", tags=["Crawler playground"])
 
 
-@router.get("/actions", response_model=PlaygroundConfigResponse, summary="List curated playground actions")
+@router.get("/actions", response_model=PlaygroundConfigResponse, summary="List playground actions and agent availability")
 async def list_actions(
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
@@ -38,6 +40,9 @@ async def list_actions(
         can_start=access != "none",
         runs_remaining_this_hour=runner.runs_remaining(),
         recent_runs=runner.recent() if access != "none" else [],
+        ai=runner.ai_info(),
+        max_actions=runner.max_actions,
+        default_action_ids=default_action_ids(),
         limits={
             "max_requests_per_session": site.max_requests_per_session,
             "rate_limit_requests": site.rate_limit_requests,
@@ -56,7 +61,7 @@ async def list_actions(
     "/runs",
     response_model=PlaygroundRunResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Run one curated good or bad agent action",
+    summary="Run the selected good/bad playground actions with the agent",
 )
 async def start_run(
     payload: PlaygroundRunRequest,
@@ -64,7 +69,6 @@ async def start_run(
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> PlaygroundRunResponse:
-    action_id = payload.action_id.strip()
     if demo_access(container, x_admin_token) == "none":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -95,18 +99,21 @@ async def start_run(
 
     try:
         run = container.playground_runner.start(
-            action_id=action_id,
+            action_id=payload.action_id.strip() if payload.action_id else None,
+            action_ids=(payload.action_ids or None),
+            driver=payload.driver,
             base_url=_internal_base_url(request),
             policy=container.site_config.model_dump(mode="json"),
             audit=audit,
             policy_version=container.site_config.policy_version,
             payment_mode=container.payment_provider.mode.value,
         )
-    except PlaygroundActionError as exc:
-        raise HTTPException(status_code=exc.status_code, detail={"error": exc.code, "message": str(exc)}) from exc
-    except PlaygroundBusyError as exc:
-        raise HTTPException(status_code=exc.status_code, detail={"error": exc.code, "message": str(exc)}) from exc
-    except PlaygroundQuotaError as exc:
+    except (
+        PlaygroundActionError,
+        PlaygroundBusyError,
+        PlaygroundQuotaError,
+        PlaygroundUnavailableError,
+    ) as exc:
         raise HTTPException(status_code=exc.status_code, detail={"error": exc.code, "message": str(exc)}) from exc
     return run.snapshot()
 

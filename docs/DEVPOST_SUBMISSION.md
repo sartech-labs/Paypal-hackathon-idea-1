@@ -74,7 +74,7 @@ Unpaid requests get `HTTP 402` with the offers that unlock them. The site prices
 - **AI as the explainer:** every refund or forfeiture comes with a plain-English explanation in which each statement cites the audit event behind it.
 - **AI as the policy assistant:** publishers describe their terms in plain English and get a validated, machine-readable policy draft.
 - **AI with PayPal's MCP server:** the publisher's PayPal assistant reads PayPal's own records through PayPal's MCP server. "Verify with PayPal" checks each deposit field by field (order, amount, capture, hold, refund); the AI assistant answers questions such as "check the last three deposits against PayPal" and shows every MCP tool call it made. It is read-only and cannot move money.
-- **A live demo in the browser:** the owner console at `/` gates a target site, runs a curated **crawler playground** (good and bad actions against the real gateway, showing the matched rule, HTTP 402/403/429, and deposit consequence), and links to Agent studio at `/agent` for AI-driven crawler and personal-agent runs.
+- **A live demo in the browser:** the owner console at `/` gates a target site, runs an agentic **crawler playground** (checkbox-selected good and bad actions against the real gateway, each with a fresh session, showing the matched rule, HTTP 402/403/429, and deposit consequence), and links to Agent studio at `/agent` for AI-driven crawler and personal-agent runs.
 - A publisher console shows live sessions, deposits, violations, explanations, and the PayPal assistant.
 
 ## How we built it
@@ -136,7 +136,7 @@ python, fastapi, httpx, pydantic, paypal-rest-api, paypal-orders-v2, paypal-paym
 
 - [ ] Repository is public and the default branch contains this code and the MIT license
 - [ ] Demo video is public on YouTube and under 3 minutes ([`DEMO_SCRIPT.md`](DEMO_SCRIPT.md))
-- [ ] Testing instructions: point judges to the live URL (open `/` for the owner console, apply a live config change, run a good and a bad playground action; open `/agent`, click an example request in the chat, approve or decline its purchases; then the console's **Verify with PayPal**) and to README "Quick start" (mock mode needs no credentials)
+- [ ] Testing instructions: point judges to the live URL (open `/` for the owner console, apply a live config change, check a good and a bad playground action and press **Run agent**; open `/agent`, click an example request in the chat, approve or decline its purchases; then the console's **Verify with PayPal**) and to README "Quick start" (mock mode needs no credentials)
 - [ ] Live demo deployed and warmed up before judging (free Render instances sleep when idle)
 - [ ] Prize categories selected: overall, Best Use of PayPal + AI, Best Use of Agentic Commerce, Best Demo Delivery, Most Impactful, plus the sponsor categories that apply (AG Grid; Render once deployed there). The rules allow at most one Grand Prize and one Sponsor Prize, or one Honorable Mention and one Sponsor Prize.
 - [ ] Deadline: Thursday 12 November 2026, 12:00 pm Pacific

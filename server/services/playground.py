@@ -1,12 +1,16 @@
-"""Curated crawler playground: deterministic good/bad actions against the live gateway.
+"""Curated crawler playground: guarded good/bad scenarios against the live gateway.
 
-Each action runs a fixed sequence of HTTP calls against this same gateway, using the real
-deposit, policy, rate-limit, and settlement machinery. Actions auto-complete their session
-so the deposit consequence shown in the console is final. No AI model is involved.
+Each scenario runs a fixed sequence of HTTP calls against this same gateway, using the real
+deposit, policy, rate-limit, and settlement machinery. The AI agent may only choose from the
+operator's selected checklist; it cannot invent paths or skip actions. Every selected action
+gets a fresh challenge/deposit/session and auto-completes its own session so the deposit
+consequence shown in the console is final.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import secrets
 import threading
@@ -23,10 +27,17 @@ from server.core.quotas import HourlyQuota
 from server.core.security import utc_now_iso
 from server.schemas import (
     PlaygroundActionInfo,
+    PlaygroundActionResult,
+    PlaygroundAgentInfo,
     PlaygroundRecentRun,
     PlaygroundRunResponse,
     PlaygroundStep,
     PlaygroundViolation,
+)
+from server.services.playground_agent import (
+    PLAYGROUND_ACTION_TOOL,
+    PLAYGROUND_AGENT_SYSTEM,
+    build_agent_prompt,
 )
 
 logger = logging.getLogger("sara.playground")
@@ -37,7 +48,11 @@ MAX_HTML_BYTES = 400_000
 # hard deadline: a long rate-limit window must never make a demo wait for minutes.
 MAX_INTER_REQUEST_PAUSE_SECONDS = 2.0
 DEFAULT_RUN_TIMEOUT_SECONDS = 60.0
+DEFAULT_AGENT_RUN_TIMEOUT_SECONDS = 180.0
+DEFAULT_AGENT_MAX_TURNS = 12
 MAX_BURST_REQUESTS = 50
+DEFAULT_MAX_ACTIONS = 6
+DEFAULT_SELECTED_ACTIONS = ("allowed_page", "disallowed_path")
 # Last-resort page for a policy that advertises no usable page paths.
 DEFAULT_PAGE_PATH = "/news"
 # Agent-facing response headers the gateway sets on allowed gateway responses.
@@ -49,13 +64,14 @@ AGENT_RESPONSE_HEADERS = (
     "X-SARA-Pricing-Tier",
 )
 
-ACTIONS: tuple[dict[str, str], ...] = (
+ACTIONS: tuple[dict[str, Any], ...] = (
     {
         "action_id": "allowed_page",
         "label": "Allowed page",
         "tone": "good",
         "description": "Open a session with the required deposit, send a valid paid token, and read an allowed page.",
         "expected": "HTTP 200 with the rendered page; deposit returned.",
+        "default_selected": True,
     },
     {
         "action_id": "deposit_and_crawl",
@@ -84,6 +100,7 @@ ACTIONS: tuple[dict[str, str], ...] = (
         "tone": "bad",
         "description": "Pay the deposit, then request a path the site's rules forbid.",
         "expected": "HTTP 403 with the matched Disallow rule; deposit forfeited.",
+        "default_selected": True,
     },
     {
         "action_id": "rate_limit_burst",
@@ -126,7 +143,11 @@ ACTIONS_BY_ID = {action["action_id"]: action for action in ACTIONS}
 
 
 def action_infos() -> list[PlaygroundActionInfo]:
-    return [PlaygroundActionInfo(**action) for action in ACTIONS]
+    return [PlaygroundActionInfo(**{"default_selected": False, **action}) for action in ACTIONS]
+
+
+def default_action_ids() -> list[str]:
+    return [action["action_id"] for action in ACTIONS if action.get("default_selected")]
 
 
 @dataclass
@@ -144,6 +165,10 @@ class PlaygroundRun:
     violation: Optional[PlaygroundViolation] = None
     deposit: Optional[dict[str, Any]] = None
     session_id: Optional[str] = None
+    selected_action_ids: list[str] = field(default_factory=list)
+    driver: str = "scripted"
+    action_results: list[PlaygroundActionResult] = field(default_factory=list)
+    agent: Optional[PlaygroundAgentInfo] = None
     error: Optional[str] = None
     elapsed_ms: Optional[int] = None
     steps: list[PlaygroundStep] = field(default_factory=list)
@@ -152,6 +177,8 @@ class PlaygroundRun:
     lock: threading.Lock = field(default_factory=threading.Lock)
     started_monotonic: float = field(default_factory=time.monotonic)
     deadline_monotonic: Optional[float] = None
+    # Internal only: lets a per-action run stream its steps into the parent run.
+    step_sink: Optional[Callable[[PlaygroundStep], None]] = field(default=None, repr=False, compare=False)
 
     @property
     def finished(self) -> bool:
@@ -169,17 +196,37 @@ class PlaygroundRun:
         detail: Optional[dict[str, Any]] = None,
     ) -> None:
         with self.lock:
+            step = PlaygroundStep(
+                seq=len(self.steps),
+                at=utc_now_iso(),
+                label=label,
+                request=request,
+                http_status=http_status,
+                reason_code=reason_code,
+                allowed=allowed,
+                message=message,
+                detail=detail or {},
+            )
+            self.steps.append(step)
+        sink = self.step_sink
+        if sink is not None:
+            sink(step)
+
+    def absorb_step(self, step: PlaygroundStep, action_id: str) -> None:
+        """Copy a per-action step into the parent timeline with a new sequence number."""
+        with self.lock:
             self.steps.append(
                 PlaygroundStep(
                     seq=len(self.steps),
-                    at=utc_now_iso(),
-                    label=label,
-                    request=request,
-                    http_status=http_status,
-                    reason_code=reason_code,
-                    allowed=allowed,
-                    message=message,
-                    detail=detail or {},
+                    at=step.at,
+                    label=step.label,
+                    action_id=action_id,
+                    request=step.request,
+                    http_status=step.http_status,
+                    reason_code=step.reason_code,
+                    allowed=step.allowed,
+                    message=step.message,
+                    detail=dict(step.detail),
                 )
             )
 
@@ -190,6 +237,13 @@ class PlaygroundRun:
 
     def snapshot(self, after: int = 0) -> PlaygroundRunResponse:
         with self.lock:
+            # Do not resend finished pages on every poll; the final snapshot carries them.
+            action_results = [
+                result
+                if self.status != "running"
+                else result.model_copy(update={"rendered_html": None})
+                for result in self.action_results
+            ]
             return PlaygroundRunResponse(
                 run_id=self.run_id,
                 action_id=self.action_id,
@@ -204,6 +258,10 @@ class PlaygroundRun:
                 violation=self.violation,
                 deposit=self.deposit,
                 session_id=self.session_id,
+                selected_action_ids=list(self.selected_action_ids),
+                driver=self.driver,  # type: ignore[arg-type]
+                action_results=action_results,
+                agent=self.agent,
                 steps=[step for step in self.steps if step.seq >= after],
                 next_seq=len(self.steps),
                 error=self.error,
@@ -224,6 +282,8 @@ class PlaygroundRun:
             started_at=self.started_at,
             deposit_state=deposit.get("deposit_state"),
             reason_code=violation.reason_code if violation else None,
+            driver=self.driver,
+            action_count=max(1, len(self.selected_action_ids) or 1),
         )
 
 
@@ -240,6 +300,11 @@ class PlaygroundQuotaError(RuntimeError):
 class PlaygroundActionError(RuntimeError):
     status_code = 400
     code = "playground_action_error"
+
+
+class PlaygroundUnavailableError(RuntimeError):
+    status_code = 503
+    code = "playground_ai_unavailable"
 
 
 class PlaygroundTimeoutError(RuntimeError):
@@ -261,16 +326,49 @@ class PlaygroundRunner:
         sleep: Optional[Callable[[float], None]] = None,
         clock: Optional[Callable[[], float]] = None,
         run_timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
+        ai_generator: Optional[Any] = None,
+        max_actions: int = DEFAULT_MAX_ACTIONS,
+        agent_timeout_seconds: float = DEFAULT_AGENT_RUN_TIMEOUT_SECONDS,
+        agent_max_turns: int = DEFAULT_AGENT_MAX_TURNS,
     ) -> None:
         self._quota = HourlyQuota(max_runs_per_hour)
         self._http_factory = http_factory or _default_http_factory
         self._sleep = sleep or time.sleep
         self._clock = clock or time.monotonic
         self._run_timeout_seconds = max(1.0, float(run_timeout_seconds))
+        self._agent_timeout_seconds = max(1.0, float(agent_timeout_seconds))
+        self._agent_max_turns = max(1, int(agent_max_turns))
+        self._ai_generator = ai_generator
+        self._max_actions = max(1, int(max_actions))
         self._runs: dict[str, PlaygroundRun] = {}
         self._order: list[str] = []
         self._active: Optional[str] = None
         self._lock = threading.Lock()
+
+    def ai_info(self) -> PlaygroundAgentInfo:
+        """Describe whether the guarded agent can run here, and with which model."""
+        generator = self._ai_generator
+        available = False
+        provider: Optional[str] = None
+        model: Optional[str] = None
+        if generator is not None:
+            try:
+                available = bool(generator.is_available())
+                provider = getattr(generator, "provider", None)
+                model = getattr(generator, "model", None)
+            except Exception:  # a missing/invalid SDK must not break the actions endpoint
+                logger.exception("Could not inspect the playground AI provider")
+        return PlaygroundAgentInfo(
+            available=available,
+            driver="agent" if available else "scripted",
+            provider=provider if available else None,
+            model=model if available else None,
+            status="ready" if available else "unavailable",
+        )
+
+    @property
+    def max_actions(self) -> int:
+        return self._max_actions
 
     def runs_remaining(self) -> int:
         return self._quota.remaining()
@@ -299,16 +397,52 @@ class PlaygroundRunner:
     def start(
         self,
         *,
-        action_id: str,
+        action_id: Optional[str] = None,
+        action_ids: Optional[list[str]] = None,
+        driver: Optional[str] = None,
         base_url: str,
         policy: dict[str, Any],
         audit: Optional[Callable[[str, str, dict[str, Any]], Optional[str]]] = None,
         policy_version: Optional[str] = None,
         payment_mode: Optional[str] = None,
     ) -> PlaygroundRun:
-        action = ACTIONS_BY_ID.get(action_id)
-        if action is None:
-            raise PlaygroundActionError(f"Unknown playground action: {action_id}")
+        requested = [str(value).strip() for value in (action_ids or [])]
+        if action_id is not None:
+            if requested:
+                raise PlaygroundActionError("Send either action_id or action_ids, not both.")
+            requested = [str(action_id).strip()]
+        if not requested:
+            raise PlaygroundActionError("Select at least one playground action.")
+        if len(requested) > self._max_actions:
+            raise PlaygroundActionError(
+                f"Select at most {self._max_actions} actions per run."
+            )
+        if len(set(requested)) != len(requested):
+            raise PlaygroundActionError("Each selected action may appear only once.")
+        for selected_id in requested:
+            if selected_id not in ACTIONS_BY_ID:
+                raise PlaygroundActionError(f"Unknown playground action: {selected_id}")
+
+        # The old single-action API keeps its scripted behaviour. The checklist is agent-only,
+        # so a deployment without an AI key disables the run instead of silently scripting it.
+        legacy = action_id is not None and action_ids is None
+        run_driver = driver or ("scripted" if legacy else "agent")
+        if run_driver not in ("agent", "scripted"):
+            raise PlaygroundActionError(f"Unknown playground driver: {run_driver}")
+        if run_driver == "agent" and not self.ai_info().available:
+            raise PlaygroundUnavailableError(
+                "The agentic playground needs an AI key. Set OPENAI_API_KEY or "
+                "ANTHROPIC_API_KEY on the gateway to enable runs."
+            )
+
+        actions = [ACTIONS_BY_ID[selected_id] for selected_id in requested]
+        label = actions[0]["label"] if len(actions) == 1 else f"{len(actions)} selected actions"
+        tone = "bad" if any(action["tone"] == "bad" for action in actions) else "good"
+        timeout = (
+            self._run_timeout_seconds
+            if run_driver == "scripted" and len(requested) == 1
+            else self._agent_timeout_seconds
+        )
         with self._lock:
             active = self._runs.get(self._active) if self._active else None
             if active is not None and not active.finished:
@@ -317,9 +451,12 @@ class PlaygroundRunner:
                 raise PlaygroundQuotaError("The hourly playground limit was reached. Try again later.")
             run = PlaygroundRun(
                 run_id=f"pg_{secrets.token_hex(6)}",
-                action_id=action_id,
-                label=action["label"],
-                tone=action["tone"],
+                action_id=requested[0],
+                label=label,
+                tone=tone,
+                selected_action_ids=list(requested),
+                driver=run_driver,
+                deadline_monotonic=self._clock() + timeout,
             )
             self._runs[run.run_id] = run
             self._order.append(run.run_id)
@@ -329,7 +466,7 @@ class PlaygroundRunner:
 
         thread = threading.Thread(
             target=self._execute,
-            args=(run, base_url, policy, audit, policy_version, payment_mode),
+            args=(run, base_url, policy, audit, policy_version, payment_mode, requested, run_driver),
             name=f"playground-{run.run_id}",
             daemon=True,
         )
@@ -346,6 +483,8 @@ class PlaygroundRunner:
         audit: Optional[Callable[[str, str, dict[str, Any]], Optional[str]]],
         policy_version: Optional[str],
         payment_mode: Optional[str],
+        action_ids: list[str],
+        driver: str,
     ) -> None:
         def log(event_type: str, reason_code: str, details: dict[str, Any]) -> None:
             if audit is None:
@@ -360,25 +499,32 @@ class PlaygroundRunner:
         log(
             "PLAYGROUND_RUN_STARTED",
             "PLAYGROUND_RUN",
-            {"run_id": run.run_id, "action_id": run.action_id, "label": run.label, "tone": run.tone},
+            {
+                "run_id": run.run_id,
+                "action_id": run.action_id,
+                "selected_action_ids": list(action_ids),
+                "label": run.label,
+                "tone": run.tone,
+                "driver": driver,
+            },
         )
         headers = {
             # A non-browser User-Agent is what marks playground traffic as an agent.
             "User-Agent": "SARA-Playground/1.0",
             "X-SARA-Playground-Run": run.run_id,
         }
-        result: dict[str, Any] = {}
-        run.update(deadline_monotonic=self._clock() + self._run_timeout_seconds)
         try:
             with self._http_factory(base_url) as raw_http:
                 http = _DeadlineHttp(raw_http, lambda: self._check_deadline(run))
-                result = self._dispatch(run, http, headers, policy, policy_version, payment_mode)
+                self._execute_selected(
+                    run, http, headers, policy, policy_version, payment_mode, action_ids, driver, log
+                )
         except PlaygroundTimeoutError as exc:
             logger.warning("Playground run %s hit its time limit", run.run_id)
             run.emit(
                 "Run stopped by the playground time limit",
                 message=str(exc),
-                detail={"time_limit_seconds": self._run_timeout_seconds},
+                detail={"time_limit_seconds": self._agent_timeout_seconds},
             )
             run.update(status="failed", outcome="error", error=str(exc), finished_at=utc_now_iso())
         except Exception as exc:
@@ -386,7 +532,18 @@ class PlaygroundRunner:
             run.update(status="failed", outcome="error", error=f"{type(exc).__name__}: {exc}", finished_at=utc_now_iso())
             run.emit("Run failed", message=run.error, detail={"error": type(exc).__name__})
         else:
-            run.update(status="completed", finished_at=utc_now_iso(), **result)
+            changes = self._aggregate_results(run)
+            if run.cancel_event.is_set():
+                changes["status"] = "cancelled"
+            elif any(result.status == "failed" for result in changes.get("_results", [])):
+                changes["status"] = "failed"
+                errors = [result.error for result in changes.get("_results", []) if result.error]
+                if errors:
+                    changes["error"] = errors[0]
+            else:
+                changes["status"] = "completed"
+            changes.pop("_results", None)
+            run.update(finished_at=utc_now_iso(), **changes)
         finally:
             run.update(elapsed_ms=int((time.monotonic() - run.started_monotonic) * 1000))
             log(
@@ -395,12 +552,244 @@ class PlaygroundRunner:
                 {
                     "run_id": run.run_id,
                     "action_id": run.action_id,
+                    "selected_action_ids": list(action_ids),
+                    "driver": driver,
                     "outcome": run.outcome,
                     "status": run.status,
                     "deposit_state": (run.deposit or {}).get("deposit_state"),
                     "reason_code": run.violation.reason_code if run.violation else None,
+                    "action_outcomes": {
+                        result.action_id: result.outcome for result in run.action_results
+                    },
                 },
             )
+
+    def _execute_selected(
+        self,
+        run: PlaygroundRun,
+        http: Any,
+        headers: dict[str, str],
+        policy: dict[str, Any],
+        policy_version: Optional[str],
+        payment_mode: Optional[str],
+        action_ids: list[str],
+        driver: str,
+        log: Callable[[str, str, dict[str, Any]], None],
+    ) -> None:
+        if driver == "agent":
+            self._run_agent(run, http, headers, policy, policy_version, payment_mode, action_ids, log)
+            return
+        for action_id in action_ids:
+            if run.cancel_event.is_set():
+                break
+            self._perform_action(
+                run, action_id, http, headers, policy, policy_version, payment_mode, log
+            )
+
+    def _perform_action(
+        self,
+        parent: PlaygroundRun,
+        action_id: str,
+        http: Any,
+        headers: dict[str, str],
+        policy: dict[str, Any],
+        policy_version: Optional[str],
+        payment_mode: Optional[str],
+        log: Optional[Callable[[str, str, dict[str, Any]], None]] = None,
+    ) -> PlaygroundActionResult:
+        """Run one selected scenario with its own challenge, deposit, and session."""
+        action = ACTIONS_BY_ID[action_id]
+        child = PlaygroundRun(
+            run_id=parent.run_id,
+            action_id=action_id,
+            label=action["label"],
+            tone=action["tone"],
+            cancel_event=parent.cancel_event,
+            started_monotonic=time.monotonic(),
+            deadline_monotonic=parent.deadline_monotonic,
+            step_sink=lambda step: parent.absorb_step(step, action_id),
+        )
+        try:
+            result = self._dispatch(child, http, headers, policy, policy_version, payment_mode)
+        except PlaygroundTimeoutError as exc:
+            child.emit("Action stopped by the playground time limit", message=str(exc))
+            child.update(status="failed", outcome="error", error=str(exc), finished_at=utc_now_iso())
+        except Exception as exc:
+            logger.exception("Playground action %s failed in run %s", action_id, parent.run_id)
+            child.update(
+                status="failed",
+                outcome="error",
+                error=f"{type(exc).__name__}: {exc}",
+                finished_at=utc_now_iso(),
+            )
+            child.emit("Action failed", message=child.error, detail={"error": type(exc).__name__})
+        else:
+            child.update(status="completed", finished_at=utc_now_iso(), **result)
+        finally:
+            child.update(elapsed_ms=int((time.monotonic() - child.started_monotonic) * 1000))
+
+        action_result = _action_result_from_run(child)
+        with parent.lock:
+            parent.action_results.append(action_result)
+        if log is not None:
+            log(
+                "PLAYGROUND_ACTION_FINISHED",
+                _terminal_reason_code(child),
+                {
+                    "run_id": parent.run_id,
+                    "action_id": action_id,
+                    "outcome": child.outcome,
+                    "status": child.status,
+                    "deposit_state": (child.deposit or {}).get("deposit_state"),
+                    "reason_code": child.violation.reason_code if child.violation else None,
+                },
+            )
+        return action_result
+
+    def _run_agent(
+        self,
+        run: PlaygroundRun,
+        http: Any,
+        headers: dict[str, str],
+        policy: dict[str, Any],
+        policy_version: Optional[str],
+        payment_mode: Optional[str],
+        action_ids: list[str],
+        log: Callable[[str, str, dict[str, Any]], None],
+    ) -> None:
+        generator = self._ai_generator
+        if generator is None:
+            raise PlaygroundUnavailableError("No AI generator is configured for the playground.")
+        info = self.ai_info()
+        run.update(agent=info.model_copy(update={"status": "running"}))
+        run.emit(
+            "Agent received the selected checklist",
+            message=", ".join(ACTIONS_BY_ID[action_id]["label"] for action_id in action_ids),
+            detail={"agent": True, "tools": ["run_action"], "action_ids": list(action_ids)},
+        )
+        completed: set[str] = set()
+
+        async def execute(name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
+            if name != "run_action":
+                return json.dumps({"error": f"Unknown tool: {name}"}), True
+            action_id = str(arguments.get("action_id") or "").strip()
+            if action_id not in action_ids:
+                return (
+                    json.dumps(
+                        {
+                            "error": (
+                                f"Action {action_id!r} is not in the selected checklist. "
+                                f"Use one of: {', '.join(action_ids)}."
+                            )
+                        }
+                    ),
+                    True,
+                )
+            if action_id in completed:
+                return json.dumps({"error": f"Action {action_id!r} already ran in this checklist."}), True
+            if run.cancel_event.is_set():
+                return json.dumps({"error": "The run was cancelled."}), True
+            action = ACTIONS_BY_ID[action_id]
+            run.emit(
+                f"Agent chose: {action['label']}",
+                message=action["description"],
+                detail={"agent": True, "tool": "run_action", "action_id": action_id},
+            )
+            result = self._perform_action(
+                run, action_id, http, headers, policy, policy_version, payment_mode, log
+            )
+            completed.add(action_id)
+            payload = _action_tool_payload(result)
+            run.emit(
+                f"Agent observed: {action['label']} → {result.outcome or result.status}",
+                message=_action_observation(result),
+                http_status=(result.violation.http_status if result.violation else (200 if result.outcome == "allowed" else None)),
+                reason_code=result.violation.reason_code if result.violation else None,
+                allowed=result.outcome == "allowed" if result.outcome else None,
+                detail={"agent": True, "action_id": action_id, "result": payload},
+            )
+            return json.dumps(payload, indent=2), result.status == "failed"
+
+        async def run_loop() -> Any:
+            deadline = run.deadline_monotonic
+            timeout = None
+            if deadline is not None:
+                timeout = max(1.0, deadline - self._clock())
+            coroutine = generator.run_tool_loop(
+                system=PLAYGROUND_AGENT_SYSTEM,
+                prompt=build_agent_prompt(
+                    [ACTIONS_BY_ID[action_id] for action_id in action_ids], policy
+                ),
+                tools=[PLAYGROUND_ACTION_TOOL],
+                execute=execute,
+                max_steps=self._agent_max_turns,
+                max_tokens=16000,
+            )
+            if timeout is None:
+                return await coroutine
+            try:
+                return await asyncio.wait_for(coroutine, timeout=timeout)
+            except asyncio.TimeoutError as exc:
+                raise PlaygroundTimeoutError(
+                    f"The playground run exceeded its {self._agent_timeout_seconds:g}s time limit and was stopped."
+                ) from exc
+
+        loop_result = asyncio.run(run_loop())
+        summary = (loop_result.text or "").strip() or _fallback_summary(run, action_ids)
+        run.update(
+            agent=info.model_copy(
+                update={
+                    "status": "completed",
+                    "steps": loop_result.steps,
+                    "tool_calls": loop_result.tool_calls,
+                    "model": loop_result.model or info.model,
+                    "summary": summary,
+                }
+            )
+        )
+        run.emit("Agent summary", message=summary, detail={"agent": True, "summary": True})
+
+        remaining = [action_id for action_id in action_ids if action_id not in completed]
+        if remaining and not run.cancel_event.is_set():
+            run.emit(
+                "Agent stopped before the full checklist",
+                message=(
+                    "The playground is completing the remaining selected actions so the "
+                    "checklist is never left half-run."
+                ),
+                detail={"agent": True, "remaining_action_ids": remaining},
+            )
+            for action_id in remaining:
+                if run.cancel_event.is_set():
+                    break
+                self._perform_action(
+                    run, action_id, http, headers, policy, policy_version, payment_mode, log
+                )
+
+    def _aggregate_results(self, run: PlaygroundRun) -> dict[str, Any]:
+        with run.lock:
+            results = list(run.action_results)
+        if not results:
+            return {"outcome": "error", "error": "No playground action completed.", "_results": results}
+        outcomes = {result.outcome for result in results}
+        if any(result.status == "failed" for result in results):
+            outcome = "error"
+        elif outcomes == {"allowed"}:
+            outcome = "allowed"
+        elif outcomes == {"refused"}:
+            outcome = "refused"
+        else:
+            outcome = "mixed"
+        last = results[-1]
+        return {
+            "outcome": outcome,
+            "rendered_html": last.rendered_html,
+            "content_type": last.content_type,
+            "violation": last.violation,
+            "deposit": last.deposit,
+            "session_id": last.session_id,
+            "_results": results,
+        }
 
     def _dispatch(
         self,
@@ -1232,8 +1621,100 @@ def _origin_miss(resp: Any) -> bool:
     return bool(_agent_response_headers(resp).get("X-SARA-Session-Id"))
 
 
+def _action_result_from_run(run: PlaygroundRun) -> PlaygroundActionResult:
+    """Freeze one per-action run into the result returned to the browser."""
+    with run.lock:
+        return PlaygroundActionResult(
+            action_id=run.action_id,
+            label=run.label,
+            tone=run.tone,  # type: ignore[arg-type]
+            status=run.status,  # type: ignore[arg-type]
+            outcome=run.outcome,  # type: ignore[arg-type]
+            rendered_html=run.rendered_html,
+            content_type=run.content_type,
+            violation=run.violation,
+            deposit=dict(run.deposit) if run.deposit else None,
+            session_id=run.session_id,
+            error=run.error,
+            elapsed_ms=run.elapsed_ms,
+            steps=list(run.steps),
+        )
+
+
+def _action_tool_payload(result: PlaygroundActionResult) -> dict[str, Any]:
+    """Small, model-safe view of an action result (never the page HTML or tokens)."""
+    violation = result.violation
+    deposit = result.deposit or {}
+    return {
+        "action_id": result.action_id,
+        "label": result.label,
+        "outcome": result.outcome,
+        "status": result.status,
+        "http_status": (
+            violation.http_status
+            if violation is not None
+            else (200 if result.outcome == "allowed" else None)
+        ),
+        "reason_code": violation.reason_code if violation else None,
+        "rule_matched": violation.rule_matched if violation else None,
+        "agent_reason": violation.agent_reason if violation else None,
+        "deposit_state": deposit.get("deposit_state"),
+        "deposit_consequence": (
+            (violation.deposit_consequence if violation else None)
+            or deposit.get("consequence")
+        ),
+        "session_id": result.session_id,
+        "page_returned": bool(result.rendered_html),
+        "content_type": result.content_type,
+        "error": result.error,
+    }
+
+
+def _action_observation(result: PlaygroundActionResult) -> str:
+    violation = result.violation
+    deposit = result.deposit or {}
+    if result.error:
+        return result.error
+    if result.outcome == "allowed":
+        return (
+            "The gateway allowed the action."
+            + (f" Deposit: {deposit.get('consequence')}." if deposit.get("consequence") else "")
+        )
+    if result.outcome == "refused":
+        parts = [f"HTTP {violation.http_status}." if violation and violation.http_status else "The gateway refused the action."]
+        if violation and violation.reason_code:
+            parts.append(f"Reason: {violation.reason_code}.")
+        if violation and violation.rule_matched:
+            parts.append(f"Rule: {violation.rule_matched}.")
+        if deposit.get("consequence"):
+            parts.append(f"Deposit: {deposit.get('consequence')}.")
+        return " ".join(parts)
+    return "The action did not complete."
+
+
+def _fallback_summary(run: PlaygroundRun, action_ids: list[str]) -> str:
+    with run.lock:
+        results = list(run.action_results)
+    if not results:
+        return "The agent did not run any selected actions before stopping."
+    lines = [f"The agent ran {len(results)} of {len(action_ids)} selected action(s):"]
+    for result in results:
+        deposit = result.deposit or {}
+        line = f"- {result.label}: {result.outcome or result.status}"
+        if result.violation and result.violation.reason_code:
+            line += f" ({result.violation.reason_code})"
+        if deposit.get("consequence"):
+            line += f"; deposit {deposit['consequence']}"
+        if result.error:
+            line += f"; error: {result.error}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _terminal_reason_code(run: PlaygroundRun) -> str:
     """Audit reason code for a finished run, derived from its actual outcome."""
+    if run.outcome == "mixed":
+        return "PLAYGROUND_MIXED"
     if run.violation is not None and run.violation.reason_code:
         return run.violation.reason_code
     if run.outcome == "allowed":

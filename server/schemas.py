@@ -1198,7 +1198,10 @@ class OriginTestRequest(BaseModel):
 class PlaygroundRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action_id: str = Field(..., min_length=1, max_length=64)
+    # One action is the legacy API. New clients send action_ids to run a checklist.
+    action_id: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    action_ids: list[str] = Field(default_factory=list, max_length=20)
+    driver: Optional[Literal["agent", "scripted"]] = None
 
 
 class PlaygroundActionInfo(BaseModel):
@@ -1207,12 +1210,14 @@ class PlaygroundActionInfo(BaseModel):
     tone: Literal["good", "bad"]
     description: str
     expected: str
+    default_selected: bool = False
 
 
 class PlaygroundStep(BaseModel):
     seq: int
     at: str
     label: str
+    action_id: Optional[str] = None
     request: Optional[str] = None
     http_status: Optional[int] = None
     reason_code: Optional[str] = None
@@ -1230,6 +1235,34 @@ class PlaygroundViolation(BaseModel):
     disqualifying: bool = False
 
 
+class PlaygroundActionResult(BaseModel):
+    action_id: str
+    label: str
+    tone: Literal["good", "bad"]
+    status: Literal["running", "completed", "failed", "cancelled"]
+    outcome: Optional[Literal["allowed", "refused", "error"]] = None
+    rendered_html: Optional[str] = None
+    content_type: Optional[str] = None
+    violation: Optional[PlaygroundViolation] = None
+    deposit: Optional[dict[str, Any]] = None
+    session_id: Optional[str] = None
+    error: Optional[str] = None
+    elapsed_ms: Optional[int] = None
+    steps: list[PlaygroundStep] = Field(default_factory=list)
+
+
+class PlaygroundAgentInfo(BaseModel):
+    available: bool = False
+    driver: str = "scripted"
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    status: str = "not_run"
+    steps: int = 0
+    tool_calls: int = 0
+    summary: Optional[str] = None
+    error: Optional[str] = None
+
+
 class PlaygroundRunResponse(BaseModel):
     run_id: str
     action_id: str
@@ -1238,12 +1271,16 @@ class PlaygroundRunResponse(BaseModel):
     status: Literal["running", "completed", "failed", "cancelled"]
     started_at: str
     finished_at: Optional[str] = None
-    outcome: Optional[Literal["allowed", "refused", "error"]] = None
+    outcome: Optional[Literal["allowed", "refused", "mixed", "error"]] = None
     rendered_html: Optional[str] = None
     content_type: Optional[str] = None
     violation: Optional[PlaygroundViolation] = None
     deposit: Optional[dict[str, Any]] = None
     session_id: Optional[str] = None
+    selected_action_ids: list[str] = Field(default_factory=list)
+    driver: Literal["agent", "scripted"] = "scripted"
+    action_results: list[PlaygroundActionResult] = Field(default_factory=list)
+    agent: Optional[PlaygroundAgentInfo] = None
     steps: list[PlaygroundStep] = Field(default_factory=list)
     next_seq: int = 0
     error: Optional[str] = None
@@ -1261,6 +1298,8 @@ class PlaygroundRecentRun(BaseModel):
     started_at: str
     deposit_state: Optional[str] = None
     reason_code: Optional[str] = None
+    driver: str = "scripted"
+    action_count: int = 1
 
 
 class PlaygroundConfigResponse(BaseModel):
@@ -1269,3 +1308,6 @@ class PlaygroundConfigResponse(BaseModel):
     runs_remaining_this_hour: int
     recent_runs: list[PlaygroundRecentRun] = Field(default_factory=list)
     limits: dict[str, Any] = Field(default_factory=dict)
+    ai: PlaygroundAgentInfo = Field(default_factory=PlaygroundAgentInfo)
+    max_actions: int = 6
+    default_action_ids: list[str] = Field(default_factory=list)
