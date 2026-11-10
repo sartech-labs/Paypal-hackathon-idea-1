@@ -286,6 +286,7 @@
       else link.removeAttribute("aria-current");
     }
     $("page-title").textContent = VIEWS[view];
+    if ($("page-head")) $("page-head").hidden = view === "setup";
     if (!fromHash) history.replaceState(null, "", view === "setup" ? window.location.pathname : `#${view}`);
     if (view === "setup") { loadSetup(); loadPlayground(); }
     if (view === "operations" || view === "analytics") loadRequests(true);
@@ -680,9 +681,6 @@
       ],
     });
 
-    $("quick-filter").addEventListener("input", (event) => {
-      for (const grid of Object.values(state.grids)) if (grid) grid.setQuickFilter(event.target.value);
-    });
     return true;
   }
 
@@ -976,8 +974,8 @@
 
   // --- websites, access rules, and the plan playground --------------------------------
 
-  const SITE_STORE_KEY = "ct-console-sites-v1";
-  const CURRENCY_SYMBOLS = { USD: "$", EUR: "€", GBP: "£" };
+  const SITE_STORE_KEY = "ct-console-sites-v4";
+  const CURRENCY_SYMBOLS = { USD: "$" };
 
   const PG_BEHAVIORS = [
     { id: "follow_allowed", label: "Follow allowed paths", tone: "safe", action: "allowed_page", selected: true },
@@ -1012,75 +1010,25 @@
     };
   }
 
-  function siteHost(url) {
-    try {
-      return new URL(url).host;
-    } catch (_) {
-      return String(url || "").replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
-    }
-  }
-
   function selectedSite() {
     return state.sites.find((site) => site.id === state.selectedSiteId) || state.sites[0] || null;
   }
 
-  function isBundledDefaultConfig(cfg) {
-    if (!cfg) return true;
-    const allowed = Array.isArray(cfg.allowed_paths) ? cfg.allowed_paths : [];
-    return String(cfg.deposit_amount) === "1.00"
-      && Number(cfg.rate_limit_requests) === 3
-      && Number(cfg.rate_limit_window_seconds) === 10
-      && allowed.includes("/news");
-  }
-
   function seedSites(cfg) {
-    const origin = (cfg && cfg.origin_url) || "";
-    const primaryHost = origin ? siteHost(origin) : "shop.example.com";
-    const demoDefaults = isBundledDefaultConfig(cfg);
-    const currency = (cfg && cfg.currency) || "USD";
-    const configuredRate = Number(cfg && cfg.rate_limit_requests);
-    const configuredWindow = Number(cfg && cfg.rate_limit_window_seconds);
-    let rate = demoDefaults ? 60 : (Number.isFinite(configuredRate) && configuredRate > 0 ? configuredRate : 60);
-    let unit = demoDefaults ? 60 : ([1, 60, 3600].includes(configuredWindow) ? configuredWindow : 60);
-    if (!demoDefaults && !([1, 60, 3600].includes(configuredWindow)) && Number.isFinite(configuredWindow) && configuredWindow > 0) {
-      // Keep the effective rate when a deployment uses a non-standard window.
-      rate = Math.max(1, Math.round((configuredRate * 60) / configuredWindow));
-    }
-    const allowed = demoDefaults
-      ? ["/products/*", "/blog/*", "/docs/*"]
-      : (Array.isArray(cfg && cfg.allowed_paths) && cfg.allowed_paths.length ? cfg.allowed_paths.slice() : ["/"]);
-    const disallowed = demoDefaults
-      ? ["/admin/*", "/checkout/*"]
-      : (Array.isArray(cfg && cfg.disallowed_paths) ? cfg.disallowed_paths.slice() : []);
-    const deposit = demoDefaults ? "5.00" : String((cfg && cfg.deposit_amount) || "5.00");
     return [
       {
-        id: "site_shop",
-        host: primaryHost,
-        origin,
-        applyOrigin: Boolean(origin),
+        id: "site_scrapethissite",
+        host: "www.scrapethissite.com",
+        origin: "https://www.scrapethissite.com",
+        applyOrigin: true,
         status: "live",
-        deposit,
-        currency,
-        allowed,
-        disallowed,
-        rate,
-        unit,
-        dirty: demoDefaults,
-      },
-      {
-        id: "site_docs",
-        host: "docs.example.com",
-        origin: "",
-        applyOrigin: false,
-        status: "paused",
-        deposit: "2.50",
-        currency,
-        allowed: ["/docs/*", "/blog/*"],
-        disallowed: ["/admin/*"],
-        rate: 30,
+        deposit: "5.00",
+        currency: "USD",
+        allowed: ["/pages", "/login"],
+        disallowed: ["/lessons", "/faq"],
+        rate: 10,
         unit: 60,
-        dirty: true,
+        dirty: false,
       },
     ];
   }
@@ -1103,11 +1051,11 @@
         origin: String(item.origin || ""),
         applyOrigin: Boolean(item.applyOrigin),
         status: item.status === "paused" ? "paused" : "live",
-        deposit: String(item.deposit || "1.00"),
-        currency: ["USD", "EUR", "GBP"].includes(item.currency) ? item.currency : "USD",
+        deposit: String(item.deposit || "5.00"),
+        currency: "USD",
         allowed,
         disallowed,
-        rate: Number.isFinite(rate) && rate > 0 ? rate : 30,
+        rate: Number.isFinite(rate) && rate > 0 ? rate : 10,
         unit: units.includes(unit) ? unit : 60,
         dirty: Boolean(item.dirty),
       });
@@ -1244,39 +1192,7 @@
 
   function addSite(event) {
     event.preventDefault();
-    const input = $("site-add-input");
-    let value = input.value.trim();
-    if (!value) { input.focus(); return; }
-    value = value.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim().toLowerCase();
-    if (!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d+)?$/.test(value)) {
-      showSetupMessage("Enter a website host such as shop.example.com.");
-      return;
-    }
-    if (state.sites.some((site) => site.host.toLowerCase() === value)) {
-      showSetupMessage(`${value} is already in the list.`);
-      return;
-    }
-    const site = {
-      id: `site_${Math.random().toString(36).slice(2, 9)}`,
-      host: value,
-      origin: `https://${value}`,
-      applyOrigin: true,
-      status: "paused",
-      deposit: "1.00",
-      currency: "USD",
-      allowed: ["/"],
-      disallowed: ["/admin/*"],
-      rate: 30,
-      unit: 60,
-      dirty: true,
-    };
-    state.sites.push(site);
-    state.selectedSiteId = site.id;
-    state.pgResults = {};
-    input.value = "";
-    persistSites();
-    renderSetupView();
-    toast("accent", "+", "Website added", `${value} is paused. Resume it, then apply the configuration.`);
+    showSetupMessage("Adding websites is disabled in demo.");
   }
 
   function toggleSite(siteId) {
@@ -1354,13 +1270,12 @@
 
     const canEdit = !state.configReadOnly;
     if ($("cfg-deposit")) $("cfg-deposit").disabled = !canEdit || !site;
-    if ($("cfg-currency")) {
-      // The gateway's settlement currency is deployment configuration, not a per-site choice.
-      $("cfg-currency").disabled = true;
-      $("cfg-currency").title = "Currency follows the gateway's PayPal currency.";
-    }
     if ($("site-add-input")) $("site-add-input").disabled = !canEdit;
-    if ($("site-add-button")) $("site-add-button").disabled = !canEdit;
+    if ($("site-add-button")) {
+      // Adding websites is disabled in this demo, regardless of edit rights.
+      $("site-add-button").disabled = true;
+      $("site-add-button").title = "Disabled in demo";
+    }
     for (const node of document.querySelectorAll(".site-menu-toggle")) node.disabled = !canEdit;
     for (const node of document.querySelectorAll(".rule-path-remove, .rule-path-add input, .rule-path-add button")) {
       node.disabled = !canEdit || !site;
@@ -1393,7 +1308,7 @@
       return;
     }
     $("cfg-deposit").value = site.deposit || "";
-    $("cfg-currency").value = site.currency || "USD";
+    site.currency = "USD";
     $("cfg-rate").value = site.rate || "";
     $("cfg-rate-unit").value = String(site.unit || 60);
     renderRules(site);
@@ -1483,13 +1398,13 @@
       } else {
         state.sites = seedSites(cfg);
         state.selectedSiteId = state.sites[0] ? state.sites[0].id : null;
-        state.appliedSiteId = isBundledDefaultConfig(cfg) ? null : "site_shop";
+        state.appliedSiteId = "site_scrapethissite";
       }
       if (!state.sites.some((site) => site.id === state.selectedSiteId)) {
         state.selectedSiteId = state.sites[0] ? state.sites[0].id : null;
       }
-      const gatewayCurrency = (cfg && cfg.currency) || "USD";
-      for (const site of state.sites) site.currency = gatewayCurrency;
+      // The demo settles in USD only.
+      for (const site of state.sites) site.currency = "USD";
       persistSites();
     }
     renderSetupView();
@@ -1562,7 +1477,6 @@
       const col = el("div", { className: "pg-choice-col", dataset: { tone: tone === "safe" ? "good" : "critical" } }, [
         el("div", { className: "pg-choice-head" }, [
           el("span", { className: "pg-choice-title", text: tone === "safe" ? "Safe" : "Bad" }),
-          el("span", { className: "pg-choice-note", text: tone === "safe" ? "(all complete)" : "(first one ends run)" }),
         ]),
       ]);
       for (const behavior of behaviors) {
@@ -1591,8 +1505,8 @@
     return safe.concat(bad);
   }
 
-  function planStatus(step, index, plan, firstBad, result, running) {
-    if (index > firstBad && firstBad !== -1) return { state: "not-tested", label: "not tested", tone: "muted" };
+  function planStatus(step, index, plan, firstBad, result, running, hasRun) {
+    if (hasRun && firstBad !== -1 && index > firstBad) return { state: "not-tested", label: "not tested", tone: "muted" };
     if (result && result.state) {
       if (result.state === "blocked") {
         const http = result.http ? ` · HTTP ${result.http}` : " · ends run";
@@ -1603,6 +1517,7 @@
       return { state: "completes", label: "completes", tone: "good", detail: result.detail };
     }
     if (running) return { state: "not-tested", label: "waiting", tone: "muted" };
+    if (!hasRun) return { state: "pending", label: "", tone: "muted" };
     if (step.tone === "bad" && index === firstBad) return { state: "will-block", label: "BLOCKS · ends run", tone: "critical" };
     return { state: "will-complete", label: "completes", tone: "muted" };
   }
@@ -1629,6 +1544,7 @@
     const plan = buildPlaygroundPlan();
     const firstBad = plan.findIndex((step) => step.tone === "bad");
     const executable = firstBad === -1 ? plan.length : firstBad + 1;
+    const hasRun = Boolean(state.pgRunning) || Object.keys(state.pgResults).length > 0;
     const list = $("pg-plan-list");
     clear(list);
 
@@ -1640,17 +1556,14 @@
     const tested = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state && resultStates[step.id].state !== "running").length;
     const completed = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state === "completes").length;
     const blocked = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state === "blocked").length;
-    const notTested = plan.length - executable;
     const countNode = $("pg-plan-count");
     const summaryNode = $("pg-plan-summary");
     if (!plan.length) {
       countNode.textContent = "0 of 0 tested";
       summaryNode.textContent = "Select behaviors to build the plan.";
-    } else if (!tested && !state.pgRunning) {
-      const safeCount = plan.filter((step) => step.tone === "safe").length;
-      const badCount = plan.filter((step) => step.tone === "bad").length;
+    } else if (!hasRun) {
       countNode.textContent = `0 of ${plan.length} tested`;
-      summaryNode.textContent = `completes ${safeCount} · blocks ${badCount ? 1 : 0} · not tested ${notTested}`;
+      summaryNode.textContent = "Select behaviors, then run the plan.";
     } else {
       countNode.textContent = `${tested} of ${plan.length} tested`;
       summaryNode.textContent = `completes ${completed} · blocks ${blocked} · not tested ${Math.max(0, plan.length - tested)}`;
@@ -1658,7 +1571,7 @@
 
     plan.forEach((step, index) => {
       const result = state.pgResults[step.id];
-      const status = planStatus(step, index, plan, firstBad, result, state.pgRunning);
+      const status = planStatus(step, index, plan, firstBad, result, state.pgRunning, hasRun);
       const row = el("li", { className: "pg-plan-row", dataset: { state: status.state } }, [
         el("span", { className: "pg-plan-num", text: String(index + 1).padStart(2, "0") }),
         el("span", { className: "pg-plan-tone", dataset: { tone: step.tone }, text: step.tone === "safe" ? "SAFE" : "BAD" }),
@@ -1687,8 +1600,12 @@
     button.disabled = Boolean(disabledReason) || state.pgRunning;
     button.textContent = state.pgRunning
       ? `Running ${Math.min(state.pgCurrentIndex + 1, executable)} of ${executable}`
-      : `Run ${executable} of ${plan.length}`;
-    hint.textContent = disabledReason || `Runs against ${site.host}. The first BAD step stops the plan; later steps are not tested.`;
+      : "Run plan";
+    hint.textContent =
+      disabledReason ||
+      (hasRun
+        ? `Runs against ${site.host}. The first BAD step stops the plan; later steps are not tested.`
+        : "Select behaviors, then press Run to test them against the gateway.");
   }
 
   async function loadPlayground(force) {
@@ -2379,13 +2296,6 @@
       state.pgResults = {};
       markSiteDirty();
       if ($("pg-hold")) $("pg-hold").textContent = moneyForSite(site) || "—";
-    });
-    $("cfg-currency").addEventListener("change", (event) => {
-      const site = selectedSite();
-      if (!site) return;
-      site.currency = event.target.value;
-      markSiteDirty();
-      refreshSetupControls();
     });
     $("cfg-rate").addEventListener("input", (event) => {
       const site = selectedSite();

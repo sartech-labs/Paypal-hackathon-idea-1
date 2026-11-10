@@ -17,7 +17,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -51,6 +51,8 @@ DEFAULT_RUN_TIMEOUT_SECONDS = 60.0
 DEFAULT_AGENT_RUN_TIMEOUT_SECONDS = 180.0
 DEFAULT_AGENT_MAX_TURNS = 12
 MAX_BURST_REQUESTS = 1100
+MAX_REDIRECTS = 4
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 DEFAULT_MAX_ACTIONS = 6
 DEFAULT_SELECTED_ACTIONS = ("allowed_page", "disallowed_path")
 # Last-resort page for a policy that advertises no usable page paths.
@@ -978,6 +980,10 @@ class PlaygroundRunner:
         request and the origin had nothing to serve: that is a content gap, never a policy
         refusal, so the reader swaps in another allowed page (bounded) and never reports it
         as a violation.
+
+        A same-site redirect (for example `/pages` -> `/pages/`) is also not a policy
+        refusal. The reader follows it through the gateway, never directly to the origin,
+        so the redirect target is still checked against the live policy.
         """
         queue = list(paths)
         attempted = set(queue)
@@ -994,22 +1000,47 @@ class PlaygroundRunner:
             index += 1
             if index > 1 and pace:
                 self._pause(run, _pace_seconds(policy))
-            resp = http.get(path, headers=token_headers)
-            miss = _origin_miss(resp)
-            total = max(len(paths), index + len(queue))
-            self._record_response(
-                run,
-                f"{label} {index}/{total}",
-                f"GET {path}",
-                resp,
-                include_body=resp.status_code == 200,
-                note=(
-                    f"The gateway authorized GET {path}, but the site origin returned HTTP 404 "
-                    "(no page is published at that allowed path)."
+            followed = 0
+            redirect: Optional[str] = None
+            resp: Any = None
+            miss = False
+            while True:
+                resp = http.get(path, headers=token_headers)
+                miss = _origin_miss(resp) or resp.status_code in REDIRECT_STATUSES
+                redirect = (
+                    _redirect_location(resp, path)
+                    if resp.status_code in REDIRECT_STATUSES
+                    else None
                 )
-                if miss
-                else None,
-            )
+                total = max(len(paths), index + len(queue))
+                note = None
+                if redirect is not None:
+                    note = (
+                        f"The gateway authorized GET {path}, and the origin answered HTTP "
+                        f"{resp.status_code} with a redirect to {redirect}. The playground "
+                        "follows it through the gateway so policy still applies."
+                    )
+                elif miss:
+                    note = (
+                        f"The gateway authorized GET {path}, but the site origin returned HTTP "
+                        f"{resp.status_code} without a usable page. This is a content gap, not "
+                        "a policy refusal."
+                    )
+                self._record_response(
+                    run,
+                    f"{label} {index}/{total}",
+                    f"GET {path}",
+                    resp,
+                    include_body=resp.status_code == 200,
+                    note=note,
+                )
+                if redirect is None:
+                    break
+                followed += 1
+                if followed > MAX_REDIRECTS:
+                    miss = True
+                    break
+                path = redirect
             if resp.status_code == 200:
                 responses.append(resp)
                 continue
@@ -1619,6 +1650,32 @@ def _origin_miss(resp: Any) -> bool:
     if getattr(resp, "status_code", None) != 404:
         return False
     return bool(_agent_response_headers(resp).get("X-SARA-Session-Id"))
+
+
+def _redirect_location(resp: Any, current_path: str) -> Optional[str]:
+    """Return a gateway-relative path for an origin redirect, ignoring its host.
+
+    Origin sites often redirect to an absolute URL such as
+    `http://www.example.com/pages/`. Following that URL directly would bypass the
+    gateway, so only the path and query are kept and re-requested through SARA.
+    """
+    headers = getattr(resp, "headers", None)
+    if headers is None:
+        return None
+    location = headers.get("location")
+    if not location:
+        return None
+    target = urlsplit(str(location))
+    if target.scheme or target.netloc:
+        path = target.path or "/"
+        query = target.query
+    else:
+        resolved = urlsplit(urljoin(current_path, str(location)))
+        path = resolved.path or "/"
+        query = resolved.query
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"{path}?{query}" if query else path
 
 
 def _action_result_from_run(run: PlaygroundRun) -> PlaygroundActionResult:

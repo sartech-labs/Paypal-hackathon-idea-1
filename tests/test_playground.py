@@ -231,6 +231,24 @@ class _FakeGateway:
         return _FakeResponse(200, {"status": "ok"})
 
 
+class _RedirectingGateway(_FakeGateway):
+    """An origin that redirects `/articles` to `/articles/` with an absolute URL."""
+
+    def get(self, url: str, **kwargs: Any) -> _FakeResponse:
+        paid = bool((kwargs.get("headers") or {}).get("Authorization"))
+        if url == self.challenge_path and not paid:
+            return super().get(url, **kwargs)
+        if url == self.challenge_path:
+            return _FakeResponse(
+                308,
+                {"error": "moved"},
+                headers={"location": "http://origin.example/articles/"},
+            )
+        if url == "/articles/":
+            return _FakeResponse(200, {"title": "Articles"}, headers={"X-SARA-Session-Id": "ses_1"})
+        return super().get(url, **kwargs)
+
+
 def _wait_for_run(run: Any, timeout: float = 10.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -290,6 +308,24 @@ def test_origin_404_for_an_allowed_path_degrades_with_a_clear_message() -> None:
     messages = [step.message or "" for step in run.steps]
     assert any("origin returned HTTP 404" in message for message in messages)
     assert any("No page published at the allowed paths" in step.label for step in run.steps)
+
+
+def test_allowed_page_follows_origin_redirect_through_gateway() -> None:
+    policy = json.loads((DATA_DIR / "site_config.json").read_text(encoding="utf-8"))
+    policy["allowed_paths"] = ["/", "/articles"]
+    policy["pricing_tiers"] = []
+    gateway = _RedirectingGateway(challenge_path="/articles")
+    runner = PlaygroundRunner(max_runs_per_hour=5, http_factory=lambda _base: gateway, sleep=lambda _s: None)
+    run = runner.start(action_id="allowed_page", base_url="http://testserver", policy=policy)
+    assert _wait_for_run(run)
+    assert run.status == "completed", run.error
+    assert run.outcome == "allowed"
+    assert run.violation is None
+    assert run.deposit is not None and run.deposit["deposit_state"] == "REFUNDED"
+    requests = [step.request for step in run.steps if step.request]
+    assert "GET /articles" in requests
+    assert "GET /articles/" in requests
+    assert "Articles" in (run.rendered_html or "")
 
 
 def test_slow_rate_limit_pauses_are_capped() -> None:

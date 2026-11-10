@@ -10,7 +10,7 @@
     /* Apply the saved theme before first paint (dark by default). */
     try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
   </script>
-  <link rel="stylesheet" href="/_sara/static/dashboard.css">
+  <link rel="stylesheet" href="/_sara/static/dashboard.css?v=2">
   <link rel="stylesheet" href="/_sara/static/demo.css">
   <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
           integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
@@ -18,7 +18,7 @@
   <script src="/_sara/static/grid_kit.js" defer></script>
   <script src="/_sara/static/paypal_panel.js" defer></script>
   <script src="/_sara/static/analytics.js" defer></script>
-  <script src="/_sara/static/dashboard.js" defer></script>
+  <script src="/_sara/static/dashboard.js?v=4" defer></script>
 </head>
 <body>
 <header class="appbar">
@@ -74,12 +74,9 @@
   </aside>
 
   <main class="console-main">
-    <div class="page-head">
+    <div class="page-head" id="page-head">
       <div>
         <h1 id="page-title">Overview</h1>
-      </div>
-      <div class="filter-row">
-        <input type="search" id="quick-filter" placeholder="Filter all tables..." aria-label="Filter all tables">
       </div>
     </div>
 
@@ -100,21 +97,17 @@
         <form class="site-add" id="site-add-form" autocomplete="off">
           <div class="site-add-shell">
             <span aria-hidden="true">https://</span>
-            <input id="site-add-input" placeholder="shop.example.com" spellcheck="false" aria-label="New website host">
+            <input id="site-add-input" placeholder="www.scrapethissite.com" spellcheck="false" aria-label="New website host">
           </div>
-          <button type="submit" class="primary" id="site-add-button">Add</button>
+          <button type="submit" class="primary" id="site-add-button" disabled title="Disabled in demo">Add</button>
         </form>
+        <p class="hint site-add-note">Adding websites is disabled in demo.</p>
         <hr class="section-divider">
         <div class="deposit-block">
           <span class="field-kicker">Deposit per agent session</span>
           <div class="deposit-control">
             <span class="currency-symbol" id="cfg-currency-symbol" aria-hidden="true">$</span>
             <input id="cfg-deposit" inputmode="decimal" placeholder="5.00" aria-label="Deposit per agent session">
-            <select id="cfg-currency" aria-label="Currency">
-              <option value="USD">USD</option>
-              <option value="EUR">EUR</option>
-              <option value="GBP">GBP</option>
-            </select>
           </div>
         </div>
         <div class="setup-actions">
@@ -156,15 +149,17 @@
           </div>
         </div>
         <hr class="section-divider">
-        <div class="rate-row">
-          <span class="rate-label">Rate limit <span class="muted">(per agent)</span></span>
-          <input id="cfg-rate" type="number" min="1" max="1000" step="1" aria-label="Rate limit requests">
-          <span class="rate-unit-label">requests /</span>
-          <select id="cfg-rate-unit" aria-label="Rate limit window">
-            <option value="1">second</option>
-            <option value="60" selected>minute</option>
-            <option value="3600">hour</option>
-          </select>
+        <div class="rate-block">
+          <span class="field-kicker">Rate limit <span class="muted">(per agent)</span></span>
+          <div class="rate-control">
+            <input id="cfg-rate" type="number" min="1" max="1000" step="1" aria-label="Rate limit requests">
+            <span class="rate-unit-label">requests /</span>
+            <select id="cfg-rate-unit" aria-label="Rate limit window">
+              <option value="1">second</option>
+              <option value="60" selected>minute</option>
+              <option value="3600">hour</option>
+            </select>
+          </div>
         </div>
         <div class="setup-actions">
           <button type="button" class="primary" id="rules-save">Apply live</button>
@@ -188,7 +183,6 @@
           <span class="pg-kicker">Behaviors</span>
           <span class="pg-selection" id="pg-selection">0 selected</span>
         </div>
-        <p class="hint pg-rule">SAFE steps always complete. The first BAD step ends the session &mdash; nothing after it is tested.</p>
         <div class="pg-choice-grid" id="pg-choices"></div>
         <hr class="section-divider">
         <div class="pg-plan">

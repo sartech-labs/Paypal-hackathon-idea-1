@@ -307,8 +307,15 @@ async def _handle_gateway_request(
             )
         }
         try:
+            # Policy matching uses the slash-normalized path, but the origin may treat
+            # `/pages` and `/pages/` differently (many sites redirect one to the other).
+            # Keep the client's trailing slash on the forwarded request so canonical
+            # redirects do not loop back through the gateway.
+            origin_path = decision.normalized_path
+            if origin_path != "/" and raw_subpath.endswith("/"):
+                origin_path += "/"
             origin = await container.origin_proxy.fetch(
-                decision.normalized_path,
+                origin_path,
                 request.url.query,
                 method=request.method,
                 body=body,

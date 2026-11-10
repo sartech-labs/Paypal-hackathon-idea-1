@@ -34,6 +34,8 @@ def origin_handler(seen: list[str]):
             return httpx.Response(200, html="<h1>Origin news</h1>", headers={"Cache-Control": "max-age=60", "Set-Cookie": "sid=secret"})
         if request.url.path == "/blog/post-1":
             return httpx.Response(200, html="<h1>Post 1</h1>")
+        if request.url.path == "/trailing/":
+            return httpx.Response(200, html="<h1>Trailing slash</h1>")
         if request.url.path == "/broken":
             return httpx.Response(503, text="down")
         if request.url.path == "/error500":
@@ -91,6 +93,16 @@ async def test_proxy_forwards_allowed_paths_and_blocks_robots_disallows(proxied)
         res = await client.get("/gateway/account", headers=auth)
         assert res.status_code == 403 and res.json()["reason_code"] == "DISALLOWED_PATH"
         assert len(seen) == before
+
+
+async def test_proxy_preserves_trailing_slash_for_origin_canonicalization(proxied) -> None:
+    app, seen = proxied
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        _, _, session = await complete_onboarding_flow(client, "crawler-proxy-slash")
+        auth = {"Authorization": f"Bearer {session['access_token']}"}
+        res = await client.get("/gateway/trailing/", headers=auth)
+        assert res.status_code == 200 and "Trailing slash" in res.text
+        assert "/trailing/" in seen
 
 
 async def test_proxy_passes_origin_404_and_5xx_statuses(proxied) -> None:
