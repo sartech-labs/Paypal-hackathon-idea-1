@@ -9,7 +9,7 @@
   const SLOW_FETCH_MS = 400;
   const REQUESTS_EVERY_MS = 6000;
   const VIEWS = {
-    setup: "Setup & playground",
+    setup: "Websites",
     overview: "Overview",
     commerce: "Commerce",
     operations: "Operations",
@@ -38,10 +38,18 @@
     policyLoaded: false,
     config: null,
     configReadOnly: false,
+    applying: false,
+    sites: [],
+    selectedSiteId: null,
+    appliedSiteId: null,
     playground: null,
-    pgRunId: null,
-    pgNextSeq: 0,
-    pgTimer: null,
+    pgCanStart: null,
+    pgSelected: null,
+    pgResults: {},
+    pgRunning: false,
+    pgCurrentIndex: -1,
+    pgRunToken: 0,
+    pgActiveRunId: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -679,19 +687,6 @@
   }
 
   // --- render: header, KPIs, charts ----------------------------------------------------
-  function renderBadges(data) {
-    const badges = $("badges");
-    clear(badges);
-    const add = (tone, text) =>
-      badges.append(el("span", { className: "badge" }, [el("span", { className: "badge-dot", dataset: { tone } }), el("span", { text })]));
-    add(data.payment_mode === "mock" ? "neutral" : "accent", data.payment_mode === "mock" ? "Mock payments (simulated)" : "PayPal Sandbox");
-    add("accent", data.settlement_mode === "authorization" ? "Settlement: authorization hold" : "Settlement: capture + refund");
-    add(data.ai_available ? "good" : "neutral", data.ai_available ? `AI: ${providerName(data.ai_provider)} (${data.ai_model})` : "AI: rule-based explanations only");
-    const canEdit = data.access === "admin" || Boolean(state.config && state.config.config_public);
-    add("neutral", data.access === "admin" ? "Admin view" : canEdit ? "Public demo editing" : "Read-only public view");
-    $("site-line").textContent = `${data.site_name} · policy ${data.policy_version}`;
-  }
-
   // A KPI card. With `go`, the card is a button that drills down into the matching table.
   function tile(label, value, sub, tone, icon, go) {
     const card = el(go ? "button" : "div", {
@@ -979,538 +974,886 @@
     );
   }
 
-  // --- setup & crawler playground -----------------------------------------------------
+  // --- websites, access rules, and the plan playground --------------------------------
 
-  function lines(value) {
-    return String(value || "")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
+  const SITE_STORE_KEY = "ct-console-sites-v1";
+  const CURRENCY_SYMBOLS = { USD: "$", EUR: "€", GBP: "£" };
+
+  const PG_BEHAVIORS = [
+    { id: "follow_allowed", label: "Follow allowed paths", tone: "safe", action: "allowed_page", selected: true },
+    { id: "respect_rate", label: "Respect rate limit", tone: "safe", action: "polite_pace", selected: true },
+    { id: "send_agent_id", label: "Send agent ID", tone: "safe", action: "valid_paid_token", selected: true },
+    { id: "honor_crawl_delay", label: "Honor crawl-delay", tone: "safe", action: "deposit_and_crawl", selected: false },
+    { id: "hit_blocked", label: "Hit blocked path", tone: "bad", action: "disallowed_path", selected: true },
+    { id: "exceed_rate", label: "Exceed rate limit", tone: "bad", action: "rate_limit_burst", selected: true },
+    { id: "spoof_identity", label: "Spoof identity", tone: "bad", action: "forged_signature", selected: false },
+    { id: "ignore_robots", label: "Ignore robots.txt", tone: "bad", action: "disallowed_path", selected: false },
+  ];
+
+  function defaultBehaviorSelection() {
+    const result = {};
+    for (const behavior of PG_BEHAVIORS) result[behavior.id] = behavior.selected;
+    return result;
   }
 
   function configFromPolicy(policy) {
     return {
       sara_mode: (state.data && state.data.sara_mode) || "demo",
-      origin_url: (state.data && state.data.origin_url) || "",
-      origin_configured: Boolean(state.data && state.data.origin_configured),
-      origin_status: { reachable: false, robots_imported: false, error: null },
+      origin_url: "",
       deposit_amount: policy.deposit_amount,
-      currency: policy.currency,
-      pricing_tiers: policy.pricing_tiers || [],
+      currency: policy.currency || "USD",
       allowed_paths: policy.allowed_paths || [],
       disallowed_paths: policy.disallowed_paths || [],
-      max_requests_per_session: policy.max_requests_per_session,
       rate_limit_requests: policy.rate_limit_requests,
       rate_limit_window_seconds: policy.rate_limit_window_seconds,
-      policy_version: policy.policy_version,
+      max_requests_per_session: policy.max_requests_per_session,
       config_public: false,
-      warnings: ["Read-only view. Enter the admin token to apply changes."],
+      warnings: [],
     };
   }
 
-  function setupStatus(cfg) {
-    const box = $("setup-status");
+  function siteHost(url) {
+    try {
+      return new URL(url).host;
+    } catch (_) {
+      return String(url || "").replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+    }
+  }
+
+  function selectedSite() {
+    return state.sites.find((site) => site.id === state.selectedSiteId) || state.sites[0] || null;
+  }
+
+  function isBundledDefaultConfig(cfg) {
+    if (!cfg) return true;
+    const allowed = Array.isArray(cfg.allowed_paths) ? cfg.allowed_paths : [];
+    return String(cfg.deposit_amount) === "1.00"
+      && Number(cfg.rate_limit_requests) === 3
+      && Number(cfg.rate_limit_window_seconds) === 10
+      && allowed.includes("/news");
+  }
+
+  function seedSites(cfg) {
+    const origin = (cfg && cfg.origin_url) || "";
+    const primaryHost = origin ? siteHost(origin) : "shop.example.com";
+    const demoDefaults = isBundledDefaultConfig(cfg);
+    const currency = (cfg && cfg.currency) || "USD";
+    const configuredRate = Number(cfg && cfg.rate_limit_requests);
+    const configuredWindow = Number(cfg && cfg.rate_limit_window_seconds);
+    let rate = demoDefaults ? 60 : (Number.isFinite(configuredRate) && configuredRate > 0 ? configuredRate : 60);
+    let unit = demoDefaults ? 60 : ([1, 60, 3600].includes(configuredWindow) ? configuredWindow : 60);
+    if (!demoDefaults && !([1, 60, 3600].includes(configuredWindow)) && Number.isFinite(configuredWindow) && configuredWindow > 0) {
+      // Keep the effective rate when a deployment uses a non-standard window.
+      rate = Math.max(1, Math.round((configuredRate * 60) / configuredWindow));
+    }
+    const allowed = demoDefaults
+      ? ["/products/*", "/blog/*", "/docs/*"]
+      : (Array.isArray(cfg && cfg.allowed_paths) && cfg.allowed_paths.length ? cfg.allowed_paths.slice() : ["/"]);
+    const disallowed = demoDefaults
+      ? ["/admin/*", "/checkout/*"]
+      : (Array.isArray(cfg && cfg.disallowed_paths) ? cfg.disallowed_paths.slice() : []);
+    const deposit = demoDefaults ? "5.00" : String((cfg && cfg.deposit_amount) || "5.00");
+    return [
+      {
+        id: "site_shop",
+        host: primaryHost,
+        origin,
+        applyOrigin: Boolean(origin),
+        status: "live",
+        deposit,
+        currency,
+        allowed,
+        disallowed,
+        rate,
+        unit,
+        dirty: demoDefaults,
+      },
+      {
+        id: "site_docs",
+        host: "docs.example.com",
+        origin: "",
+        applyOrigin: false,
+        status: "paused",
+        deposit: "2.50",
+        currency,
+        allowed: ["/docs/*", "/blog/*"],
+        disallowed: ["/admin/*"],
+        rate: 30,
+        unit: 60,
+        dirty: true,
+      },
+    ];
+  }
+
+  function normalizeStoredSites(raw) {
+    if (!Array.isArray(raw) || !raw.length) return null;
+    const units = [1, 60, 3600];
+    const sites = [];
+    for (const [index, item] of raw.entries()) {
+      if (!item || typeof item !== "object") return null;
+      const host = String(item.host || "").trim();
+      if (!host) return null;
+      const allowed = Array.isArray(item.allowed) ? item.allowed.map(String).filter(Boolean) : ["/"];
+      const disallowed = Array.isArray(item.disallowed) ? item.disallowed.map(String).filter(Boolean) : [];
+      const unit = Number(item.unit);
+      const rate = Number(item.rate);
+      sites.push({
+        id: String(item.id || `site_${index}`),
+        host,
+        origin: String(item.origin || ""),
+        applyOrigin: Boolean(item.applyOrigin),
+        status: item.status === "paused" ? "paused" : "live",
+        deposit: String(item.deposit || "1.00"),
+        currency: ["USD", "EUR", "GBP"].includes(item.currency) ? item.currency : "USD",
+        allowed,
+        disallowed,
+        rate: Number.isFinite(rate) && rate > 0 ? rate : 30,
+        unit: units.includes(unit) ? unit : 60,
+        dirty: Boolean(item.dirty),
+      });
+    }
+    return sites;
+  }
+
+  function loadStoredSites() {
+    const raw = store.get("localStorage", SITE_STORE_KEY);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      const sites = normalizeStoredSites(Array.isArray(parsed) ? parsed : parsed && parsed.sites);
+      if (!sites) return null;
+      return {
+        sites,
+        selectedSiteId: (parsed && parsed.selectedSiteId) || null,
+        appliedSiteId: (parsed && parsed.appliedSiteId) || null,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function persistSites() {
+    store.set("localStorage", SITE_STORE_KEY, JSON.stringify({
+      sites: state.sites,
+      selectedSiteId: state.selectedSiteId,
+      appliedSiteId: state.appliedSiteId,
+    }));
+  }
+
+  function closeSiteMenus(except) {
+    for (const menu of document.querySelectorAll(".site-menu")) {
+      if (menu !== except) menu.hidden = true;
+    }
+  }
+
+  function showSetupMessage(message) {
+    const node = $("cfg-hint");
+    if (node) node.textContent = message;
+    showBanner(message);
+  }
+
+  // The gateway uses robots-style prefix rules. The console shows the familiar `/*`
+  // spelling, then strips it before applying so `/products/*` becomes `/products`.
+  function policyPath(value) {
+    let path = String(value || "").trim();
+    if (!path) return "";
+    if (!path.startsWith("/")) path = `/${path}`;
+    if (path.endsWith("*")) path = path.slice(0, -1).replace(/\/+$/, "") || "/";
+    return path;
+  }
+
+  function moneyForSite(site) {
+    return money(site && site.deposit, (site && site.currency) || "USD");
+  }
+
+  function renderSites() {
+    const box = $("site-list");
+    if (!box) return;
     clear(box);
-    box.append(chip(cfg.sara_mode === "gateway" ? "accent" : "neutral", cfg.sara_mode === "gateway" ? "↗" : "◧", cfg.sara_mode === "gateway" ? "Gateway mode" : "Demo mode"));
-    box.append(chip(cfg.origin_configured ? "good" : "warning", cfg.origin_configured ? "✓" : "!", cfg.origin_configured ? "Website connected" : "Bundled content"));
-    box.append(chip("neutral", "$", `${cfg.currency || "USD"} · policy ${cfg.policy_version}`));
-    if (cfg.config_public) box.append(chip("accent", "✎", "Public demo editing"));
-  }
+    const count = state.sites.length;
+    $("sites-count").textContent = `${count} site${count === 1 ? "" : "s"}`;
 
-  function renderOriginStatus(cfg, extra) {
-    const node = $("cfg-origin-status");
-    const status = (extra && extra.origin_status) || cfg.origin_status || {};
-    const parts = [];
-    if (!cfg.origin_url) {
-      parts.push("No target URL: the bundled demo content is served to agents.");
-    } else if (status.error) {
-      parts.push(`Target unreachable: ${status.error}`);
-    } else if (status.reachable) {
-      parts.push("Target reachable.");
-      if (status.robots_imported) parts.push("robots.txt imported.");
-      if (status.crawl_delay_seconds) parts.push(`Crawl-delay ${status.crawl_delay_seconds}s.`);
-    } else {
-      parts.push("Target not tested yet.");
+    if (!count) {
+      box.append(el("p", { className: "empty", text: "No websites yet. Add one below." }));
+      return;
     }
-    node.textContent = parts.join(" ");
-  }
 
-  function renderSetup(cfg) {
-    state.config = cfg;
-    state.configReadOnly = !(state.token || cfg.config_public);
-    $("cfg-origin").value = cfg.origin_url || "";
-    $("cfg-deposit").value = cfg.deposit_amount || "";
-    $("cfg-budget").value = cfg.max_requests_per_session || "";
-    $("cfg-rate").value = cfg.rate_limit_requests || "";
-    $("cfg-window").value = cfg.rate_limit_window_seconds || "";
-    $("cfg-allowed").value = (cfg.allowed_paths || []).join("\n");
-    $("cfg-disallowed").value = (cfg.disallowed_paths || []).join("\n");
-
-    const tiers = $("cfg-tiers");
-    clear(tiers);
-    for (const tier of cfg.pricing_tiers || []) {
-      const inputId = `cfg-tier-${tier.tier_id}`;
-      const field = el("label", { className: "tier-input", htmlFor: inputId }, [
-        el("strong", { text: tier.name || tier.tier_id }),
-        el("small", { text: `${tier.path_prefix || ""}${tier.additional_path_prefixes && tier.additional_path_prefixes.length ? " · " + tier.additional_path_prefixes.join(" · ") : ""}` }),
-        el("input", { id: inputId, inputmode: "decimal", dataset: { tier: tier.tier_id }, value: tier.price || "" }),
+    for (const site of state.sites) {
+      const menu = el("div", { className: "site-menu", hidden: "hidden" }, [
+        el("button", {
+          type: "button",
+          dataset: { action: "toggle" },
+          text: site.status === "live" ? "Pause website" : "Resume website",
+          onclick: (event) => { event.stopPropagation(); toggleSite(site.id); },
+        }),
+        el("button", {
+          type: "button",
+          dataset: { action: "remove" },
+          text: "Remove website",
+          onclick: (event) => { event.stopPropagation(); removeSite(site.id); },
+        }),
       ]);
-      tiers.append(field);
+      const row = el("div", {
+        className: "site-row",
+        role: "listitem",
+        dataset: { selected: String(site.id === state.selectedSiteId), status: site.status },
+      }, [
+        el("button", {
+          type: "button",
+          className: "site-select",
+          "aria-pressed": String(site.id === state.selectedSiteId),
+          onclick: () => selectSite(site.id),
+        }, [
+          el("span", { className: "site-url", text: site.host }),
+          el("span", { className: "site-state" }, [
+            el("span", { className: "site-dot", "aria-hidden": "true" }),
+            el("span", { text: site.status === "live" ? "Live" : "Paused" }),
+          ]),
+        ]),
+        el("div", { className: "site-actions" }, [
+          el("button", {
+            type: "button",
+            className: "site-menu-toggle",
+            text: "···",
+            "aria-label": `Actions for ${site.host}`,
+            "aria-expanded": "false",
+            onclick: (event) => {
+              event.stopPropagation();
+              const willOpen = menu.hidden;
+              closeSiteMenus();
+              menu.hidden = !willOpen;
+              event.currentTarget.setAttribute("aria-expanded", String(!menu.hidden));
+            },
+          }),
+          menu,
+        ]),
+      ]);
+      box.append(row);
     }
-    if (!(cfg.pricing_tiers || []).length) tiers.append(el("p", { className: "empty", text: "No pricing tiers configured." }));
+  }
 
-    setupStatus(cfg);
-    renderOriginStatus(cfg);
-    const save = $("cfg-save");
-    save.disabled = state.configReadOnly;
-    $("cfg-test").disabled = false;
-    $("cfg-sync").disabled = !state.token;
-    $("cfg-hint").textContent = state.configReadOnly
-      ? "Read-only. Enter the admin token in the top bar to apply changes."
-      : `Changes take effect live. Last updated ${cfg.updated_at ? formatDateTime(cfg.updated_at) : "by deployment defaults"}.`;
-    for (const warning of cfg.warnings || []) {
-      if (warning) showBanner(warning);
+  function selectSite(siteId) {
+    if (!state.sites.some((site) => site.id === siteId)) return;
+    if (siteId === state.selectedSiteId) return;
+    if (state.pgRunning) stopPlaygroundRun(true);
+    state.selectedSiteId = siteId;
+    state.pgResults = {};
+    persistSites();
+    renderSetupView();
+  }
+
+  function addSite(event) {
+    event.preventDefault();
+    const input = $("site-add-input");
+    let value = input.value.trim();
+    if (!value) { input.focus(); return; }
+    value = value.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim().toLowerCase();
+    if (!/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::\d+)?$/.test(value)) {
+      showSetupMessage("Enter a website host such as shop.example.com.");
+      return;
     }
+    if (state.sites.some((site) => site.host.toLowerCase() === value)) {
+      showSetupMessage(`${value} is already in the list.`);
+      return;
+    }
+    const site = {
+      id: `site_${Math.random().toString(36).slice(2, 9)}`,
+      host: value,
+      origin: `https://${value}`,
+      applyOrigin: true,
+      status: "paused",
+      deposit: "1.00",
+      currency: "USD",
+      allowed: ["/"],
+      disallowed: ["/admin/*"],
+      rate: 30,
+      unit: 60,
+      dirty: true,
+    };
+    state.sites.push(site);
+    state.selectedSiteId = site.id;
+    state.pgResults = {};
+    input.value = "";
+    persistSites();
+    renderSetupView();
+    toast("accent", "+", "Website added", `${value} is paused. Resume it, then apply the configuration.`);
+  }
+
+  function toggleSite(siteId) {
+    const site = state.sites.find((item) => item.id === siteId);
+    if (!site) return;
+    if (state.pgRunning) stopPlaygroundRun(true);
+    site.status = site.status === "live" ? "paused" : "live";
+    site.dirty = true;
+    persistSites();
+    renderSetupView();
+    toast(site.status === "live" ? "good" : "neutral", site.status === "live" ? "✓" : "○", `${site.host} ${site.status === "live" ? "resumed" : "paused"}`, site.status === "live" ? "Apply the configuration to make it live." : "The saved configuration is kept.");
+  }
+
+  function removeSite(siteId) {
+    if (state.sites.length <= 1) {
+      showSetupMessage("Keep at least one website in the console.");
+      return;
+    }
+    if (state.pgRunning) stopPlaygroundRun(true);
+    const index = state.sites.findIndex((site) => site.id === siteId);
+    if (index < 0) return;
+    const [removed] = state.sites.splice(index, 1);
+    if (state.appliedSiteId === siteId) state.appliedSiteId = null;
+    if (state.selectedSiteId === siteId) state.selectedSiteId = state.sites[Math.max(0, index - 1)].id;
+    state.pgResults = {};
+    persistSites();
+    renderSetupView();
+    toast("neutral", "−", "Website removed", removed.host);
+  }
+
+  function renderPathList(tone, paths) {
+    const list = $(tone === "allowed" ? "allowed-list" : "disallowed-list");
+    clear(list);
+    if (!paths.length) {
+      list.append(el("li", { className: "empty", text: "No paths yet." }));
+      return;
+    }
+    for (const path of paths) {
+      list.append(el("li", { className: "rule-path" }, [
+        el("span", { className: "rule-path-name", text: path }),
+        el("button", {
+          type: "button",
+          className: "rule-path-remove",
+          text: "×",
+          "aria-label": `Remove ${path}`,
+          onclick: () => removePath(tone, path),
+        }),
+      ]));
+    }
+  }
+
+  function renderRules(site) {
+    $("rules-site").textContent = site ? site.host : "";
+    $("allowed-count").textContent = String((site && site.allowed.length) || 0);
+    $("disallowed-count").textContent = String((site && site.disallowed.length) || 0);
+    renderPathList("allowed", (site && site.allowed) || []);
+    renderPathList("disallowed", (site && site.disallowed) || []);
+  }
+
+  function refreshSetupControls() {
+    const site = selectedSite();
+    const live = Boolean(site && site.status === "live");
+    const disabled = !site || state.configReadOnly || state.applying || !live;
+    const applyingText = state.applying ? "Applying..." : "Apply live";
+    for (const id of ["cfg-save", "rules-save"]) {
+      const button = $(id);
+      if (button) {
+        button.disabled = disabled;
+        button.textContent = applyingText;
+      }
+    }
+    const symbol = CURRENCY_SYMBOLS[(site && site.currency) || "USD"] || "$";
+    if ($("cfg-currency-symbol")) $("cfg-currency-symbol").textContent = symbol;
+    if ($("pg-hold")) $("pg-hold").textContent = moneyForSite(site) || "—";
+
+    const canEdit = !state.configReadOnly;
+    if ($("cfg-deposit")) $("cfg-deposit").disabled = !canEdit || !site;
+    if ($("cfg-currency")) {
+      // The gateway's settlement currency is deployment configuration, not a per-site choice.
+      $("cfg-currency").disabled = true;
+      $("cfg-currency").title = "Currency follows the gateway's PayPal currency.";
+    }
+    if ($("site-add-input")) $("site-add-input").disabled = !canEdit;
+    if ($("site-add-button")) $("site-add-button").disabled = !canEdit;
+    for (const node of document.querySelectorAll(".site-menu-toggle")) node.disabled = !canEdit;
+    for (const node of document.querySelectorAll(".rule-path-remove, .rule-path-add input, .rule-path-add button")) {
+      node.disabled = !canEdit || !site;
+    }
+    for (const id of ["allowed-add-input", "disallowed-add-input", "cfg-rate", "cfg-rate-unit"]) {
+      if ($(id)) $(id).disabled = !canEdit || !site;
+    }
+
+    let hint = "Changes apply live to the selected website.";
+    if (!site) hint = "Add a website to configure the gateway.";
+    else if (state.configReadOnly) hint = "Read-only. Enter the admin token in the top bar to apply changes.";
+    else if (site.status !== "live") hint = `${site.host} is paused. Resume it to apply changes.`;
+    else if (state.applying) hint = `Applying the configuration for ${site.host}...`;
+    else if (site.dirty) hint = `Unsaved changes for ${site.host}.`;
+    else if (site.id !== state.appliedSiteId) hint = `Preview for ${site.host}. Apply live to make it the gateway configuration.`;
+    else hint = `Live configuration for ${site.host}.`;
+    if ($("cfg-hint")) $("cfg-hint").textContent = hint;
+    if ($("rules-hint")) {
+      $("rules-hint").textContent = live
+        ? "Wildcards apply as path prefixes on the gateway."
+        : "Resume this website to make these rules live.";
+    }
+  }
+
+  function renderSiteConfig() {
+    const site = selectedSite();
+    if (!site) {
+      refreshSetupControls();
+      renderRules(null);
+      return;
+    }
+    $("cfg-deposit").value = site.deposit || "";
+    $("cfg-currency").value = site.currency || "USD";
+    $("cfg-rate").value = site.rate || "";
+    $("cfg-rate-unit").value = String(site.unit || 60);
+    renderRules(site);
+    refreshSetupControls();
+  }
+
+  function renderSetupView() {
+    renderSites();
+    renderSiteConfig();
+    renderPlayground();
+  }
+
+  function markSiteDirty() {
+    const site = selectedSite();
+    if (!site) return;
+    site.dirty = true;
+    persistSites();
+    refreshSetupControls();
+  }
+
+  function removePath(tone, path) {
+    const site = selectedSite();
+    if (!site) return;
+    const key = tone === "allowed" ? "allowed" : "disallowed";
+    site[key] = site[key].filter((item) => item !== path);
+    state.pgResults = {};
+    markSiteDirty();
+    renderSiteConfig();
+    renderPlayground();
+  }
+
+  function addPath(event, tone) {
+    event.preventDefault();
+    const site = selectedSite();
+    if (!site) return;
+    const input = $(tone === "allowed" ? "allowed-add-input" : "disallowed-add-input");
+    let value = input.value.trim();
+    if (!value) { input.focus(); return; }
+    if (!value.startsWith("/")) value = `/${value}`;
+    if (/\s/.test(value)) {
+      showSetupMessage("Paths cannot contain spaces.");
+      return;
+    }
+    if (tone === "disallowed" && policyPath(value) === "/") {
+      showSetupMessage("The site root cannot be disallowed. Add a specific path such as /admin/*.");
+      return;
+    }
+    const key = tone === "allowed" ? "allowed" : "disallowed";
+    if (site[key].includes(value)) {
+      showSetupMessage(`${value} is already listed.`);
+      return;
+    }
+    site[key].push(value);
+    input.value = "";
+    state.pgResults = {};
+    markSiteDirty();
+    renderSiteConfig();
+    renderPlayground();
   }
 
   async function loadSetup(force) {
-    if (state.config && !force) { renderSetup(state.config); return; }
-    const result = await getJson("/admin/config", { headers: authHeaders() });
-    if (result.ok) {
-      renderSetup(result.body);
-      return;
+    if (force) {
+      state.sites = [];
+      state.selectedSiteId = null;
+      state.appliedSiteId = null;
+      state.pgResults = {};
+      state.config = null;
     }
-    const policy = await getJson("/policies", { headers: { Accept: "application/json" } });
-    if (policy.ok) {
-      renderSetup(configFromPolicy(policy.body));
-      if (result.status === 401 && state.token) showBanner("The admin token was rejected. Check ADMIN_API_TOKEN on the gateway.");
-    } else {
-      showBanner(`Could not load the gateway configuration (HTTP ${result.status}).`);
+    let cfg = state.config;
+    if (!cfg || force) {
+      const result = await getJson("/admin/config", { headers: authHeaders() });
+      if (result.ok) {
+        cfg = result.body;
+      } else {
+        const policy = await getJson("/policies", { headers: { Accept: "application/json" } });
+        cfg = policy.ok ? configFromPolicy(policy.body) : null;
+      }
+      state.config = cfg || {};
+      state.configReadOnly = !(state.token || Boolean(cfg && cfg.config_public));
+    }
+    if (!state.sites.length) {
+      const stored = force ? null : loadStoredSites();
+      if (stored) {
+        state.sites = stored.sites;
+        state.selectedSiteId = stored.selectedSiteId;
+        state.appliedSiteId = stored.appliedSiteId;
+      } else {
+        state.sites = seedSites(cfg);
+        state.selectedSiteId = state.sites[0] ? state.sites[0].id : null;
+        state.appliedSiteId = isBundledDefaultConfig(cfg) ? null : "site_shop";
+      }
+      if (!state.sites.some((site) => site.id === state.selectedSiteId)) {
+        state.selectedSiteId = state.sites[0] ? state.sites[0].id : null;
+      }
+      const gatewayCurrency = (cfg && cfg.currency) || "USD";
+      for (const site of state.sites) site.currency = gatewayCurrency;
+      persistSites();
+    }
+    renderSetupView();
+  }
+
+  async function applySelectedSite(options) {
+    const opts = options || {};
+    const site = selectedSite();
+    if (!site || state.applying) return false;
+    if (state.configReadOnly) {
+      if (!opts.silent) showSetupMessage("Read-only. Enter the admin token in the top bar to apply changes.");
+      return false;
+    }
+    if (site.status !== "live") {
+      if (!opts.silent) showSetupMessage(`Resume ${site.host} before applying its configuration.`);
+      return false;
+    }
+    const deposit = String(site.deposit || "").trim();
+    const rate = Number(site.rate);
+    const unit = Number(site.unit);
+    if (!deposit) { showSetupMessage("Enter a deposit amount for this website."); return false; }
+    if (!Number.isFinite(rate) || rate < 1) { showSetupMessage("The rate limit must be at least 1 request."); return false; }
+    if (![1, 60, 3600].includes(unit)) { showSetupMessage("Choose a rate-limit window."); return false; }
+
+    state.applying = true;
+    refreshSetupControls();
+    try {
+      const payload = {
+        deposit_amount: deposit,
+        allowed_paths: site.allowed.map(policyPath).filter(Boolean),
+        disallowed_paths: site.disallowed.map(policyPath).filter((path) => path && path !== "/"),
+        rate_limit_requests: Math.round(rate),
+        rate_limit_window_seconds: unit,
+      };
+      if (site.applyOrigin && site.origin) payload.origin_url = site.origin;
+      const result = await getJson("/admin/config", {
+        method: "PUT",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      if (!result.ok) {
+        const body = result.body || {};
+        const detail = body.detail && (body.detail.message || body.message);
+        showBanner(detail || body.message || `Configuration was rejected (HTTP ${result.status}).`);
+        return false;
+      }
+      state.config = result.body;
+      state.configReadOnly = !(state.token || Boolean(result.body && result.body.config_public));
+      site.dirty = false;
+      state.appliedSiteId = site.id;
+      persistSites();
+      hideBanner();
+      renderSiteConfig();
+      renderPlayground();
+      if (!opts.silent) {
+        toast("good", "✓", "Gateway updated live", `${site.host} · ${moneyForSite(site)} deposit.`);
+      }
+      return true;
+    } finally {
+      state.applying = false;
+      refreshSetupControls();
     }
   }
 
-  function collectConfig() {
-    const tierPrices = {};
-    for (const input of document.querySelectorAll("#cfg-tiers input[data-tier]")) {
-      tierPrices[input.dataset.tier] = input.value.trim();
-    }
-    const budget = Number($("cfg-budget").value);
-    const rate = Number($("cfg-rate").value);
-    const windowSeconds = Number($("cfg-window").value);
-    if (!Number.isFinite(budget) || budget < 1) throw new Error("Max requests per session must be at least 1.");
-    if (!Number.isFinite(rate) || rate < 1) throw new Error("Rate limit requests must be at least 1.");
-    if (!Number.isFinite(windowSeconds) || windowSeconds <= 0) throw new Error("Rate window must be greater than 0.");
-    return {
-      origin_url: $("cfg-origin").value.trim(),
-      deposit_amount: $("cfg-deposit").value.trim(),
-      tier_prices: tierPrices,
-      allowed_paths: lines($("cfg-allowed").value),
-      disallowed_paths: lines($("cfg-disallowed").value),
-      max_requests_per_session: budget,
-      rate_limit_requests: rate,
-      rate_limit_window_seconds: windowSeconds,
-    };
-  }
-
-  async function saveConfig(event) {
-    event.preventDefault();
-    if ($("cfg-save").disabled) return;
-    let payload;
-    try { payload = collectConfig(); } catch (error) { showBanner(error.message); return; }
-    $("cfg-save").disabled = true;
-    $("cfg-save").textContent = "Applying...";
-    const result = await getJson("/admin/config", {
-      method: "PUT",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify(payload),
-    });
-    $("cfg-save").textContent = "Apply live";
-    if (!result.ok) {
-      $("cfg-save").disabled = false;
-      showBanner((result.body && (result.body.message || (result.body.detail && result.body.detail.message))) || `Configuration was rejected (HTTP ${result.status}).`);
-      return;
-    }
-    hideBanner();
-    renderSetup(result.body);
-    toast("good", "✓", "Gateway updated live", `Policy ${result.body.policy_version} · ${result.body.origin_configured ? "proxying the target site" : "bundled content"}.`);
-    refresh();
-    loadPlayground(true);
-  }
-
-  async function testOrigin() {
-    const url = $("cfg-origin").value.trim();
-    const node = $("cfg-origin-status");
-    if (!url) { node.textContent = "Enter a target website URL first."; return; }
-    node.textContent = "Testing the target website...";
-    const result = await getJson("/admin/config/test-origin", {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ origin_url: url }),
-    });
-    if (!result.ok) {
-      node.textContent = (result.body && (result.body.message || (result.body.detail && result.body.detail.message))) || `Test failed (HTTP ${result.status}).`;
-      return;
-    }
-    renderOriginStatus({ origin_url: url, origin_status: result.body }, result.body);
-  }
-
-  async function syncRobots() {
-    if (!state.token) { showBanner("Enter the admin token to sync the target website's robots.txt."); return; }
-    const result = await getJson("/admin/config/sync-robots", { method: "POST", headers: authHeaders() });
-    if (!result.ok) {
-      showBanner((result.body && (result.body.message || (result.body.detail && result.body.detail.message))) || `Sync failed (HTTP ${result.status}).`);
-      return;
-    }
-    renderSetup(result.body);
-    toast("accent", "↻", "robots.txt synced", "The target site's rules are now enforced live.");
-  }
-
-  function playgroundActionById(actionId) {
-    const actions = (state.playground && state.playground.actions) || [];
-    return actions.find((action) => action.action_id === actionId) || null;
-  }
-
-  function playgroundTone(outcome) {
-    if (outcome === "allowed") return "good";
-    if (outcome === "refused" || outcome === "mixed") return "critical";
-    return "neutral";
-  }
-
-  function playgroundIcon(outcome) {
-    if (outcome === "allowed") return "✓";
-    if (outcome === "refused") return "✕";
-    if (outcome === "mixed") return "◐";
-    return "●";
-  }
-
-  function updatePlaygroundSelection() {
-    const ai = (state.playground && state.playground.ai) || {};
-    const canStart = Boolean(state.playground && state.playground.can_start);
-    const maxActions = (state.playground && state.playground.max_actions) || 6;
-    const selected = Array.from(document.querySelectorAll("#pg-actions input[type=checkbox]:checked")).map((input) => input.value);
-    const button = $("pg-run-button");
-    const hint = $("pg-run-hint");
-    const selection = $("pg-selection");
-    if (selection) selection.textContent = `${selected.length} selected`;
-    if (!button || !hint) return;
-    let reason = "";
-    if (!canStart) reason = "Enter the admin token, or enable DEMO_PUBLIC=true on a demo deployment.";
-    else if (!ai.available) reason = "Agentic runs are disabled: set OPENAI_API_KEY or ANTHROPIC_API_KEY on the gateway.";
-    else if (!selected.length) reason = "Select at least one good or bad action.";
-    else if (selected.length > maxActions) reason = `Select at most ${maxActions} actions.`;
-    button.disabled = Boolean(reason);
-    button.textContent = selected.length ? `Run agent (${selected.length})` : "Run agent";
-    hint.textContent = reason || (selected.length
-      ? `${selected.length} selected — each action gets a fresh challenge, deposit, and session.`
-      : `Every run uses the agent and records its requests in the audit log.`);
-  }
-
-  function renderPlaygroundActions(actions, canStart, ai, maxActions) {
-    const box = $("pg-actions");
+  function renderPlaygroundChoices() {
+    const box = $("pg-choices");
     clear(box);
-    const disabled = !canStart || !ai || !ai.available;
-    for (const tone of ["good", "bad"]) {
-      const group = actions.filter((action) => action.tone === tone);
-      if (!group.length) continue;
-      const list = el("div", { className: "pg-group", dataset: { tone } });
-      list.append(el("div", { className: "pg-group-head" }, [
-        el("span", { className: "pg-tone", text: tone === "good" ? "Good agent" : "Bad agent" }),
-        el("span", { className: "muted", text: tone === "good" ? "Allowed by the policy" : "Expected to be blocked" }),
-      ]));
-      for (const action of group) {
+    for (const tone of ["safe", "bad"]) {
+      const behaviors = PG_BEHAVIORS.filter((behavior) => behavior.tone === tone);
+      const col = el("div", { className: "pg-choice-col", dataset: { tone: tone === "safe" ? "good" : "critical" } }, [
+        el("div", { className: "pg-choice-head" }, [
+          el("span", { className: "pg-choice-title", text: tone === "safe" ? "Safe" : "Bad" }),
+          el("span", { className: "pg-choice-note", text: tone === "safe" ? "(all complete)" : "(first one ends run)" }),
+        ]),
+      ]);
+      for (const behavior of behaviors) {
         const input = el("input", {
           type: "checkbox",
-          value: action.action_id,
-          disabled: disabled ? "disabled" : undefined,
-          "aria-label": action.label,
+          value: behavior.id,
+          "aria-label": behavior.label,
+          onchange: (event) => {
+            state.pgSelected[behavior.id] = event.target.checked;
+            state.pgResults = {};
+            renderPlayground();
+            const next = document.querySelector(`#pg-choices input[value="${behavior.id}"]`);
+            if (next) next.focus();
+          },
         });
-        input.checked = Boolean(action.default_selected);
-        input.addEventListener("change", updatePlaygroundSelection);
-        list.append(el("label", { className: "pg-check", dataset: { tone } }, [
-          input,
-          el("span", { className: "pg-check-copy" }, [
-            el("strong", { text: action.label }),
-            el("span", { text: action.description }),
-            el("small", { text: `Expected: ${action.expected}` }),
-          ]),
-        ]));
+        input.checked = Boolean(state.pgSelected[behavior.id]);
+        col.append(el("label", { className: "pg-choice" }, [input, el("span", { text: behavior.label })]));
       }
-      box.append(list);
+      box.append(col);
     }
-    if (!actions.length) box.append(el("p", { className: "empty", text: "No playground actions configured." }));
-    const max = maxActions || 6;
-    const selection = $("pg-selection");
-    if (selection) selection.dataset.max = String(max);
-    updatePlaygroundSelection();
   }
 
-  function renderRecentRuns(runs) {
-    const box = $("pg-recent");
-    clear(box);
-    if (!runs || !runs.length) {
-      box.append(el("p", { className: "empty", text: "No playground runs yet." }));
-      return;
+  function buildPlaygroundPlan() {
+    const safe = PG_BEHAVIORS.filter((behavior) => behavior.tone === "safe" && state.pgSelected[behavior.id]);
+    const bad = PG_BEHAVIORS.filter((behavior) => behavior.tone === "bad" && state.pgSelected[behavior.id]);
+    return safe.concat(bad);
+  }
+
+  function planStatus(step, index, plan, firstBad, result, running) {
+    if (index > firstBad && firstBad !== -1) return { state: "not-tested", label: "not tested", tone: "muted" };
+    if (result && result.state) {
+      if (result.state === "blocked") {
+        const http = result.http ? ` · HTTP ${result.http}` : " · ends run";
+        return { state: "blocked", label: `BLOCKS${http}`, tone: "critical", detail: result.detail };
+      }
+      if (result.state === "running") return { state: "running", label: "running...", tone: "neutral" };
+      if (result.state === "error") return { state: "blocked", label: "error", tone: "critical", detail: result.detail };
+      return { state: "completes", label: "completes", tone: "good", detail: result.detail };
     }
-    for (const run of runs) {
-      const tone = playgroundTone(run.outcome);
-      const count = run.action_count && run.action_count > 1 ? ` · ${run.action_count} actions` : "";
-      box.append(el("div", { className: "pg-recent-row" }, [
-        chip(tone, playgroundIcon(run.outcome), run.outcome || run.status),
-        el("strong", { text: run.label }),
-        el("span", { className: "muted", text: `${run.driver || "scripted"}${count} · ${run.deposit_state || "no deposit"} · ${formatTime(run.started_at)}` }),
-        el("button", { type: "button", className: "btn-sm", text: "Open", onclick: () => openPlaygroundRun(run.run_id) }),
-      ]));
+    if (running) return { state: "not-tested", label: "waiting", tone: "muted" };
+    if (step.tone === "bad" && index === firstBad) return { state: "will-block", label: "BLOCKS · ends run", tone: "critical" };
+    return { state: "will-complete", label: "completes", tone: "muted" };
+  }
+
+  function renderPlayground() {
+    const site = selectedSite();
+    const target = $("pg-target");
+    if (!target) return;
+
+    const currentTarget = site ? site.id : "";
+    clear(target);
+    for (const item of state.sites) {
+      target.append(el("option", { value: item.id, text: item.host }));
     }
+    if (currentTarget) target.value = currentTarget;
+    target.onchange = (event) => selectSite(event.target.value);
+
+    renderPlaygroundChoices();
+
+    const selectedCount = PG_BEHAVIORS.filter((behavior) => state.pgSelected[behavior.id]).length;
+    $("pg-selection").textContent = `${selectedCount} selected`;
+    if ($("pg-hold")) $("pg-hold").textContent = moneyForSite(site) || "—";
+
+    const plan = buildPlaygroundPlan();
+    const firstBad = plan.findIndex((step) => step.tone === "bad");
+    const executable = firstBad === -1 ? plan.length : firstBad + 1;
+    const list = $("pg-plan-list");
+    clear(list);
+
+    if (!plan.length) {
+      list.append(el("li", { className: "empty", text: "Select at least one behavior to build the plan." }));
+    }
+
+    const resultStates = state.pgResults;
+    const tested = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state && resultStates[step.id].state !== "running").length;
+    const completed = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state === "completes").length;
+    const blocked = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state === "blocked").length;
+    const notTested = plan.length - executable;
+    const countNode = $("pg-plan-count");
+    const summaryNode = $("pg-plan-summary");
+    if (!plan.length) {
+      countNode.textContent = "0 of 0 tested";
+      summaryNode.textContent = "Select behaviors to build the plan.";
+    } else if (!tested && !state.pgRunning) {
+      const safeCount = plan.filter((step) => step.tone === "safe").length;
+      const badCount = plan.filter((step) => step.tone === "bad").length;
+      countNode.textContent = `0 of ${plan.length} tested`;
+      summaryNode.textContent = `completes ${safeCount} · blocks ${badCount ? 1 : 0} · not tested ${notTested}`;
+    } else {
+      countNode.textContent = `${tested} of ${plan.length} tested`;
+      summaryNode.textContent = `completes ${completed} · blocks ${blocked} · not tested ${Math.max(0, plan.length - tested)}`;
+    }
+
+    plan.forEach((step, index) => {
+      const result = state.pgResults[step.id];
+      const status = planStatus(step, index, plan, firstBad, result, state.pgRunning);
+      const row = el("li", { className: "pg-plan-row", dataset: { state: status.state } }, [
+        el("span", { className: "pg-plan-num", text: String(index + 1).padStart(2, "0") }),
+        el("span", { className: "pg-plan-tone", dataset: { tone: step.tone }, text: step.tone === "safe" ? "SAFE" : "BAD" }),
+        el("span", { className: "pg-plan-label" }, [
+          el("span", { text: step.label }),
+          status.detail ? el("small", { text: status.detail }) : null,
+        ]),
+        el("span", { className: "pg-plan-status", dataset: { tone: status.tone }, text: status.label }),
+      ]);
+      list.append(row);
+      if (step.tone === "bad" && index === firstBad && result && result.state === "blocked") {
+        list.append(el("li", { className: "pg-plan-cut", text: `session blocked at #${index + 1}` }));
+      }
+    });
+
+    const button = $("pg-run-button");
+    const hint = $("pg-run-hint");
+    let disabledReason = "";
+    if (state.pgCanStart === null) disabledReason = "Loading the playground...";
+    else if (!state.pgCanStart) disabledReason = "Starting runs needs the admin token, or DEMO_PUBLIC=true on a demo deployment.";
+    else if (!site) disabledReason = "Select a website first.";
+    else if (site.status !== "live") disabledReason = `Resume ${site.host} to run the playground.`;
+    else if (!plan.length) disabledReason = "Select at least one behavior.";
+    else if (state.pgRunning) disabledReason = `Running ${Math.min(state.pgCurrentIndex + 1, executable)} of ${executable}...`;
+    else if (state.applying) disabledReason = "Applying the website configuration...";
+    button.disabled = Boolean(disabledReason) || state.pgRunning;
+    button.textContent = state.pgRunning
+      ? `Running ${Math.min(state.pgCurrentIndex + 1, executable)} of ${executable}`
+      : `Run ${executable} of ${plan.length}`;
+    hint.textContent = disabledReason || `Runs against ${site.host}. The first BAD step stops the plan; later steps are not tested.`;
   }
 
   async function loadPlayground(force) {
     if (state.playground && !force) {
-      renderPlaygroundActions(
-        state.playground.actions || [],
-        state.playground.can_start,
-        state.playground.ai || {},
-        state.playground.max_actions,
-      );
-      renderRecentRuns(state.playground.recent_runs || []);
+      renderPlayground();
       return;
     }
     const result = await getJson("/playground/actions", { headers: authHeaders() });
-    if (!result.ok) {
-      $("pg-quota").textContent = "Unavailable";
-      const agent = $("pg-agent");
-      if (agent) agent.textContent = "AI unavailable";
-      $("pg-run-hint").textContent = result.status === 401
-        ? "Starting runs needs the admin token, or DEMO_PUBLIC=true on a demo deployment."
-        : `Could not load playground actions (HTTP ${result.status}).`;
-      $("pg-run-button").disabled = true;
-      clear($("pg-actions"));
-      $("pg-actions").append(el("p", { className: "empty", text: result.status === 401 ? "Starting runs needs the admin token, or DEMO_PUBLIC=true on a demo deployment." : `Could not load playground actions (HTTP ${result.status}).` }));
-      return;
-    }
-    state.playground = result.body;
-    $("pg-quota").textContent = `${result.body.runs_remaining_this_hour} runs left this hour`;
-    const ai = result.body.ai || {};
-    const agent = $("pg-agent");
-    if (agent) {
-      agent.textContent = ai.available ? `Agent: ${ai.model || ai.provider || "ready"}` : "AI unavailable";
-      agent.dataset.tone = ai.available ? "good" : "warning";
-    }
-    renderPlaygroundActions(result.body.actions || [], result.body.can_start, ai, result.body.max_actions);
-    renderRecentRuns(result.body.recent_runs || []);
-  }
-
-  function selectPlaygroundTone(tone) {
-    for (const input of document.querySelectorAll("#pg-actions input[type=checkbox]")) {
-      const action = playgroundActionById(input.value);
-      if (action) input.checked = action.tone === tone;
-    }
-    updatePlaygroundSelection();
-  }
-
-  function stopPlaygroundPoll() {
-    clearTimeout(state.pgTimer);
-    state.pgTimer = null;
-  }
-
-  function appendPlaygroundSteps(steps) {
-    const list = $("pg-steps");
-    if (!list) return;
-    for (const step of steps) {
-      const tone = step.allowed === true ? "good" : step.allowed === false ? "critical" : "neutral";
-      const icon = step.allowed === true ? "✓" : step.allowed === false ? "✕" : "•";
-      const action = step.action_id ? playgroundActionById(step.action_id) : null;
-      list.append(el("li", { className: "pg-step", dataset: { tone } }, [
-        el("span", { className: "pg-step-num", "aria-hidden": "true", text: icon }),
-        el("div", null, [
-          el("strong", { text: step.label }),
-          action ? el("small", { text: action.label }) : null,
-          step.request ? el("small", { text: step.request }) : null,
-          step.message ? el("small", { text: step.message }) : null,
-          step.reason_code ? el("small", { text: step.reason_code }) : null,
-        ]),
-        el("span", { className: "muted", text: step.http_status ? String(step.http_status) : "" }),
-      ]));
-    }
-  }
-
-  function renderPlaygroundRunHead(run) {
-    const head = $("pg-run-head");
-    if (!head) return;
-    clear(head);
-    const status = run.status === "running" ? "Running" : run.status;
-    const tone = playgroundTone(run.outcome);
-    head.append(el("h3", { text: run.label || "Playground run" }));
-    head.append(chip(tone, run.status === "running" ? "…" : playgroundIcon(run.outcome), status));
-    if (run.driver) head.append(chip("neutral", "⌁", run.driver));
-    if (run.selected_action_ids && run.selected_action_ids.length > 1) {
-      head.append(el("span", { className: "muted", text: `${run.selected_action_ids.length} actions` }));
-    }
-    head.append(el("span", { className: "muted", text: run.run_id }));
-  }
-
-  function resultFacts(result) {
-    const violation = result.violation || {};
-    const deposit = result.deposit || {};
-    return [
-      ["HTTP status", violation.http_status || (result.outcome === "allowed" ? 200 : "")],
-      ["Rule matched", violation.rule_matched],
-      ["Reason code", violation.reason_code],
-      ["Agent-facing reason", violation.agent_reason],
-      ["Deposit consequence", violation.deposit_consequence || deposit.consequence],
-      ["Deposit state", deposit.deposit_state],
-      ["Deposit amount", deposit.amount ? money(deposit.amount, deposit.currency) : ""],
-      ["Session", result.session_id],
-    ].filter(([, value]) => value !== null && value !== undefined && value !== "");
-  }
-
-  function renderFacts(container, result) {
-    const facts = resultFacts(result);
-    if (facts.length) {
-      container.append(el("div", { className: "pg-facts" }, facts.map(([label, value]) =>
-        el("div", { className: "pg-fact" }, [el("span", { text: label }), el("strong", { text: String(value) })])
-      )));
-    }
-    if (result.rendered_html) {
-      const frame = el("iframe", { className: "pg-frame", title: `Rendered page returned for ${result.label || "the action"}`, sandbox: "" });
-      frame.srcdoc = result.rendered_html;
-      container.append(el("div", { className: "pg-frame-wrap" }, [frame]));
-    }
-  }
-
-  function renderActionResult(result) {
-    const card = el("div", { className: "pg-action-result", dataset: { tone: playgroundTone(result.outcome) } });
-    card.append(el("div", { className: "pg-action-result-head" }, [
-      el("div", null, [
-        el("h4", { text: result.label || result.action_id }),
-        el("small", { text: result.action_id }),
-      ]),
-      chip(playgroundTone(result.outcome), playgroundIcon(result.outcome), result.outcome || result.status),
-    ]));
-    if (result.error) card.append(el("p", { className: "empty", text: result.error }));
-    renderFacts(card, result);
-    return card;
-  }
-
-  function renderPlaygroundResult(run) {
-    const box = $("pg-result");
-    clear(box);
-    box.hidden = false;
-    const tone = playgroundTone(run.outcome);
-    box.dataset.tone = tone;
-    const title = run.outcome === "allowed"
-      ? "Permitted: every selected action was accepted"
-      : run.outcome === "refused"
-        ? "Refused: the gateway blocked every selected action"
-        : run.outcome === "mixed"
-          ? "Mixed outcome: some actions were allowed, some were refused"
-          : "Run failed";
-    box.append(el("h3", { text: title }));
-    if (run.error) box.append(el("p", { text: run.error }));
-
-    if (run.agent) {
-      const agent = el("div", { className: "pg-agent-summary" });
-      agent.append(el("div", { className: "pg-action-result-head" }, [
-        el("div", null, [
-          el("h4", { text: "Agent summary" }),
-          el("small", { text: `${run.agent.provider || "AI"} · ${run.agent.model || "model"} · ${run.agent.steps || 0} steps` }),
-        ]),
-        chip(run.agent.status === "completed" ? "good" : "neutral", "⌁", run.agent.status || "agent"),
-      ]));
-      if (run.agent.summary) agent.append(el("p", { text: run.agent.summary }));
-      if (run.agent.error) agent.append(el("p", { className: "empty", text: run.agent.error }));
-      box.append(agent);
-    }
-
-    const results = run.action_results || [];
-    if (results.length) {
-      for (const result of results) box.append(renderActionResult(result));
+    if (result.ok) {
+      state.playground = result.body;
+      state.pgCanStart = Boolean(result.body && result.body.can_start);
     } else {
-      const fallback = el("div", { className: "pg-action-result", dataset: { tone } });
-      renderFacts(fallback, run);
-      box.append(fallback);
+      state.playground = null;
+      state.pgCanStart = false;
     }
-    if (run.audit_event_ids && run.audit_event_ids.length) {
-      box.append(el("p", { className: "muted", text: `Audit events: ${run.audit_event_ids.join(", ")}` }));
+    renderPlayground();
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function pollPlaygroundRun(runId, token) {
+    const deadline = Date.now() + 120000;
+    let after = 0;
+    while (Date.now() < deadline) {
+      if (token !== state.pgRunToken) return null;
+      await sleep(450);
+      const result = await getJson(`/playground/runs/${encodeURIComponent(runId)}?after=${after}`, { headers: authHeaders() });
+      if (!result.ok) throw new Error(`Could not read the playground run (HTTP ${result.status}).`);
+      const body = result.body;
+      after = body.next_seq || after;
+      if (["completed", "failed", "cancelled"].includes(body.status)) return body;
+    }
+    throw new Error("The playground run took too long to finish.");
+  }
+
+  async function runPlaygroundPlan() {
+    const site = selectedSite();
+    if (!site || state.pgRunning) return;
+    const plan = buildPlaygroundPlan();
+    const firstBad = plan.findIndex((step) => step.tone === "bad");
+    const executable = firstBad === -1 ? plan.length : firstBad + 1;
+    if (!executable) return;
+    if (state.pgCanStart !== true) return;
+
+    state.pgRunning = true;
+    state.pgResults = {};
+    state.pgCurrentIndex = 0;
+    state.pgRunToken = (state.pgRunToken || 0) + 1;
+    const token = state.pgRunToken;
+    let hadError = false;
+    renderPlayground();
+
+    try {
+      if (!state.configReadOnly) {
+        const applied = await applySelectedSite({ silent: true });
+        if (!applied) return;
+      }
+      for (let index = 0; index < executable; index += 1) {
+        if (token !== state.pgRunToken) return;
+        const step = plan[index];
+        state.pgCurrentIndex = index;
+        state.pgResults[step.id] = { state: "running" };
+        renderPlayground();
+
+        const started = await getJson("/playground/runs", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ action_id: step.action, driver: "scripted" }),
+        });
+        if (!started.ok) {
+          const body = started.body || {};
+          const detail = (body.detail && (body.detail.message || body.detail.error)) || body.message;
+          state.pgResults[step.id] = { state: "error", detail: detail || `HTTP ${started.status}` };
+          hadError = true;
+          break;
+        }
+        state.pgActiveRunId = started.body.run_id;
+        const run = await pollPlaygroundRun(started.body.run_id, token);
+        state.pgActiveRunId = null;
+        if (!run) return;
+        const action = (run.action_results && run.action_results[0]) || {};
+        const violation = action.violation || run.violation || {};
+        const refused = action.outcome === "refused" || run.outcome === "refused";
+        const failed = action.status === "failed" || run.status === "failed" || run.status === "cancelled";
+        const detail = violation.rule_matched || violation.reason_code || action.error || run.error || "";
+        if (refused) {
+          state.pgResults[step.id] = { state: "blocked", http: violation.http_status, detail };
+        } else if (failed) {
+          state.pgResults[step.id] = { state: "error", detail };
+          hadError = true;
+        } else {
+          state.pgResults[step.id] = { state: "completes", detail: "" };
+        }
+        renderPlayground();
+        if (step.tone === "bad" || state.pgResults[step.id].state === "error" || state.pgResults[step.id].state === "blocked") break;
+      }
+
+      if (hadError) {
+        toast("critical", "!", "Playground run failed", "A step did not finish. Check the gateway and try again.");
+      } else {
+        const blocked = plan.filter((step) => state.pgResults[step.id] && state.pgResults[step.id].state === "blocked").length;
+        if (blocked) {
+          toast("critical", "✕", "Session blocked", "The first BAD step stopped the plan; later steps were not tested.");
+        } else {
+          toast("good", "✓", "Plan complete", `${site.host} held ${moneyForSite(site)} per session.`);
+        }
+      }
+    } catch (error) {
+      hadError = true;
+      const message = error && error.message ? error.message : "The playground run failed.";
+      const step = plan[state.pgCurrentIndex];
+      if (step && state.pgResults[step.id] && state.pgResults[step.id].state === "running") {
+        state.pgResults[step.id] = { state: "error", detail: message };
+      }
+      const runId = state.pgActiveRunId;
+      if (runId) {
+        fetch(`/playground/runs/${encodeURIComponent(runId)}/cancel`, {
+          method: "POST",
+          headers: authHeaders(),
+        }).catch(() => { /* the run may already be finished */ });
+        state.pgActiveRunId = null;
+      }
+      showBanner(message);
+      toast("critical", "!", "Playground run failed", message);
+    } finally {
+      if (token === state.pgRunToken) {
+        state.pgRunning = false;
+        state.pgCurrentIndex = -1;
+        state.pgActiveRunId = null;
+        renderPlayground();
+      }
     }
   }
 
-  async function pollPlayground() {
-    if (!state.pgRunId) return;
-    const result = await getJson(`/playground/runs/${encodeURIComponent(state.pgRunId)}?after=${state.pgNextSeq}`, { headers: authHeaders() });
-    if (!result.ok) {
-      stopPlaygroundPoll();
-      showBanner(`Could not read the playground run (HTTP ${result.status}).`);
-      return;
+  function stopPlaygroundRun(clearResults) {
+    state.pgRunToken = (state.pgRunToken || 0) + 1;
+    const runId = state.pgActiveRunId;
+    if (runId) {
+      fetch(`/playground/runs/${encodeURIComponent(runId)}/cancel`, {
+        method: "POST",
+        headers: authHeaders(),
+      }).catch(() => { /* the run may already be finished */ });
     }
-    const run = result.body;
-    state.pgNextSeq = run.next_seq;
-    appendPlaygroundSteps(run.steps || []);
-    renderPlaygroundRunHead(run);
-    if (run.status !== "running") {
-      stopPlaygroundPoll();
-      renderPlaygroundResult(run);
-      loadPlayground(true);
-      return;
-    }
-    state.pgTimer = setTimeout(pollPlayground, 450);
+    state.pgActiveRunId = null;
+    state.pgRunning = false;
+    state.pgCurrentIndex = -1;
+    if (clearResults) state.pgResults = {};
   }
 
-  async function runSelectedPlayground() {
-    const selected = Array.from(document.querySelectorAll("#pg-actions input[type=checkbox]:checked")).map((input) => input.value);
-    if (!selected.length) { showBanner("Select at least one playground action first."); return; }
-    const max = (state.playground && state.playground.max_actions) || 6;
-    if (selected.length > max) { showBanner(`Select at most ${max} actions per run.`); return; }
-    stopPlaygroundPoll();
-    state.pgRunId = null;
-    state.pgNextSeq = 0;
-    $("pg-result").hidden = true;
-    clear($("pg-result"));
-    const runBox = $("pg-run");
-    runBox.hidden = false;
-    clear(runBox);
-    const labels = selected.map((actionId) => {
-      const action = playgroundActionById(actionId);
-      return action ? action.label : actionId;
-    });
-    runBox.append(el("div", { className: "pg-run-head", id: "pg-run-head" }, [
-      el("h3", { text: `Agent run — ${selected.length} selected action${selected.length === 1 ? "" : "s"}` }),
-      chip("neutral", "…", "Starting"),
-    ]));
-    runBox.append(el("p", { className: "muted", text: labels.join(" · ") }));
-    runBox.append(el("ol", { className: "pg-steps", id: "pg-steps" }));
-    const result = await getJson("/playground/runs", {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ action_ids: selected }),
-    });
-    if (!result.ok) {
-      runBox.append(el("p", { className: "empty", text: (result.body && (result.body.message || (result.body.detail && result.body.detail.message))) || `Could not start the run (HTTP ${result.status}).` }));
-      updatePlaygroundSelection();
-      return;
-    }
-    state.pgRunId = result.body.run_id;
-    state.pgNextSeq = result.body.next_seq || 0;
-    appendPlaygroundSteps(result.body.steps || []);
-    renderPlaygroundRunHead(result.body);
-    runBox.scrollIntoView({ behavior: "smooth", block: "start" });
-    pollPlayground();
+  function resetPlayground() {
+    if (state.pgRunning) stopPlaygroundRun(true);
+    state.pgSelected = defaultBehaviorSelection();
+    state.pgResults = {};
+    renderPlayground();
   }
 
-  async function openPlaygroundRun(runId) {
-    stopPlaygroundPoll();
-    const result = await getJson(`/playground/runs/${encodeURIComponent(runId)}`, { headers: authHeaders() });
-    if (!result.ok) { showBanner(`Could not open the run (HTTP ${result.status}).`); return; }
-    const run = result.body;
-    const runBox = $("pg-run");
-    runBox.hidden = false;
-    clear(runBox);
-    runBox.append(el("div", { className: "pg-run-head", id: "pg-run-head" }, [el("h3", { text: run.label })]));
-    runBox.append(el("ol", { className: "pg-steps", id: "pg-steps" }));
-    renderPlaygroundRunHead(run);
-    appendPlaygroundSteps(run.steps || []);
-    renderPlaygroundResult(run);
-    runBox.scrollIntoView({ behavior: "smooth", block: "start" });
+  function clearPlayground() {
+    if (state.pgRunning) stopPlaygroundRun(true);
+    for (const behavior of PG_BEHAVIORS) state.pgSelected[behavior.id] = false;
+    state.pgResults = {};
+    renderPlayground();
   }
+
 
   // --- policy view ----------------------------------------------------------------------
   async function loadPolicy() {
@@ -1894,8 +2237,6 @@
 
   function render(data) {
     state.data = data;
-    if (!state.config) loadSetup();
-    renderBadges(data);
     renderKpis(data.kpis);
     renderSecurityKpis(data);
     renderViolations(data.kpis.violations_by_reason);
@@ -2015,22 +2356,55 @@
       store.set("sessionStorage", "ct-admin-token", state.token);
       state.config = null;
       state.playground = null;
+      state.pgCanStart = null;
+      state.sites = [];
+      state.selectedSiteId = null;
+      state.appliedSiteId = null;
+      state.pgResults = {};
       refresh();
       if (state.view === "setup") { loadSetup(true); loadPlayground(true); }
       if (state.paypal) state.paypal.refresh();
     });
 
-    $("gateway-form").addEventListener("submit", saveConfig);
-    $("cfg-test").addEventListener("click", testOrigin);
-    $("cfg-sync").addEventListener("click", syncRobots);
-    $("pg-refresh").addEventListener("click", () => loadPlayground(true));
-    $("pg-select-good").addEventListener("click", () => selectPlaygroundTone("good"));
-    $("pg-select-bad").addEventListener("click", () => selectPlaygroundTone("bad"));
-    $("pg-clear").addEventListener("click", () => {
-      for (const input of document.querySelectorAll("#pg-actions input[type=checkbox]")) input.checked = false;
-      updatePlaygroundSelection();
+    state.pgSelected = defaultBehaviorSelection();
+    $("cfg-save").addEventListener("click", () => applySelectedSite());
+    $("rules-save").addEventListener("click", () => applySelectedSite());
+    $("site-add-form").addEventListener("submit", addSite);
+    $("allowed-add-form").addEventListener("submit", (event) => addPath(event, "allowed"));
+    $("disallowed-add-form").addEventListener("submit", (event) => addPath(event, "disallowed"));
+    $("cfg-deposit").addEventListener("input", (event) => {
+      const site = selectedSite();
+      if (!site) return;
+      site.deposit = event.target.value;
+      state.pgResults = {};
+      markSiteDirty();
+      if ($("pg-hold")) $("pg-hold").textContent = moneyForSite(site) || "—";
     });
-    $("pg-run-button").addEventListener("click", runSelectedPlayground);
+    $("cfg-currency").addEventListener("change", (event) => {
+      const site = selectedSite();
+      if (!site) return;
+      site.currency = event.target.value;
+      markSiteDirty();
+      refreshSetupControls();
+    });
+    $("cfg-rate").addEventListener("input", (event) => {
+      const site = selectedSite();
+      if (!site) return;
+      site.rate = Number(event.target.value) || 0;
+      state.pgResults = {};
+      markSiteDirty();
+    });
+    $("cfg-rate-unit").addEventListener("change", (event) => {
+      const site = selectedSite();
+      if (!site) return;
+      site.unit = Number(event.target.value) || 60;
+      state.pgResults = {};
+      markSiteDirty();
+    });
+    $("pg-reset").addEventListener("click", resetPlayground);
+    $("pg-clear").addEventListener("click", clearPlayground);
+    $("pg-run-button").addEventListener("click", runPlaygroundPlan);
+    document.addEventListener("click", () => closeSiteMenus());
 
     $("chart-view-toggle").addEventListener("click", (event) => {
       state.chartAsTable = !state.chartAsTable;

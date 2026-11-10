@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SARA publisher console</title>
-  <meta name="description" content="Publisher console for SARA: AI crawler sessions, refundable PayPal deposits, policy violations, analytics, and AI explanations.">
+  <title>SARA console</title>
+  <meta name="description" content="SARA console: AI crawler sessions, refundable PayPal deposits, policy violations, analytics, and AI explanations.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%234c8dff'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <script>
     /* Apply the saved theme before first paint (dark by default). */
@@ -23,13 +23,11 @@
 <body>
 <header class="appbar">
   <div class="appbar-inner">
-    <a class="brand-mark" href="/console" aria-label="SARA publisher console">
+    <a class="brand-mark" href="/console" aria-label="SARA console">
       <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="var(--accent)"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
       <span class="brand-name">SARA</span>
-      <span class="brand-tag">Publisher</span>
     </a>
     <nav class="nav" aria-label="Pages">
-      <a href="/console" aria-current="page">Publisher console</a>
       <a href="/agent">Agent studio</a>
     </nav>
     <div class="controls">
@@ -52,7 +50,7 @@
   <aside class="sidenav" aria-label="Console sections">
     <div class="sidenav-group">
       <p class="sidenav-label">Set up</p>
-      <button type="button" class="sidenav-link" data-view="setup" aria-current="page"><span class="nav-icon" aria-hidden="true">⚙</span>Setup &amp; playground</button>
+      <button type="button" class="sidenav-link" data-view="setup" aria-current="page"><span class="nav-icon" aria-hidden="true">⚙</span>Websites</button>
     </div>
     <div class="sidenav-group">
       <p class="sidenav-label">Monitor</p>
@@ -78,10 +76,7 @@
   <main class="console-main">
     <div class="page-head">
       <div>
-        <p class="eyebrow">Publisher console</p>
         <h1 id="page-title">Overview</h1>
-        <p id="site-line">Refundable PayPal deposits that keep AI crawlers accountable</p>
-        <div class="badges" id="badges" aria-label="Gateway configuration"></div>
       </div>
       <div class="filter-row">
         <input type="search" id="quick-filter" placeholder="Filter all tables..." aria-label="Filter all tables">
@@ -90,81 +85,128 @@
 
     <section class="banner" id="banner" role="status" hidden></section>
 
-    <!-- Setup & playground -------------------------------------------------------- -->
+    <!-- Websites, access rules, and playground ------------------------------------- -->
     <section class="view" data-view="setup" aria-labelledby="page-title">
-      <section class="card setup-card">
+      <section class="card setup-card" id="sites-card">
         <div class="card-head">
-          <div>
-            <h2>Gateway setup</h2>
-            <p class="card-sub">Point SARA at your website, set the refundable deposit for each content tier, and publish the rules agents must follow. Changes apply live: no redeploy and no env-file edit.</p>
+          <div class="card-title-line">
+            <h2>Websites &amp; deposit</h2>
+            <span class="card-meta" id="sites-count">0 sites</span>
           </div>
-          <div class="setup-status" id="setup-status" aria-label="Gateway status"></div>
         </div>
-        <form id="gateway-form" class="setup-form" autocomplete="off">
-          <div class="form-row">
-            <label class="field grow"><span>Target website URL</span><input id="cfg-origin" placeholder="https://www.example.com" spellcheck="false"></label>
-            <button type="button" class="btn-sm" id="cfg-test">Test connection</button>
-            <button type="button" class="btn-sm" id="cfg-sync">Sync robots.txt</button>
+        <div class="site-list" id="site-list" role="list" aria-label="Websites">
+          <p class="empty">Loading websites...</p>
+        </div>
+        <form class="site-add" id="site-add-form" autocomplete="off">
+          <div class="site-add-shell">
+            <span aria-hidden="true">https://</span>
+            <input id="site-add-input" placeholder="shop.example.com" spellcheck="false" aria-label="New website host">
           </div>
-          <p class="hint" id="cfg-origin-status" role="status">Leave empty to use the bundled demo content.</p>
-          <div class="form-grid">
-            <label class="field"><span>Base deposit</span><input id="cfg-deposit" inputmode="decimal" placeholder="1.00"></label>
-            <label class="field"><span>Max requests / session</span><input id="cfg-budget" type="number" min="1" step="1"></label>
-            <label class="field"><span>Rate limit requests</span><input id="cfg-rate" type="number" min="1" step="1"></label>
-            <label class="field"><span>Rate window (seconds)</span><input id="cfg-window" type="number" min="0.1" step="0.1"></label>
-          </div>
-          <fieldset class="tier-fieldset">
-            <legend>Deposit per tier</legend>
-            <div id="cfg-tiers" class="tier-grid"><p class="empty">Loading the publisher's price list...</p></div>
-          </fieldset>
-          <div class="form-grid two">
-            <label class="field"><span>Allowed paths</span><textarea id="cfg-allowed" rows="5" spellcheck="false"></textarea></label>
-            <label class="field"><span>Disallowed paths</span><textarea id="cfg-disallowed" rows="5" spellcheck="false"></textarea></label>
-          </div>
-          <div class="setup-actions">
-            <button type="submit" class="primary" id="cfg-save">Apply live</button>
-            <span class="hint" id="cfg-hint">Changes take effect immediately for new challenges and sessions.</span>
-          </div>
+          <button type="submit" class="primary" id="site-add-button">Add</button>
         </form>
+        <hr class="section-divider">
+        <div class="deposit-block">
+          <span class="field-kicker">Deposit per agent session</span>
+          <div class="deposit-control">
+            <span class="currency-symbol" id="cfg-currency-symbol" aria-hidden="true">$</span>
+            <input id="cfg-deposit" inputmode="decimal" placeholder="5.00" aria-label="Deposit per agent session">
+            <select id="cfg-currency" aria-label="Currency">
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+              <option value="GBP">GBP</option>
+            </select>
+          </div>
+        </div>
+        <div class="setup-actions">
+          <button type="button" class="primary" id="cfg-save">Apply live</button>
+          <span class="hint" id="cfg-hint">Changes apply to the selected website.</span>
+        </div>
       </section>
 
-      <section class="card" id="playground-card">
+      <section class="card" id="rules-card">
         <div class="card-head">
-          <div>
-            <h2>Crawler playground</h2>
-            <p class="card-sub">Select the good and bad actions for an AI agent to run. Each action gets its own real challenge, deposit, and session; allowed actions return the rendered page and refused actions return the matched rule, HTTP status, agent-facing reason, and deposit consequence. Every run is written to the audit log.</p>
-          </div>
-          <div class="setup-status">
-            <span class="chip" id="pg-agent">Checking AI...</span>
-            <span class="chip" id="pg-quota">Loading...</span>
+          <div class="card-title-line">
+            <span class="card-num" aria-hidden="true">2</span>
+            <h2>Access rules</h2>
+            <span class="card-meta" id="rules-site"></span>
           </div>
         </div>
-        <div class="pg-toolbar">
-          <div class="pg-select-actions">
-            <button type="button" class="btn-sm" id="pg-select-good">Select good</button>
-            <button type="button" class="btn-sm" id="pg-select-bad">Select bad</button>
-            <button type="button" class="btn-sm" id="pg-clear">Clear</button>
+        <div class="rules-grid">
+          <div class="rules-col" data-tone="good">
+            <div class="rules-col-head">
+              <span class="field-kicker">Allowed</span>
+              <span class="rules-count" id="allowed-count">0</span>
+            </div>
+            <ul class="rule-paths" id="allowed-list"></ul>
+            <form class="rule-path-add" id="allowed-add-form" autocomplete="off">
+              <input id="allowed-add-input" placeholder="/path/*" spellcheck="false" aria-label="Add allowed path">
+              <button type="submit">+ Add path</button>
+            </form>
           </div>
-          <span class="hint" id="pg-selection">0 selected</span>
+          <div class="rules-col" data-tone="critical">
+            <div class="rules-col-head">
+              <span class="field-kicker">Disallowed</span>
+              <span class="rules-count" id="disallowed-count">0</span>
+            </div>
+            <ul class="rule-paths" id="disallowed-list"></ul>
+            <form class="rule-path-add" id="disallowed-add-form" autocomplete="off">
+              <input id="disallowed-add-input" placeholder="/admin/*" spellcheck="false" aria-label="Add disallowed path">
+              <button type="submit">+ Add path</button>
+            </form>
+          </div>
         </div>
-        <div id="pg-actions" class="pg-actions"><p class="empty">Loading actions...</p></div>
-        <div class="pg-run-controls">
-          <button type="button" class="primary" id="pg-run-button" disabled>Run agent</button>
-          <span class="hint" id="pg-run-hint">Loading the agent...</span>
+        <hr class="section-divider">
+        <div class="rate-row">
+          <span class="rate-label">Rate limit <span class="muted">(per agent)</span></span>
+          <input id="cfg-rate" type="number" min="1" max="1000" step="1" aria-label="Rate limit requests">
+          <span class="rate-unit-label">requests /</span>
+          <select id="cfg-rate-unit" aria-label="Rate limit window">
+            <option value="1">second</option>
+            <option value="60" selected>minute</option>
+            <option value="3600">hour</option>
+          </select>
         </div>
-        <div id="pg-run" class="pg-run" hidden></div>
-        <div id="pg-result" class="pg-result" hidden></div>
+        <div class="setup-actions">
+          <button type="button" class="primary" id="rules-save">Apply live</button>
+          <span class="hint" id="rules-hint">Wildcards apply as path prefixes on the gateway.</span>
+        </div>
       </section>
 
-      <section class="card" id="pg-recent-card">
+      <section class="card playground-card" id="playground-card">
         <div class="card-head">
-          <div>
-            <h2>Recent playground runs</h2>
-            <p class="card-sub">Each run is joined to its gateway requests and deposit outcome in the audit log.</p>
+          <div class="card-title-line">
+            <span class="card-num" aria-hidden="true">3</span>
+            <h2>Agent playground</h2>
           </div>
-          <button type="button" class="btn-sm" id="pg-refresh">Refresh</button>
+          <button type="button" class="btn-sm" id="pg-reset">Reset</button>
         </div>
-        <div id="pg-recent"><p class="empty">No playground runs yet.</p></div>
+        <div class="pg-target">
+          <label for="pg-target">Target site</label>
+          <select id="pg-target" aria-label="Target site"></select>
+        </div>
+        <div class="pg-behaviors-head">
+          <span class="pg-kicker">Behaviors</span>
+          <span class="pg-selection" id="pg-selection">0 selected</span>
+        </div>
+        <p class="hint pg-rule">SAFE steps always complete. The first BAD step ends the session &mdash; nothing after it is tested.</p>
+        <div class="pg-choice-grid" id="pg-choices"></div>
+        <hr class="section-divider">
+        <div class="pg-plan">
+          <div class="pg-plan-head">
+            <span class="pg-plan-title">Action plan</span>
+            <span class="pg-plan-count" id="pg-plan-count">0 of 0 tested</span>
+          </div>
+          <p class="pg-plan-summary" id="pg-plan-summary">Select behaviors to build the plan.</p>
+          <ol class="pg-plan-list" id="pg-plan-list"></ol>
+        </div>
+        <div class="pg-footer">
+          <span class="pg-hold">Hold <strong id="pg-hold">$5.00</strong></span>
+          <div class="pg-buttons">
+            <button type="button" id="pg-clear">Clear</button>
+            <button type="button" class="primary" id="pg-run-button" disabled>Run</button>
+          </div>
+        </div>
+        <p class="hint pg-run-hint" id="pg-run-hint">Loading the playground...</p>
       </section>
     </section>
 

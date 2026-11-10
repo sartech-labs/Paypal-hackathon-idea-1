@@ -98,7 +98,7 @@ async def test_demo_mode_root_is_console_and_agents_still_gate(
     app, _ = _app(test_settings, fake_clock)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
         root = await client.get("/")
-        assert root.status_code == 200 and "SARA publisher console" in root.text
+        assert root.status_code == 200 and "SARA console" in root.text
         assert (
             await client.get("/news", headers={"User-Agent": "example-agent/1.0"})
         ).status_code == 402

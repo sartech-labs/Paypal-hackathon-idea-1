@@ -16,6 +16,11 @@
     "content_type": "text/html; charset=utf-8",
     "classification": "PROPRIETARY_SYNTHETIC",
     "body": "<!DOCTYPE html><html><head><title>Internal Reports</title></head><body><h1>Q4 Synthetic Operations Forecast</h1><p>SYNTHETIC DEMO CONTENT: Internal infrastructure cost projections and unpublished partner benchmarks.</p></body></html>"
+  },
+  "/checkout": {
+    "title": "Checkout (RESTRICTED)",
+    "content_type": "text/html; charset=utf-8",
+    "classification": "RESTRICTED_INTERNAL",
+    "body": "<!DOCTYPE html><html><head><title>Checkout</title></head><body><h1>Checkout</h1><p>SYNTHETIC DEMO CONTENT: Customer payment and order details. Automated crawlers are not allowed here.</p></body></html>"
   }
 }
-
