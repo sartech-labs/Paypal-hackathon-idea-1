@@ -10,15 +10,15 @@
     /* Apply the saved theme before first paint (dark by default). */
     try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
   </script>
-  <link rel="stylesheet" href="/static/dashboard.css">
-  <link rel="stylesheet" href="/static/demo.css">
+  <link rel="stylesheet" href="/_sara/static/dashboard.css">
+  <link rel="stylesheet" href="/_sara/static/demo.css">
   <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
           integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
           crossorigin="anonymous" defer></script>
-  <script src="/static/grid_kit.js" defer></script>
-  <script src="/static/paypal_panel.js" defer></script>
-  <script src="/static/analytics.js" defer></script>
-  <script src="/static/dashboard.js" defer></script>
+  <script src="/_sara/static/grid_kit.js" defer></script>
+  <script src="/_sara/static/paypal_panel.js" defer></script>
+  <script src="/_sara/static/analytics.js" defer></script>
+  <script src="/_sara/static/dashboard.js" defer></script>
 </head>
 <body>
 <header class="appbar">
@@ -29,8 +29,8 @@
       <span class="brand-tag">Publisher</span>
     </a>
     <nav class="nav" aria-label="Pages">
-      <a href="/">Agent studio</a>
       <a href="/console" aria-current="page">Publisher console</a>
+      <a href="/agent">Agent studio</a>
     </nav>
     <div class="controls">
       <div class="admin-menu">
@@ -51,8 +51,12 @@
 <div class="console">
   <aside class="sidenav" aria-label="Console sections">
     <div class="sidenav-group">
+      <p class="sidenav-label">Set up</p>
+      <button type="button" class="sidenav-link" data-view="setup" aria-current="page"><span class="nav-icon" aria-hidden="true">⚙</span>Setup &amp; playground</button>
+    </div>
+    <div class="sidenav-group">
       <p class="sidenav-label">Monitor</p>
-      <button type="button" class="sidenav-link" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">◧</span>Overview</button>
+      <button type="button" class="sidenav-link" data-view="overview"><span class="nav-icon" aria-hidden="true">◧</span>Overview</button>
       <button type="button" class="sidenav-link" data-view="commerce"><span class="nav-icon" aria-hidden="true">$</span>Commerce<span class="nav-count" id="count-orders" title="Paid orders and active subscriptions">0</span></button>
       <button type="button" class="sidenav-link" data-view="operations"><span class="nav-icon" aria-hidden="true">≡</span>Operations<span class="nav-count" id="count-sessions" title="Crawler sessions">0</span></button>
       <button type="button" class="sidenav-link" data-view="security"><span class="nav-icon" aria-hidden="true">⚠</span>Security<span class="nav-count" id="count-violations" data-tone="critical" title="Policy violations">0</span></button>
@@ -86,15 +90,78 @@
 
     <section class="banner" id="banner" role="status" hidden></section>
 
+    <!-- Setup & playground -------------------------------------------------------- -->
+    <section class="view" data-view="setup" aria-labelledby="page-title">
+      <section class="card setup-card">
+        <div class="card-head">
+          <div>
+            <h2>Gateway setup</h2>
+            <p class="card-sub">Point SARA at your website, set the refundable deposit for each content tier, and publish the rules agents must follow. Changes apply live: no redeploy and no env-file edit.</p>
+          </div>
+          <div class="setup-status" id="setup-status" aria-label="Gateway status"></div>
+        </div>
+        <form id="gateway-form" class="setup-form" autocomplete="off">
+          <div class="form-row">
+            <label class="field grow"><span>Target website URL</span><input id="cfg-origin" placeholder="https://www.example.com" spellcheck="false"></label>
+            <button type="button" class="btn-sm" id="cfg-test">Test connection</button>
+            <button type="button" class="btn-sm" id="cfg-sync">Sync robots.txt</button>
+          </div>
+          <p class="hint" id="cfg-origin-status" role="status">Leave empty to use the bundled demo content.</p>
+          <div class="form-grid">
+            <label class="field"><span>Base deposit</span><input id="cfg-deposit" inputmode="decimal" placeholder="1.00"></label>
+            <label class="field"><span>Max requests / session</span><input id="cfg-budget" type="number" min="1" step="1"></label>
+            <label class="field"><span>Rate limit requests</span><input id="cfg-rate" type="number" min="1" step="1"></label>
+            <label class="field"><span>Rate window (seconds)</span><input id="cfg-window" type="number" min="0.1" step="0.1"></label>
+          </div>
+          <fieldset class="tier-fieldset">
+            <legend>Deposit per tier</legend>
+            <div id="cfg-tiers" class="tier-grid"><p class="empty">Loading the publisher's price list...</p></div>
+          </fieldset>
+          <div class="form-grid two">
+            <label class="field"><span>Allowed paths</span><textarea id="cfg-allowed" rows="5" spellcheck="false"></textarea></label>
+            <label class="field"><span>Disallowed paths</span><textarea id="cfg-disallowed" rows="5" spellcheck="false"></textarea></label>
+          </div>
+          <div class="setup-actions">
+            <button type="submit" class="primary" id="cfg-save">Apply live</button>
+            <span class="hint" id="cfg-hint">Changes take effect immediately for new challenges and sessions.</span>
+          </div>
+        </form>
+      </section>
+
+      <section class="card" id="playground-card">
+        <div class="card-head">
+          <div>
+            <h2>Crawler playground</h2>
+            <p class="card-sub">Pick a curated action and press Run. Permitted actions return the rendered page; refused actions return the matched rule, HTTP status, agent-facing reason, and deposit consequence. Every run is written to the audit log.</p>
+          </div>
+          <span class="chip" id="pg-quota">Loading...</span>
+        </div>
+        <div id="pg-actions" class="pg-actions"><p class="empty">Loading actions...</p></div>
+        <div id="pg-run" class="pg-run" hidden></div>
+        <div id="pg-result" class="pg-result" hidden></div>
+      </section>
+
+      <section class="card" id="pg-recent-card">
+        <div class="card-head">
+          <div>
+            <h2>Recent playground runs</h2>
+            <p class="card-sub">Each run is joined to its gateway requests and deposit outcome in the audit log.</p>
+          </div>
+          <button type="button" class="btn-sm" id="pg-refresh">Refresh</button>
+        </div>
+        <div id="pg-recent"><p class="empty">No playground runs yet.</p></div>
+      </section>
+    </section>
+
     <!-- Overview ------------------------------------------------------------------ -->
     <section class="view" data-view="overview" aria-labelledby="page-title">
       <section class="card console-empty" id="console-empty" hidden>
         <span class="section-icon" aria-hidden="true">▶</span>
         <div>
           <h2>No crawler activity yet</h2>
-          <p class="card-sub">Ask the assistant in Agent studio to read the news, or watch the rule-breaking scraper there. Its deposit, requests, and violations appear here within a few seconds.</p>
+          <p class="card-sub">Run an action in the crawler playground above, or ask the assistant in Agent studio to read the news. Its deposit, requests, and violations appear here within a few seconds.</p>
         </div>
-        <a class="button-link primary" href="/">Open the agent studio</a>
+        <a class="button-link primary" href="#setup">Open the playground</a>
       </section>
       <section class="kpis" id="kpis" aria-label="Key metrics"></section>
 
@@ -162,7 +229,7 @@
         <div>
           <p>Everything AI agents paid this site through PayPal: refundable crawl deposits, pay-per-access items, subscriptions, and product orders.</p>
         </div>
-        <a class="button-link" href="/">Open the agent studio</a>
+        <a class="button-link" href="/agent">Open the agent studio</a>
       </div>
       <section class="kpis" id="commerce-kpis" aria-label="Commerce metrics"></section>
       <section class="card" aria-labelledby="mix-title">
@@ -309,7 +376,7 @@
 
     <footer>
       SARA gateway ·
-      <a href="/">Agent studio</a> ·
+      <a href="/agent">Agent studio</a> ·
       <a href="/docs">API docs</a> ·
       <a href="/policies">Policy JSON</a> ·
       <a href="/robots.txt">robots.txt</a> ·

@@ -9,6 +9,7 @@
   const SLOW_FETCH_MS = 400;
   const REQUESTS_EVERY_MS = 6000;
   const VIEWS = {
+    setup: "Setup & playground",
     overview: "Overview",
     commerce: "Commerce",
     operations: "Operations",
@@ -33,8 +34,14 @@
     timer: null,
     inFlight: false,
     paypal: null,
-    view: "overview",
+    view: "setup",
     policyLoaded: false,
+    config: null,
+    configReadOnly: false,
+    playground: null,
+    pgRunId: null,
+    pgNextSeq: 0,
+    pgTimer: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -271,7 +278,8 @@
       else link.removeAttribute("aria-current");
     }
     $("page-title").textContent = VIEWS[view];
-    if (!fromHash) history.replaceState(null, "", view === "overview" ? window.location.pathname : `#${view}`);
+    if (!fromHash) history.replaceState(null, "", view === "setup" ? window.location.pathname : `#${view}`);
+    if (view === "setup") { loadSetup(); loadPlayground(); }
     if (view === "operations" || view === "analytics") loadRequests(true);
     if (view === "policy") loadPolicy();
     if (view === "commerce") loadCommerce();
@@ -283,7 +291,7 @@
       link.addEventListener("click", () => showView(link.dataset.view));
     }
     window.addEventListener("hashchange", () => showView(window.location.hash.slice(1), true));
-    showView(window.location.hash.slice(1) || "overview", true);
+    showView(window.location.hash.slice(1) || "setup", true);
   }
 
   // --- grids ---------------------------------------------------------------------------
@@ -378,7 +386,7 @@
           ["Request ID", r.request_id, true],
           ["Time", formatDateTime(r.timestamp)],
           ["Crawler", r.crawler_id, true],
-          ["Resource", r.resource ? `GET /gateway${r.resource === "/" ? "" : r.resource}` : "", true],
+          ["Resource", r.resource ? `GET ${r.resource === "/" ? "/" : r.resource}` : "", true],
         ]),
       ]),
       el("div", null, [
@@ -679,7 +687,8 @@
     add(data.payment_mode === "mock" ? "neutral" : "accent", data.payment_mode === "mock" ? "Mock payments (simulated)" : "PayPal Sandbox");
     add("accent", data.settlement_mode === "authorization" ? "Settlement: authorization hold" : "Settlement: capture + refund");
     add(data.ai_available ? "good" : "neutral", data.ai_available ? `AI: ${providerName(data.ai_provider)} (${data.ai_model})` : "AI: rule-based explanations only");
-    add("neutral", data.access === "admin" ? "Admin view" : "Read-only public view");
+    const canEdit = data.access === "admin" || Boolean(state.config && state.config.config_public);
+    add("neutral", data.access === "admin" ? "Admin view" : canEdit ? "Public demo editing" : "Read-only public view");
     $("site-line").textContent = `${data.site_name} · policy ${data.policy_version}`;
   }
 
@@ -968,6 +977,393 @@
       x.omitted_events ? el("p", { className: "notice", text: `${x.omitted_events} repetitive events omitted from the evidence.` }) : null,
       evidenceList
     );
+  }
+
+  // --- setup & crawler playground -----------------------------------------------------
+
+  function lines(value) {
+    return String(value || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  function configFromPolicy(policy) {
+    return {
+      sara_mode: (state.data && state.data.sara_mode) || "demo",
+      origin_url: (state.data && state.data.origin_url) || "",
+      origin_configured: Boolean(state.data && state.data.origin_configured),
+      origin_status: { reachable: false, robots_imported: false, error: null },
+      deposit_amount: policy.deposit_amount,
+      currency: policy.currency,
+      pricing_tiers: policy.pricing_tiers || [],
+      allowed_paths: policy.allowed_paths || [],
+      disallowed_paths: policy.disallowed_paths || [],
+      max_requests_per_session: policy.max_requests_per_session,
+      rate_limit_requests: policy.rate_limit_requests,
+      rate_limit_window_seconds: policy.rate_limit_window_seconds,
+      policy_version: policy.policy_version,
+      config_public: false,
+      warnings: ["Read-only view. Enter the admin token to apply changes."],
+    };
+  }
+
+  function setupStatus(cfg) {
+    const box = $("setup-status");
+    clear(box);
+    box.append(chip(cfg.sara_mode === "gateway" ? "accent" : "neutral", cfg.sara_mode === "gateway" ? "↗" : "◧", cfg.sara_mode === "gateway" ? "Gateway mode" : "Demo mode"));
+    box.append(chip(cfg.origin_configured ? "good" : "warning", cfg.origin_configured ? "✓" : "!", cfg.origin_configured ? "Website connected" : "Bundled content"));
+    box.append(chip("neutral", "$", `${cfg.currency || "USD"} · policy ${cfg.policy_version}`));
+    if (cfg.config_public) box.append(chip("accent", "✎", "Public demo editing"));
+  }
+
+  function renderOriginStatus(cfg, extra) {
+    const node = $("cfg-origin-status");
+    const status = (extra && extra.origin_status) || cfg.origin_status || {};
+    const parts = [];
+    if (!cfg.origin_url) {
+      parts.push("No target URL: the bundled demo content is served to agents.");
+    } else if (status.error) {
+      parts.push(`Target unreachable: ${status.error}`);
+    } else if (status.reachable) {
+      parts.push("Target reachable.");
+      if (status.robots_imported) parts.push("robots.txt imported.");
+      if (status.crawl_delay_seconds) parts.push(`Crawl-delay ${status.crawl_delay_seconds}s.`);
+    } else {
+      parts.push("Target not tested yet.");
+    }
+    node.textContent = parts.join(" ");
+  }
+
+  function renderSetup(cfg) {
+    state.config = cfg;
+    state.configReadOnly = !(state.token || cfg.config_public);
+    $("cfg-origin").value = cfg.origin_url || "";
+    $("cfg-deposit").value = cfg.deposit_amount || "";
+    $("cfg-budget").value = cfg.max_requests_per_session || "";
+    $("cfg-rate").value = cfg.rate_limit_requests || "";
+    $("cfg-window").value = cfg.rate_limit_window_seconds || "";
+    $("cfg-allowed").value = (cfg.allowed_paths || []).join("\n");
+    $("cfg-disallowed").value = (cfg.disallowed_paths || []).join("\n");
+
+    const tiers = $("cfg-tiers");
+    clear(tiers);
+    for (const tier of cfg.pricing_tiers || []) {
+      const inputId = `cfg-tier-${tier.tier_id}`;
+      const field = el("label", { className: "tier-input", htmlFor: inputId }, [
+        el("strong", { text: tier.name || tier.tier_id }),
+        el("small", { text: `${tier.path_prefix || ""}${tier.additional_path_prefixes && tier.additional_path_prefixes.length ? " · " + tier.additional_path_prefixes.join(" · ") : ""}` }),
+        el("input", { id: inputId, inputmode: "decimal", dataset: { tier: tier.tier_id }, value: tier.price || "" }),
+      ]);
+      tiers.append(field);
+    }
+    if (!(cfg.pricing_tiers || []).length) tiers.append(el("p", { className: "empty", text: "No pricing tiers configured." }));
+
+    setupStatus(cfg);
+    renderOriginStatus(cfg);
+    const save = $("cfg-save");
+    save.disabled = state.configReadOnly;
+    $("cfg-test").disabled = false;
+    $("cfg-sync").disabled = !state.token;
+    $("cfg-hint").textContent = state.configReadOnly
+      ? "Read-only. Enter the admin token in the top bar to apply changes."
+      : `Changes take effect live. Last updated ${cfg.updated_at ? formatDateTime(cfg.updated_at) : "by deployment defaults"}.`;
+    for (const warning of cfg.warnings || []) {
+      if (warning) showBanner(warning);
+    }
+  }
+
+  async function loadSetup(force) {
+    if (state.config && !force) { renderSetup(state.config); return; }
+    const result = await getJson("/admin/config", { headers: authHeaders() });
+    if (result.ok) {
+      renderSetup(result.body);
+      return;
+    }
+    const policy = await getJson("/policies", { headers: { Accept: "application/json" } });
+    if (policy.ok) {
+      renderSetup(configFromPolicy(policy.body));
+      if (result.status === 401 && state.token) showBanner("The admin token was rejected. Check ADMIN_API_TOKEN on the gateway.");
+    } else {
+      showBanner(`Could not load the gateway configuration (HTTP ${result.status}).`);
+    }
+  }
+
+  function collectConfig() {
+    const tierPrices = {};
+    for (const input of document.querySelectorAll("#cfg-tiers input[data-tier]")) {
+      tierPrices[input.dataset.tier] = input.value.trim();
+    }
+    const budget = Number($("cfg-budget").value);
+    const rate = Number($("cfg-rate").value);
+    const windowSeconds = Number($("cfg-window").value);
+    if (!Number.isFinite(budget) || budget < 1) throw new Error("Max requests per session must be at least 1.");
+    if (!Number.isFinite(rate) || rate < 1) throw new Error("Rate limit requests must be at least 1.");
+    if (!Number.isFinite(windowSeconds) || windowSeconds <= 0) throw new Error("Rate window must be greater than 0.");
+    return {
+      origin_url: $("cfg-origin").value.trim(),
+      deposit_amount: $("cfg-deposit").value.trim(),
+      tier_prices: tierPrices,
+      allowed_paths: lines($("cfg-allowed").value),
+      disallowed_paths: lines($("cfg-disallowed").value),
+      max_requests_per_session: budget,
+      rate_limit_requests: rate,
+      rate_limit_window_seconds: windowSeconds,
+    };
+  }
+
+  async function saveConfig(event) {
+    event.preventDefault();
+    if ($("cfg-save").disabled) return;
+    let payload;
+    try { payload = collectConfig(); } catch (error) { showBanner(error.message); return; }
+    $("cfg-save").disabled = true;
+    $("cfg-save").textContent = "Applying...";
+    const result = await getJson("/admin/config", {
+      method: "PUT",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(payload),
+    });
+    $("cfg-save").textContent = "Apply live";
+    if (!result.ok) {
+      $("cfg-save").disabled = false;
+      showBanner((result.body && (result.body.message || (result.body.detail && result.body.detail.message))) || `Configuration was rejected (HTTP ${result.status}).`);
+      return;
+    }
+    hideBanner();
+    renderSetup(result.body);
+    toast("good", "✓", "Gateway updated live", `Policy ${result.body.policy_version} · ${result.body.origin_configured ? "proxying the target site" : "bundled content"}.`);
+    refresh();
+    loadPlayground(true);
+  }
+
+  async function testOrigin() {
+    const url = $("cfg-origin").value.trim();
+    const node = $("cfg-origin-status");
+    if (!url) { node.textContent = "Enter a target website URL first."; return; }
+    node.textContent = "Testing the target website...";
+    const result = await getJson("/admin/config/test-origin", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ origin_url: url }),
+    });
+    if (!result.ok) {
+      node.textContent = (result.body && (result.body.message || (result.body.detail && result.body.detail.message))) || `Test failed (HTTP ${result.status}).`;
+      return;
+    }
+    renderOriginStatus({ origin_url: url, origin_status: result.body }, result.body);
+  }
+
+  async function syncRobots() {
+    if (!state.token) { showBanner("Enter the admin token to sync the target website's robots.txt."); return; }
+    const result = await getJson("/admin/config/sync-robots", { method: "POST", headers: authHeaders() });
+    if (!result.ok) {
+      showBanner((result.body && (result.body.message || (result.body.detail && result.body.detail.message))) || `Sync failed (HTTP ${result.status}).`);
+      return;
+    }
+    renderSetup(result.body);
+    toast("accent", "↻", "robots.txt synced", "The target site's rules are now enforced live.");
+  }
+
+  function renderPlaygroundActions(actions, canStart) {
+    const box = $("pg-actions");
+    clear(box);
+    for (const action of actions) {
+      const button = el("button", {
+        type: "button",
+        className: action.tone === "bad" ? "danger" : "primary",
+        text: "Run",
+        disabled: canStart ? undefined : "disabled",
+        onclick: () => runPlayground(action.action_id, action),
+      });
+      box.append(el("div", { className: "pg-action", dataset: { tone: action.tone } }, [
+        el("span", { className: "pg-tone", text: action.tone === "good" ? "Good agent" : "Bad agent" }),
+        el("h3", { text: action.label }),
+        el("p", { text: action.description }),
+        el("p", { className: "pg-expect", text: `Expected: ${action.expected}` }),
+        button,
+      ]));
+    }
+    if (!actions.length) box.append(el("p", { className: "empty", text: "No playground actions configured." }));
+  }
+
+  function renderRecentRuns(runs) {
+    const box = $("pg-recent");
+    clear(box);
+    if (!runs || !runs.length) {
+      box.append(el("p", { className: "empty", text: "No playground runs yet." }));
+      return;
+    }
+    for (const run of runs) {
+      const tone = run.outcome === "allowed" ? "good" : run.outcome === "refused" ? "critical" : "neutral";
+      const icon = run.outcome === "allowed" ? "✓" : run.outcome === "refused" ? "✕" : "●";
+      box.append(el("div", { className: "pg-recent-row" }, [
+        chip(tone, icon, run.outcome || run.status),
+        el("strong", { text: run.label }),
+        el("span", { className: "muted", text: `${run.deposit_state || "no deposit"} · ${formatTime(run.started_at)}` }),
+        el("button", { type: "button", className: "btn-sm", text: "Open", onclick: () => openPlaygroundRun(run.run_id) }),
+      ]));
+    }
+  }
+
+  async function loadPlayground(force) {
+    if (state.playground && !force) {
+      renderPlaygroundActions(state.playground.actions || [], state.playground.can_start);
+      renderRecentRuns(state.playground.recent_runs || []);
+      return;
+    }
+    const result = await getJson("/playground/actions", { headers: authHeaders() });
+    if (!result.ok) {
+      $("pg-quota").textContent = "Unavailable";
+      clear($("pg-actions"));
+      $("pg-actions").append(el("p", { className: "empty", text: result.status === 401 ? "Starting runs needs the admin token, or DEMO_PUBLIC=true on a demo deployment." : `Could not load playground actions (HTTP ${result.status}).` }));
+      return;
+    }
+    state.playground = result.body;
+    $("pg-quota").textContent = `${result.body.runs_remaining_this_hour} runs left this hour`;
+    renderPlaygroundActions(result.body.actions || [], result.body.can_start);
+    renderRecentRuns(result.body.recent_runs || []);
+  }
+
+  function stopPlaygroundPoll() {
+    clearTimeout(state.pgTimer);
+    state.pgTimer = null;
+  }
+
+  function appendPlaygroundSteps(steps) {
+    const list = $("pg-steps");
+    if (!list) return;
+    for (const step of steps) {
+      const tone = step.allowed === true ? "good" : step.allowed === false ? "critical" : "neutral";
+      const icon = step.allowed === true ? "✓" : step.allowed === false ? "✕" : "•";
+      list.append(el("li", { className: "pg-step", dataset: { tone } }, [
+        el("span", { className: "pg-step-num", "aria-hidden": "true", text: icon }),
+        el("div", null, [
+          el("strong", { text: step.label }),
+          step.request ? el("small", { text: step.request }) : null,
+          step.message ? el("small", { text: step.message }) : null,
+          step.reason_code ? el("small", { text: step.reason_code }) : null,
+        ]),
+        el("span", { className: "muted", text: step.http_status ? String(step.http_status) : "" }),
+      ]));
+    }
+  }
+
+  function renderPlaygroundRunHead(run) {
+    const head = $("pg-run-head");
+    clear(head);
+    const status = run.status === "running" ? "Running" : run.status;
+    const tone = run.outcome === "allowed" ? "good" : run.outcome === "refused" ? "critical" : "neutral";
+    head.append(el("h3", { text: run.label || "Playground run" }));
+    head.append(chip(tone, run.status === "running" ? "…" : run.outcome === "allowed" ? "✓" : run.outcome === "refused" ? "✕" : "●", status));
+    head.append(el("span", { className: "muted", text: run.run_id }));
+  }
+
+  function renderPlaygroundResult(run) {
+    const box = $("pg-result");
+    clear(box);
+    box.hidden = false;
+    const tone = run.outcome === "allowed" ? "good" : run.outcome === "refused" ? "critical" : "neutral";
+    box.dataset.tone = tone;
+    const title = run.outcome === "allowed"
+      ? "Permitted: the page was returned"
+      : run.outcome === "refused"
+        ? "Refused: the gateway blocked the action"
+        : "Run failed";
+    box.append(el("h3", { text: title }));
+    if (run.error) box.append(el("p", { text: run.error }));
+
+    const violation = run.violation || {};
+    const deposit = run.deposit || {};
+    const facts = [
+      ["HTTP status", violation.http_status || (run.outcome === "allowed" ? 200 : "")],
+      ["Rule matched", violation.rule_matched],
+      ["Reason code", violation.reason_code],
+      ["Agent-facing reason", violation.agent_reason],
+      ["Deposit consequence", violation.deposit_consequence || deposit.consequence],
+      ["Deposit state", deposit.deposit_state],
+      ["Deposit amount", deposit.amount ? money(deposit.amount, deposit.currency) : ""],
+      ["Session", run.session_id],
+    ].filter(([, value]) => value !== null && value !== undefined && value !== "");
+    if (facts.length) {
+      box.append(el("div", { className: "pg-facts" }, facts.map(([label, value]) =>
+        el("div", { className: "pg-fact" }, [el("span", { text: label }), el("strong", { text: String(value) })])
+      )));
+    }
+
+    if (run.rendered_html) {
+      const frame = el("iframe", { className: "pg-frame", title: "Rendered page returned by the gateway", sandbox: "" });
+      frame.srcdoc = run.rendered_html;
+      box.append(el("div", { className: "pg-frame-wrap" }, [frame]));
+    }
+    if (run.audit_event_ids && run.audit_event_ids.length) {
+      box.append(el("p", { className: "muted", text: `Audit events: ${run.audit_event_ids.join(", ")}` }));
+    }
+  }
+
+  async function pollPlayground() {
+    if (!state.pgRunId) return;
+    const result = await getJson(`/playground/runs/${encodeURIComponent(state.pgRunId)}?after=${state.pgNextSeq}`, { headers: authHeaders() });
+    if (!result.ok) {
+      stopPlaygroundPoll();
+      showBanner(`Could not read the playground run (HTTP ${result.status}).`);
+      return;
+    }
+    const run = result.body;
+    state.pgNextSeq = run.next_seq;
+    appendPlaygroundSteps(run.steps || []);
+    renderPlaygroundRunHead(run);
+    if (run.status !== "running") {
+      stopPlaygroundPoll();
+      renderPlaygroundResult(run);
+      loadPlayground(true);
+      return;
+    }
+    state.pgTimer = setTimeout(pollPlayground, 450);
+  }
+
+  async function runPlayground(actionId, action) {
+    stopPlaygroundPoll();
+    state.pgRunId = null;
+    state.pgNextSeq = 0;
+    $("pg-result").hidden = true;
+    clear($("pg-result"));
+    const runBox = $("pg-run");
+    runBox.hidden = false;
+    clear(runBox);
+    runBox.append(el("div", { className: "pg-run-head", id: "pg-run-head" }, [el("h3", { text: action ? action.label : "Playground run" }), chip("neutral", "…", "Starting")]));
+    runBox.append(el("ol", { className: "pg-steps", id: "pg-steps" }));
+    const result = await getJson("/playground/runs", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ action_id: actionId }),
+    });
+    if (!result.ok) {
+      runBox.append(el("p", { className: "empty", text: (result.body && (result.body.message || (result.body.detail && result.body.detail.message))) || `Could not start the run (HTTP ${result.status}).` }));
+      return;
+    }
+    state.pgRunId = result.body.run_id;
+    state.pgNextSeq = result.body.next_seq || 0;
+    appendPlaygroundSteps(result.body.steps || []);
+    renderPlaygroundRunHead(result.body);
+    runBox.scrollIntoView({ behavior: "smooth", block: "start" });
+    pollPlayground();
+  }
+
+  async function openPlaygroundRun(runId) {
+    stopPlaygroundPoll();
+    const result = await getJson(`/playground/runs/${encodeURIComponent(runId)}`, { headers: authHeaders() });
+    if (!result.ok) { showBanner(`Could not open the run (HTTP ${result.status}).`); return; }
+    const run = result.body;
+    const runBox = $("pg-run");
+    runBox.hidden = false;
+    clear(runBox);
+    runBox.append(el("div", { className: "pg-run-head", id: "pg-run-head" }, [el("h3", { text: run.label })]));
+    runBox.append(el("ol", { className: "pg-steps", id: "pg-steps" }));
+    renderPlaygroundRunHead(run);
+    appendPlaygroundSteps(run.steps || []);
+    renderPlaygroundResult(run);
+    runBox.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   // --- policy view ----------------------------------------------------------------------
@@ -1352,6 +1748,7 @@
 
   function render(data) {
     state.data = data;
+    if (!state.config) loadSetup();
     renderBadges(data);
     renderKpis(data.kpis);
     renderSecurityKpis(data);
@@ -1470,9 +1867,17 @@
       const value = $("admin-token").value.trim();
       state.token = value || null;
       store.set("sessionStorage", "ct-admin-token", state.token);
+      state.config = null;
+      state.playground = null;
       refresh();
+      if (state.view === "setup") { loadSetup(true); loadPlayground(true); }
       if (state.paypal) state.paypal.refresh();
     });
+
+    $("gateway-form").addEventListener("submit", saveConfig);
+    $("cfg-test").addEventListener("click", testOrigin);
+    $("cfg-sync").addEventListener("click", syncRobots);
+    $("pg-refresh").addEventListener("click", () => loadPlayground(true));
 
     $("chart-view-toggle").addEventListener("click", (event) => {
       state.chartAsTable = !state.chartAsTable;

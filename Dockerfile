@@ -32,6 +32,10 @@ COPY storage/README.md ./storage/README.md
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser /app/storage
 USER appuser
 
+# Persist the audit log, deposits, sessions, and live gateway configuration across
+# container replacements. Mount a named volume or host directory here.
+VOLUME ["/app/storage"]
+
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \

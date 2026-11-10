@@ -59,6 +59,7 @@ def test_settings(tmp_path: Path) -> Settings:
         sessions_db_path=tmp_path / "sessions_db.json",
         commerce_db_path=tmp_path / "commerce_db.json",
         admin_api_token="test-admin-secret-token-999",
+        gateway_config_path=tmp_path / "gateway_config.json",
         log_level="WARNING",
         # Never call a live AI API from tests; AI tests inject a fake generator. The
         # provider is pinned so a developer's OPENAI_API_KEY cannot change auto-detection.

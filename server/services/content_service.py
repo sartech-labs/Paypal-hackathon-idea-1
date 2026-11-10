@@ -9,6 +9,7 @@ from typing import Any
 
 from server.config import Settings
 from server.schemas import PolicyDecision, SiteConfig
+from server.services.runtime_config import StoredRuntimeConfig, validate_price
 
 
 @dataclass(frozen=True)
@@ -26,9 +27,11 @@ class ContentService:
     Never exposes or returns disallowed page content through the gateway.
     """
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, runtime: Optional[StoredRuntimeConfig] = None) -> None:
         self._settings = settings
-        self._site_config = self._load_site_config(settings)
+        self._runtime = runtime or StoredRuntimeConfig()
+        self._raw_site_config = self._load_json_file(settings.site_config_path)
+        self._site_config = self.build_site_config(self._runtime)
         self._robots_data = self._load_json_file(settings.robots_config_path)
         self._allowed_pages = self._load_allowed_pages(settings.allowed_pages_path)
         # Validate disallowed_pages.json structure at startup without storing its bodies
@@ -47,9 +50,12 @@ class ContentService:
             raise ValueError(f"Expected JSON object in {path}")
         return data
 
-    def _load_site_config(self, settings: Settings) -> SiteConfig:
-        raw = self._load_json_file(settings.site_config_path)
-        # Allow environment overrides for key runtime limits and deposit amount
+    def build_site_config(self, runtime: Optional[StoredRuntimeConfig] = None) -> SiteConfig:
+        """Build the effective SiteConfig: data JSON -> env defaults -> stored runtime overlay."""
+        runtime = runtime or self._runtime
+        settings = self._settings
+        raw = json.loads(json.dumps(self._raw_site_config))
+        # Deployment defaults from the environment.
         raw["deposit_amount"] = f"{settings.deposit_amount:.2f}"
         raw["currency"] = settings.paypal_currency
         raw["max_requests_per_session"] = settings.max_requests_per_session
@@ -58,12 +64,36 @@ class ContentService:
         raw["session_ttl_seconds"] = settings.session_ttl_seconds
         raw["challenge_ttl_seconds"] = settings.challenge_ttl_seconds
         raw["paypal_sandbox_enabled"] = settings.payment_mode == "paypal_sandbox"
-        raw["pricing_tiers"] = self._apply_tier_price_overrides(raw.get("pricing_tiers") or [], settings)
+        # Owner-console overrides, applied live.
+        if runtime.deposit_amount is not None:
+            raw["deposit_amount"] = validate_price(runtime.deposit_amount, field="deposit_amount")
+        if runtime.allowed_paths is not None:
+            raw["allowed_paths"] = list(runtime.allowed_paths)
+        if runtime.disallowed_paths is not None:
+            raw["disallowed_paths"] = list(runtime.disallowed_paths)
+        if runtime.max_requests_per_session is not None:
+            raw["max_requests_per_session"] = runtime.max_requests_per_session
+        if runtime.rate_limit_requests is not None:
+            raw["rate_limit_requests"] = runtime.rate_limit_requests
+        if runtime.rate_limit_window_seconds is not None:
+            raw["rate_limit_window_seconds"] = runtime.rate_limit_window_seconds
+        if runtime.policy_version is not None:
+            raw["policy_version"] = runtime.policy_version
+        raw["pricing_tiers"] = self._apply_tier_price_overrides(
+            raw.get("pricing_tiers") or [], settings, runtime.tier_prices
+        )
         return SiteConfig.model_validate(raw)
 
+    def apply_runtime(self, runtime: StoredRuntimeConfig, site_config: Optional[SiteConfig] = None) -> None:
+        """Swap the effective configuration after a successful live update."""
+        self._runtime = runtime
+        self._site_config = site_config or self.build_site_config(runtime)
+
     @staticmethod
-    def _apply_tier_price_overrides(tiers: list[Any], settings: Settings) -> list[Any]:
-        """Apply TIER1_PRICE..TIER3_PRICE: tier1 is the highest-ranked tier.
+    def _apply_tier_price_overrides(
+        tiers: list[Any], settings: Settings, runtime_prices: Optional[dict[str, str]] = None
+    ) -> list[Any]:
+        """Apply TIER1_PRICE..TIER3_PRICE, then owner-console tier prices by tier_id.
 
         Tier prices are charged in the deposit currency (PAYPAL_CURRENCY).
         """
@@ -76,6 +106,9 @@ class ContentService:
             override = settings.tier_prices[index] if index < len(settings.tier_prices) else None
             if override is not None:
                 tier["price"] = f"{override:.2f}"
+            runtime_price = (runtime_prices or {}).get(str(tier.get("tier_id", "")))
+            if runtime_price is not None:
+                tier["price"] = validate_price(runtime_price, field=f"tier {tier.get('tier_id')} price")
             tier["currency"] = settings.paypal_currency
         return ordered
 

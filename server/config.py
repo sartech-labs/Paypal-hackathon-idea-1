@@ -21,6 +21,9 @@ class Settings(BaseModel):
     app_host: str = Field(default="127.0.0.1")
     app_port: int = Field(default=8000, ge=1, le=65535)
     app_public_url: str = Field(default="http://127.0.0.1:8000")
+    # demo: the console is the landing page. gateway: "/" is proxied to the owner site and
+    # the console stays at /console.
+    sara_mode: Literal["demo", "gateway"] = Field(default="demo")
 
     payment_mode: Literal["mock", "paypal_sandbox"] = Field(default="mock")
 
@@ -90,6 +93,17 @@ class Settings(BaseModel):
     admin_api_token: str = Field(default="")
     # Read-only publisher dashboard without the admin token (for demo deployments only).
     dashboard_public: bool = Field(default=False)
+    # Owner-editable runtime configuration (target URL, deposits, rules), persisted here.
+    gateway_config_path: Path = Field(default=Path("storage/gateway_config.json"))
+    # Demo deployments only: let visitors apply target URL / deposit / rule changes without
+    # the admin token. Public writes get SSRF checks, an origin allowlist, and a quota.
+    demo_config_public: bool = Field(default=False)
+    demo_origin_allowlist: str = Field(default="")
+    config_max_writes_per_hour: int = Field(default=30, ge=1, le=1000)
+    # Transparent edge: classify unsigned clients by User-Agent (a signature always counts).
+    # A recognised browser User-Agent is human, everything else is an agent.
+    detect_agent_user_agents: bool = Field(default=True)
+    playground_max_runs_per_hour: int = Field(default=20, ge=1, le=1000)
     # Live demo page: when true, anyone may start crawler runs and ask the PayPal
     # assistant (read-only), within the hourly caps below. Admin token otherwise.
     demo_public: bool = Field(default=False)
@@ -233,6 +247,7 @@ def load_settings_from_env() -> Settings:
             or os.getenv("RENDER_EXTERNAL_URL")
             or "http://127.0.0.1:8000"
         ),
+        sara_mode=os.getenv("SARA_MODE", "demo").strip().lower() or "demo",  # type: ignore[arg-type]
         payment_mode=os.getenv("PAYMENT_MODE", "mock"),  # type: ignore[arg-type]
         paypal_base_url=os.getenv("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com"),
         paypal_client_id=os.getenv("PAYPAL_CLIENT_ID", ""),
@@ -276,6 +291,12 @@ def load_settings_from_env() -> Settings:
         commerce_db_path=Path(os.getenv("COMMERCE_DB_PATH", "storage/commerce_db.json")),
         admin_api_token=os.getenv("ADMIN_API_TOKEN", ""),
         dashboard_public=_env_bool("DASHBOARD_PUBLIC", False),
+        gateway_config_path=Path(os.getenv("GATEWAY_CONFIG_PATH", "storage/gateway_config.json")),
+        demo_config_public=_env_bool("DEMO_CONFIG_PUBLIC", False),
+        demo_origin_allowlist=os.getenv("DEMO_ORIGIN_ALLOWLIST", ""),
+        config_max_writes_per_hour=int(os.getenv("CONFIG_MAX_WRITES_PER_HOUR", "30")),
+        detect_agent_user_agents=_env_bool("DETECT_AGENT_USER_AGENTS", True),
+        playground_max_runs_per_hour=int(os.getenv("PLAYGROUND_MAX_RUNS_PER_HOUR", "20")),
         demo_public=_env_bool("DEMO_PUBLIC", False),
         demo_max_runs_per_hour=int(os.getenv("DEMO_MAX_RUNS_PER_HOUR", "20")),
         demo_max_questions_per_hour=int(os.getenv("DEMO_MAX_QUESTIONS_PER_HOUR", "30")),

@@ -60,12 +60,6 @@ def _internal_base_url(request: Request) -> str:
     return f"http://{host}:{port}"
 
 
-@router.get("/", include_in_schema=False)
-async def agent_studio_page() -> FileResponse:
-    """The landing page: the personal agent paying a website four ways through PayPal."""
-    return FileResponse(STATIC_DIR / "agent.html", media_type="text/html")
-
-
 @router.get("/agent", include_in_schema=False)
 async def agent_studio_alias() -> FileResponse:
     return FileResponse(STATIC_DIR / "agent.html", media_type="text/html")

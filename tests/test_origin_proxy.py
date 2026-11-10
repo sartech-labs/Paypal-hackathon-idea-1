@@ -8,6 +8,7 @@ import pytest
 from server.config import Settings
 from server.main import create_app
 from server.services.origin_proxy import OriginProxy, parse_robots_txt
+from server.services.runtime_config import origin_status
 from server.services.rate_limiter import SlidingWindowRateLimiter
 from tests.conftest import FakeClock, complete_onboarding_flow
 
@@ -35,6 +36,8 @@ def origin_handler(seen: list[str]):
             return httpx.Response(200, html="<h1>Post 1</h1>")
         if request.url.path == "/broken":
             return httpx.Response(503, text="down")
+        if request.url.path == "/error500":
+            return httpx.Response(500, text="boom")
         return httpx.Response(404, text="not found")
 
     return handle
@@ -90,14 +93,16 @@ async def test_proxy_forwards_allowed_paths_and_blocks_robots_disallows(proxied)
         assert len(seen) == before
 
 
-async def test_proxy_passes_origin_404_and_hides_origin_errors(proxied) -> None:
+async def test_proxy_passes_origin_404_and_5xx_statuses(proxied) -> None:
     app, _ = proxied
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
         _, _, session = await complete_onboarding_flow(client, "crawler-proxy-2")
         auth = {"Authorization": f"Bearer {session['access_token']}"}
         assert (await client.get("/gateway/missing", headers=auth)).status_code == 404
-        res = await client.get("/gateway/broken", headers=auth)
-        assert res.status_code == 502 and res.json()["error"] == "origin_unavailable"
+        broken = await client.get("/gateway/broken", headers=auth)
+        assert broken.status_code == 503 and broken.text == "down"
+        error = await client.get("/gateway/error500", headers=auth)
+        assert error.status_code == 500 and error.text == "boom"
 
 
 async def test_crawl_delay_slows_the_rate_limit(proxied) -> None:
@@ -107,3 +112,88 @@ async def test_crawl_delay_slows_the_rate_limit(proxied) -> None:
         text = str(policy)
         # 5 requests per window with a 5 s crawl delay: the window grows to 25 s.
         assert "25" in text
+
+def test_robots_redirect_is_not_followed() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.path)
+        if request.url.path == "/robots.txt":
+            return httpx.Response(302, headers={"Location": "http://169.254.169.254/latest/meta-data/"})
+        return httpx.Response(200, text="User-agent: *\nDisallow: /internal\n")
+
+    proxy = OriginProxy("https://origin.example", sync_transport=httpx.MockTransport(handler))
+    rules = proxy.import_robots()
+    assert requested == ["/robots.txt"]
+    assert rules.disallow == []
+    assert proxy.last_error is None
+    assert proxy.robots_imported is False
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 410])
+def test_missing_or_forbidden_robots_is_not_unreachable(status: int) -> None:
+    proxy = OriginProxy(
+        "https://origin.example",
+        sync_transport=httpx.MockTransport(lambda request: httpx.Response(status)),
+    )
+    proxy.import_robots()
+    assert proxy.last_error is None
+    assert proxy.robots_imported is False
+    assert origin_status(proxy).reachable is True
+
+
+def test_robots_5xx_is_still_unreachable() -> None:
+    proxy = OriginProxy(
+        "https://origin.example",
+        sync_transport=httpx.MockTransport(lambda request: httpx.Response(503)),
+    )
+    proxy.import_robots()
+    assert proxy.last_error is not None
+    assert origin_status(proxy).reachable is False
+
+
+async def test_allowed_agent_post_forwards_method_body_and_headers(
+    test_settings: Settings, fake_clock: FakeClock
+) -> None:
+    seen: list[tuple[str, str, bytes, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\n")
+        seen.append(
+            (
+                request.method,
+                request.url.path,
+                request.content,
+                request.headers.get("content-type", ""),
+            )
+        )
+        return httpx.Response(201, text="created")
+
+    settings = test_settings.model_copy(
+        update={"origin_url": "https://origin.example", "rate_limit_requests": 10}
+    )
+    proxy = OriginProxy(
+        settings.origin_url,
+        transport=httpx.MockTransport(handler),
+        sync_transport=httpx.MockTransport(handler),
+    )
+    app = create_app(settings=settings, rate_limiter=SlidingWindowRateLimiter(clock=fake_clock), origin_proxy=proxy)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        _, _, session = await complete_onboarding_flow(client, "crawler-proxy-post")
+        auth = {"Authorization": f"Bearer {session['access_token']}"}
+        response = await client.post(
+            "/submit",
+            content="payload=1",
+            headers={
+                **auth,
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        assert response.status_code == 201
+        assert seen[-1] == (
+            "POST",
+            "/submit",
+            b"payload=1",
+            "application/x-www-form-urlencoded",
+        )

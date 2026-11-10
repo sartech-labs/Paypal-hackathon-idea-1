@@ -227,6 +227,10 @@ class DemoRunner:
         self._active: Optional[str] = None
         self._lock = threading.Lock()
 
+    def set_max_deposit(self, max_deposit: Decimal) -> None:
+        """Track the highest published tier price after a live pricing change."""
+        self._max_deposit = max_deposit
+
     def runs_remaining(self) -> int:
         return self._quota.remaining()
 

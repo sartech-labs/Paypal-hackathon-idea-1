@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from server.services.origin_proxy import OriginProxy
-from server.api import audit, commerce, dashboard, webhooks, deposits, demo, gateway, paypal, policies, sessions
+from server.api import admin, audit, commerce, dashboard, webhooks, deposits, demo, gateway, paypal, playground, policies, sessions, site
 from server.config import Settings, load_settings_from_env
 from server.dependencies import AppContainer
 from server.services.ai_client import TextGenerator
@@ -132,6 +132,7 @@ def create_app(
             },
         )
 
+    app.include_router(admin.router)
     app.include_router(gateway.router)
     app.include_router(deposits.router)
     app.include_router(sessions.router)
@@ -139,16 +140,21 @@ def create_app(
     app.include_router(audit.router)
     app.include_router(dashboard.router)
     app.include_router(demo.router)
+    app.include_router(playground.router)
     app.include_router(paypal.router)
     app.include_router(commerce.router)
     app.include_router(webhooks.router)
-    app.mount("/static", StaticFiles(directory=dashboard.STATIC_DIR), name="static")
+    # SARA's own assets live under /_sara so an origin website can keep /static.
+    app.mount("/_sara/static", StaticFiles(directory=dashboard.STATIC_DIR), name="sara-static")
 
     # MCP storefront (Streamable HTTP) at /mcp: any MCP client can shop this site.
     storefront = Storefront(app)
     storefront_holder["storefront"] = storefront
     app.state.storefront = storefront
     app.mount("/mcp", storefront.asgi(), name="mcp")
+
+    # Transparent site edge. Register last so every console/API/static route wins first.
+    app.include_router(site.router)
 
     return app
 

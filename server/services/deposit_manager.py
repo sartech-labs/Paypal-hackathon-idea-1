@@ -90,6 +90,10 @@ class DepositManager:
         """Override the payment provider (used in dependency injection and tests)."""
         self._payment_provider = provider
 
+    def set_site_config(self, site_config: SiteConfig) -> None:
+        """Apply an owner-console policy change to new challenges and settlements."""
+        self._site_config = site_config
+
     def load_from_disk(self) -> None:
         """Load persisted challenges and deposits from disk and validate schemas."""
         raw = safe_load_json(

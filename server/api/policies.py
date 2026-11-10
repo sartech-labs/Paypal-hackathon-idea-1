@@ -74,7 +74,7 @@ async def get_robots_txt(
         cfg = container.site_config
         content = container.origin_proxy.render_robots_txt(
             cfg.allowed_paths, cfg.disallowed_paths,
-            "AI agents must open a SARA deposit session and accept the policy at /policies before crawling via /gateway.",
+            "AI agents must open a SARA deposit session and accept the policy at /policies before crawling.",
         )
     else:
         content = container.content_service.render_robots_txt()

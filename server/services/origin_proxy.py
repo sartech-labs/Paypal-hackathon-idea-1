@@ -14,6 +14,7 @@ Disallowed paths are rejected before any request reaches the origin.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urljoin
@@ -22,8 +23,24 @@ import httpx
 
 logger = logging.getLogger("sara.origin")
 
-# Response headers worth passing through; cookies and hop-by-hop headers are dropped.
+# Response headers worth passing through to agents; cookies and hop-by-hop headers are dropped.
 PASS_HEADERS = ("cache-control", "etag", "last-modified", "content-language", "expires", "vary")
+# Human traffic is proxied as a normal browser request, so cookies and redirects pass through.
+HOP_BY_HOP = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "content-length",
+        "content-encoding",
+        "host",
+    }
+)
 MAX_BODY_BYTES = 10 * 1024 * 1024
 
 
@@ -74,16 +91,38 @@ def parse_robots_txt(text: str) -> RobotsRules:
     return rules
 
 
+class OriginHeaders(dict[str, str]):
+    """A header mapping that preserves duplicate values, notably Set-Cookie."""
+
+    def __init__(self, pairs: Iterable[tuple[str, str]]) -> None:
+        self._pairs = [(key.lower(), value) for key, value in pairs]
+        super().__init__()
+        for key, value in self._pairs:
+            super().__setitem__(key, value)
+
+    def items(self):  # type: ignore[override]
+        return iter(self._pairs)
+
+    def multi_items(self) -> list[tuple[str, str]]:
+        return list(self._pairs)
+
+    def get_list(self, key: str) -> list[str]:
+        return [value for name, value in self._pairs if name == key.lower()]
+
+    def with_extra(self, extra: Mapping[str, str]) -> "OriginHeaders":
+        return OriginHeaders([*self._pairs, *extra.items()])
+
+
 @dataclass
 class OriginResponse:
     status_code: int
     body: bytes
     content_type: str
-    headers: dict[str, str]
+    headers: OriginHeaders
 
 
 class OriginError(Exception):
-    """The origin could not be reached or answered with a server error."""
+    """The origin could not be reached (connect, timeout, or DNS failure)."""
 
 
 class OriginProxy:
@@ -101,40 +140,113 @@ class OriginProxy:
         self._transport = transport
         self._sync_transport = sync_transport
         self.rules = RobotsRules()
+        # Last import result, shown by the admin console's "test / sync robots" controls.
+        self.last_checked_at: Optional[str] = None
+        self.last_status_code: Optional[int] = None
+        self.last_error: Optional[str] = None
+        self.robots_imported = False
 
     def import_robots(self) -> RobotsRules:
         """Fetch and parse the origin's robots.txt; an unreachable file means no extra rules."""
+        from server.core.security import utc_now_iso
+
+        self.last_checked_at = utc_now_iso()
+        self.last_status_code = None
+        self.last_error = None
+        self.robots_imported = False
         try:
-            with httpx.Client(timeout=self._timeout, transport=self._sync_transport, follow_redirects=True) as client:
+            # Never follow redirects here: validate_origin_url only checked the first hop,
+            # so a redirect could otherwise reach a private/metadata address.
+            with httpx.Client(timeout=self._timeout, transport=self._sync_transport, follow_redirects=False) as client:
                 res = client.get(urljoin(self.base_url, "robots.txt"))
+            self.last_status_code = res.status_code
             if res.status_code == 200:
                 self.rules = parse_robots_txt(res.text)
-            else:
+                self.robots_imported = True
+            elif 500 <= res.status_code < 600:
+                self.last_error = f"robots.txt answered HTTP {res.status_code}"
                 logger.warning("Origin robots.txt answered %s; enforcing SARA's own rules only", res.status_code)
+            else:
+                # 401/403/404/410 and redirects mean "no rules here", not "site is down".
+                self.rules = RobotsRules()
         except httpx.HTTPError as exc:
+            self.last_error = f"Could not fetch robots.txt: {exc}"
             logger.warning("Could not fetch the origin's robots.txt (%s); enforcing SARA's own rules only", exc)
         return self.rules
 
-    async def fetch(self, path: str, query: str = "") -> OriginResponse:
+    async def fetch(
+        self,
+        path: str,
+        query: str = "",
+        method: str = "GET",
+        body: bytes = b"",
+        headers: Optional[dict[str, str]] = None,
+    ) -> OriginResponse:
         url = urljoin(self.base_url, path.lstrip("/"))
         if query:
             url = f"{url}?{query}"
+        request_headers = {"User-Agent": "SARA-Gateway/1.0 (+agent proxy)"}
+        request_headers.update(
+            {key: value for key, value in (headers or {}).items() if key.lower() not in HOP_BY_HOP}
+        )
         try:
             async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport, follow_redirects=False) as client:
-                res = await client.get(url, headers={"User-Agent": "SARA-Gateway/1.0 (+agent proxy)"})
+                res = await client.request(
+                    method,
+                    url,
+                    headers=request_headers,
+                    content=body if body else None,
+                )
         except httpx.HTTPError as exc:
             raise OriginError(f"Origin request failed: {exc}") from exc
-        if res.status_code >= 500:
-            raise OriginError(f"Origin answered {res.status_code}")
         body = res.content[:MAX_BODY_BYTES]
-        headers = {k: v for k, v in res.headers.items() if k.lower() in PASS_HEADERS}
+        header_pairs = [(k, v) for k, v in res.headers.multi_items() if k.lower() in PASS_HEADERS]
         if res.status_code in (301, 302, 303, 307, 308) and res.headers.get("location"):
-            headers["location"] = res.headers["location"]
+            header_pairs.append(("location", res.headers["location"]))
         return OriginResponse(
             status_code=res.status_code,
             body=body,
             content_type=res.headers.get("content-type", "application/octet-stream"),
-            headers=headers,
+            headers=OriginHeaders(header_pairs),
+        )
+
+    async def forward(
+        self,
+        method: str,
+        path: str,
+        query: str = "",
+        headers: Optional[dict[str, str]] = None,
+        body: bytes = b"",
+    ) -> OriginResponse:
+        """Proxy a human request like a normal reverse proxy, preserving cookies and methods."""
+        url = urljoin(self.base_url, path.lstrip("/"))
+        if query:
+            url = f"{url}?{query}"
+        safe_headers = {
+            key: value
+            for key, value in (headers or {}).items()
+            if key.lower() not in HOP_BY_HOP
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport, follow_redirects=False) as client:
+                res = await client.request(
+                    method,
+                    url,
+                    headers=safe_headers,
+                    content=body if body else None,
+                )
+        except httpx.HTTPError as exc:
+            raise OriginError(f"Origin request failed: {exc}") from exc
+        response_headers = OriginHeaders(
+            (key, value)
+            for key, value in res.headers.multi_items()
+            if key.lower() not in HOP_BY_HOP
+        )
+        return OriginResponse(
+            status_code=res.status_code,
+            body=res.content[:MAX_BODY_BYTES],
+            content_type=res.headers.get("content-type", "application/octet-stream"),
+            headers=response_headers,
         )
 
     def render_robots_txt(self, allowed: list[str], disallowed: list[str], notice: str) -> str:

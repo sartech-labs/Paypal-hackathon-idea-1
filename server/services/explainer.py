@@ -161,6 +161,9 @@ class DepositExplainer:
         self._site_config = site_config
         self._cache: OrderedDict[tuple[Any, ...], DepositExplanationResponse] = OrderedDict()
 
+    def set_site_config(self, site_config: SiteConfig) -> None:
+        self._site_config = site_config
+
     async def explain(
         self,
         *,

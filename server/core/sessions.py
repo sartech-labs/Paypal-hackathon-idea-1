@@ -44,6 +44,10 @@ class SessionManager:
         self._sessions: dict[str, SessionRecord] = {}
         self._deposit_to_session: dict[str, str] = {}
 
+    def set_site_config(self, site_config: SiteConfig) -> None:
+        """Apply an owner-console policy change to newly issued sessions."""
+        self._site_config = site_config
+
     def load_from_disk(self) -> None:
         """Load persisted sessions on startup and expire any stale ACTIVE sessions."""
         raw = safe_load_json(self._db_path, expected_top_keys=("sessions",))

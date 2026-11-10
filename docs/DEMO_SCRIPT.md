@@ -1,6 +1,8 @@
 # Demo video script (under 3 minutes)
 
-The Devpost submission needs a public YouTube video shorter than 3 minutes. The whole demo runs in the browser: the live demo page at `/` and the publisher console at `/console`. No terminal is needed on camera.
+> **Gateway framing.** SARA ships as one container in front of the owner's website. In the current build the browser demo has moved: `/` is the **owner console** in `SARA_MODE=demo` (in `gateway` mode it proxies the website), `/agent` is **Agent studio**, and the **crawler playground** is on the owner console. The storyboards below were written when `/` was Agent studio; where a shot says `/` for the agent demo, record `/agent`.
+
+The Devpost submission needs a public YouTube video shorter than 3 minutes. The whole demo runs in the browser: the owner console at `/`, Agent studio at `/agent`, and the publisher console at `/console`. No terminal is needed on camera.
 
 **The submitted video** is built by [`scripts/explainer_video`](../scripts/explainer_video/README.md): a 2 min 58 s motion-graphic explainer with real screen recordings from the live PayPal Sandbox, word-synced captions, and OpenAI `gpt-4o-mini-tts` narration. It is website-first:
 
@@ -12,7 +14,7 @@ The Devpost submission needs a public YouTube video shorter than 3 minutes. The 
 | 1:05 | Live: a rogue scraper hits the gateway (402, deposit, 403 and 429, deposit kept, AI explanation) | Recording of `/crawler` |
 | 1:20 | Selling to agents: pay-per-access, subscriptions, products | Offer cards |
 | 1:27 | The owner's dashboard: deposits, security log, AG Grid tables, revenue by payment type, Verify with PayPal (MCP), AG Studio | Recording of `/console` |
-| 1:57 | A person using an agent: task and budget, deposit, mandate approvals, AI purchase review, deposit back; any AI assistant via the MCP storefront | Recording of `/`; real MCP session |
+| 1:57 | A person using an agent: task and budget, deposit, mandate approvals, AI purchase review, deposit back; any AI assistant via the MCP storefront | Recording of `/agent`; real MCP session |
 | 2:32 | Why it is good for PayPal: every agent payment on PayPal, a package for websites, new merchants and volume | Motion graphics |
 | 2:45 | One gateway, three winners; end card | Motion graphics |
 
@@ -24,7 +26,7 @@ This cut tells the bigger story: one agent, four ways to pay, a person in contro
 
 | Time | Screen | Voiceover |
 | :--- | :--- | :--- |
-| 0:00–0:15 | `/` (Agent studio), hero and the "What Sentinel News sells to agents" strip | "AI agents are becoming customers. They read, subscribe, and buy for people. Most websites can only block them or get scraped." |
+| 0:00–0:15 | `/agent` (Agent studio), hero and the "What Sentinel News sells to agents" strip | "AI agents are becoming customers. They read, subscribe, and buy for people. Most websites can only block them or get scraped." |
 | 0:15–0:30 | Point at the four offer cards | "SARA gets a site ready for them, backed by PayPal: a machine-readable catalog with four ways to pay: a refundable crawl deposit, pay-per-access, subscriptions, and products." |
 | 0:30–0:45 | The request box (first preset) and the mandate: $60 budget, ask above $10 | "This is Aria, a personal agent. I give it a task and a spending mandate. The mandate is enforced in code, not by the model." |
 | 0:45–1:25 | **Run agent**. Activity fills: catalog, mandate, 402, deposit paid, video bought ($2) | "It reads the catalog, plans, and pays. A five-dollar refundable deposit to crawl the news. Two dollars for the video, under my threshold, so it doesn't ask." |
@@ -41,7 +43,7 @@ The original cut below focuses on the refundable deposit, policy enforcement, an
 
 ## Before recording
 
-1. **Credentials:** `.env` has `PAYMENT_MODE=paypal_sandbox`, `PAYPAL_SANDBOX_AUTOPAY=true`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`), `DEMO_PUBLIC=true`, and `DASHBOARD_PUBLIC=true`. With autopay, deposits are real Sandbox payments made with PayPal's Sandbox test card, so there is no PayPal login on camera.
+1. **Credentials:** `.env` has `SARA_MODE=demo`, `PAYMENT_MODE=paypal_sandbox`, `PAYPAL_SANDBOX_AUTOPAY=true`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY`), `DEMO_PUBLIC=true`, `DEMO_CONFIG_PUBLIC=true`, and `DASHBOARD_PUBLIC=true`. With autopay, deposits are real Sandbox payments made with PayPal's Sandbox test card, so there is no PayPal login on camera.
 2. **PayPal MCP server:** use the Docker image (Node.js and `@paypal/mcp` included), or install Node.js 18+ locally. Before recording, press **Verify with PayPal** once on any Sandbox deposit, so `npx` has already downloaded the package.
 3. **Settlement mode:** `DEPOSIT_SETTLEMENT=refund` shows a refund in PayPal; `authorization` shows a voided hold. Both modes have been run live against the Sandbox.
 4. **Fresh state:** stop the server, delete `storage/*.json` and `storage/audit.jsonl`, and restart so the console starts empty.
@@ -53,7 +55,7 @@ The original cut below focuses on the refundable deposit, policy enforcement, an
 
 | Time | Screen | Voiceover |
 | :--- | :--- | :--- |
-| 0:00–0:15 | Live demo page, empty state with the five steps | "AI crawlers read the web at machine speed. `robots.txt` is only a request, and publishers pay for every scraper that ignores it." |
+| 0:00–0:15 | Crawler demo page (`/demo`), empty state with the five steps | "AI crawlers read the web at machine speed. `robots.txt` is only a request, and publishers pay for every scraper that ignores it." |
 | 0:15–0:25 | Point at the badges: PayPal Sandbox, settlement, AI model, PayPal MCP | "SARA is an HTTP 402 gateway. Before an AI agent can read, it posts a small refundable deposit through PayPal and accepts the site's rules." |
 | 0:25–1:15 | Pick **Compliant research crawler** and **AI agent**, press **Start run**. The step rail fills in: 402 challenge, policy, PayPal deposit, crawl. Hover the prompt-injection card on `/news/economy`. | "Here GPT-5.5 is the crawler. It gets HTTP 402, reads the policy, pays the deposit with PayPal, and paces itself to the rate limit. This page hides an instruction telling AI agents to grab private customer data. The agent ignores it." |
 | 1:15–1:35 | Session completes: deposit card turns **Refunded**, PayPal order, capture, and refund IDs appear. Explanation card shows findings with evidence chips. | "The session ends and the gateway decides from its own audit log: no violations, so the deposit comes back. The explanation cites the exact audit events." |
