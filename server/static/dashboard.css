@@ -1536,7 +1536,7 @@ footer a { color: var(--text-secondary); }
 }
 .pg-plan-cut::before,
 .pg-plan-cut::after { content: ""; flex: 1; height: 1px; background: color-mix(in srgb, var(--status-critical) 40%, transparent); }
-.pg-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 13px; }
+.pg-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 13px; }
 .pg-hold { color: var(--text-muted); font-size: 12.5px; }
 .pg-hold strong { color: var(--text-primary); font-family: var(--mono); font-size: 13px; }
 .pg-buttons { display: flex; flex-wrap: wrap; gap: 8px; }

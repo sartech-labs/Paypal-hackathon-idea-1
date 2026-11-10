@@ -9,7 +9,7 @@
   const SLOW_FETCH_MS = 400;
   const REQUESTS_EVERY_MS = 6000;
   const VIEWS = {
-    setup: "Websites",
+    setup: "Console",
     overview: "Overview",
     commerce: "Commerce",
     operations: "Operations",
@@ -280,7 +280,7 @@
 
   // --- views (sidebar navigation, deep-linkable through the URL hash) --------------------
   function showView(view, fromHash) {
-    if (!VIEWS[view]) view = "overview";
+    if (!VIEWS[view]) view = "setup";
     state.view = view;
     for (const section of document.querySelectorAll(".view")) section.hidden = section.dataset.view !== view;
     for (const link of document.querySelectorAll(".sidenav-link")) {
@@ -1268,7 +1268,6 @@
     }
     const symbol = CURRENCY_SYMBOLS[(site && site.currency) || "USD"] || "$";
     if ($("cfg-currency-symbol")) $("cfg-currency-symbol").textContent = symbol;
-    if ($("pg-hold")) $("pg-hold").textContent = moneyForSite(site) || "—";
 
     const canEdit = !state.configReadOnly;
     if ($("cfg-deposit")) $("cfg-deposit").disabled = !canEdit || !site;
@@ -1693,7 +1692,6 @@
 
     const selectedCount = PG_BEHAVIORS.filter((behavior) => state.pgSelected[behavior.id]).length;
     $("pg-selection").textContent = `${selectedCount} selected`;
-    if ($("pg-hold")) $("pg-hold").textContent = moneyForSite(site) || "—";
 
     const plan = buildPlaygroundPlan();
     const hasRun = Boolean(state.pgRunning) || Object.keys(state.pgResults).length > 0;
@@ -1772,11 +1770,8 @@
     button.textContent = state.pgRunning
       ? `Running ${Math.min(state.pgCurrentIndex + 1, plan.length)} of ${plan.length}`
       : "Run plan";
-    hint.textContent =
-      disabledReason ||
-      (hasRun
-        ? `Runs against ${site.host}. Each action gets a fresh crawler session, so a blocked step does not stop the rest. Select a tested step to expand or collapse its final response.`
-        : "Select behaviors, then press Run to test each one in its own crawler session.");
+    hint.textContent = disabledReason;
+    hint.hidden = !disabledReason;
   }
 
   async function loadPlayground(force) {
@@ -2011,7 +2006,7 @@
     button.disabled = !ready;
     hint.textContent = ready
       ? (state.data && !state.data.ai_available ? "AI is not configured on the gateway; the request will report that." : `Uses ${providerName(state.data ? state.data.ai_provider : "")} through the gateway (admin).`)
-      : "Enter the admin token in the top bar to draft a policy with AI. The active policy on the left is always visible.";
+      : "Policy drafting needs an admin token on the gateway. The active policy on the left is always visible.";
   }
 
   function listSection(title, items) {
@@ -2307,10 +2302,7 @@
     try {
       const result = await getJson("/dashboard/data", { headers: authHeaders() });
       if (result.status === 401) {
-        showBanner(state.token
-          ? "The admin token was rejected. Check ADMIN_API_TOKEN on the gateway."
-          : "Enter the admin token to view the console, or run the gateway with DASHBOARD_PUBLIC=true for a read-only demo.");
-        $("updated").textContent = "Not authorized";
+        showBanner("The dashboard needs public access or an admin token on the gateway.");
         return;
       }
       if (!result.ok || !result.body) {
@@ -2343,7 +2335,6 @@
       state.grids.violations.setRows(data.events.filter((e) => e.event_type === "POLICY_VIOLATION"));
     }
     updateAssistantState();
-    $("updated").textContent = `Updated ${formatTime(data.generated_at)}`;
     $("console-empty").hidden = Boolean(data.deposits.length || data.sessions.length || data.events.length);
     announceChanges(state.previous, data);
     state.previous = data;
@@ -2429,54 +2420,9 @@
     }
   }
 
-  // --- admin token popover -----------------------------------------------------------------
-  function initAdminMenu() {
-    const toggle = $("admin-toggle");
-    const pop = $("admin-pop");
-    const label = () => {
-      toggle.dataset.active = state.token ? "true" : "false";
-      $("admin-toggle-text").textContent = state.token ? "Admin ✓" : "Admin";
-    };
-    const close = () => { pop.hidden = true; toggle.setAttribute("aria-expanded", "false"); };
-    toggle.addEventListener("click", () => {
-      pop.hidden = !pop.hidden;
-      toggle.setAttribute("aria-expanded", String(!pop.hidden));
-      if (!pop.hidden) $("admin-token").focus();
-    });
-    document.addEventListener("click", (event) => { if (!pop.hidden && !event.target.closest(".admin-menu")) close(); });
-    document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !pop.hidden) { close(); toggle.focus(); } });
-    $("token-form").addEventListener("submit", () => { close(); setTimeout(label, 0); });
-    label();
-  }
-
-  function setAutoRefresh(enabled) {
-    clearInterval(state.timer);
-    state.timer = enabled ? setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS) : null;
-    store.set("localStorage", "ct-auto-refresh", enabled ? null : "off");
-  }
-
   // --- init ----------------------------------------------------------------------------
   function init() {
     initTheme();
-    state.token = store.get("sessionStorage", "ct-admin-token");
-    if (state.token) $("admin-token").value = state.token;
-
-    $("token-form").addEventListener("submit", (event) => {
-      event.preventDefault();
-      const value = $("admin-token").value.trim();
-      state.token = value || null;
-      store.set("sessionStorage", "ct-admin-token", state.token);
-      state.config = null;
-      state.playground = null;
-      state.pgCanStart = null;
-      state.sites = [];
-      state.selectedSiteId = null;
-      state.appliedSiteId = null;
-      state.pgResults = {};
-      refresh();
-      if (state.view === "setup") { loadSetup(true); loadPlayground(true); }
-      if (state.paypal) state.paypal.refresh();
-    });
 
     state.pgSelected = defaultBehaviorSelection();
     $("cfg-save").addEventListener("click", () => applySelectedSite());
@@ -2490,7 +2436,6 @@
       site.deposit = event.target.value;
       state.pgResults = {};
       markSiteDirty();
-      if ($("pg-hold")) $("pg-hold").textContent = moneyForSite(site) || "—";
     });
     $("cfg-rate").addEventListener("input", (event) => {
       const site = selectedSite();
@@ -2520,10 +2465,6 @@
 
     $("draft-button").addEventListener("click", draftPolicy);
 
-    const auto = $("auto-refresh");
-    auto.checked = store.get("localStorage", "ct-auto-refresh") !== "off";
-    auto.addEventListener("change", () => setAutoRefresh(auto.checked));
-
     if (window.CTPayPal) {
       state.paypal = window.CTPayPal.create($("paypal-panel"), {
         headers: () => (state.token ? { "X-Admin-Token": state.token } : {}),
@@ -2532,11 +2473,10 @@
     }
 
     initGrids();
-    initAdminMenu();
     updateAssistantState();
     initViews();
     refresh();
-    setAutoRefresh(auto.checked);
+    state.timer = setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
     // Fetch AG Studio in the background so the Analytics view opens without a wait.
     if (window.CTAnalytics) {
       const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 2500));

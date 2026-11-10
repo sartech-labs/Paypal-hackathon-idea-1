@@ -61,8 +61,8 @@ async def test_console_loads_shared_grid_kit_and_pinned_ag_studio(async_client: 
     # The live demo uses the same grid kit for its request monitor.
     demo = (await async_client.get("/crawler")).text
     assert "/_sara/static/grid_kit.js" in demo and 'id="grid-requests"' in demo
-    # Empty state, live toasts, and the admin-token popover (token form IDs are unchanged).
-    for marker in ('id="console-empty"', 'id="toasts"', 'id="admin-toggle"', 'id="token-form"', 'id="admin-token"'):
+    # Empty state and live toasts remain; the admin popover is not part of the demo console.
+    for marker in ('id="console-empty"', 'id="toasts"'):
         assert marker in page
     for marker in ('id="admin-toggle"', 'id="token-form"', 'id="admin-token"', 'aria-keyshortcuts="S"'):
         assert marker in demo
