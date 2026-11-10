@@ -50,6 +50,8 @@
     pgCurrentIndex: -1,
     pgRunToken: 0,
     pgActiveRunId: null,
+    // Suppress automatic settlement toasts while the playground response panel is the source of truth.
+    pgQuietUntil: 0,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -1505,11 +1507,10 @@
     return safe.concat(bad);
   }
 
-  function planStatus(step, index, plan, firstBad, result, running, hasRun) {
-    if (hasRun && firstBad !== -1 && index > firstBad) return { state: "not-tested", label: "not tested", tone: "muted" };
+  function planStatus(result, running, hasRun) {
     if (result && result.state) {
       if (result.state === "blocked") {
-        const http = result.http ? ` · HTTP ${result.http}` : " · ends run";
+        const http = result.http ? ` · HTTP ${result.http}` : "";
         return { state: "blocked", label: `BLOCKS${http}`, tone: "critical", detail: result.detail };
       }
       if (result.state === "running") return { state: "running", label: "running...", tone: "neutral" };
@@ -1518,8 +1519,161 @@
     }
     if (running) return { state: "not-tested", label: "waiting", tone: "muted" };
     if (!hasRun) return { state: "pending", label: "", tone: "muted" };
-    if (step.tone === "bad" && index === firstBad) return { state: "will-block", label: "BLOCKS · ends run", tone: "critical" };
-    return { state: "will-complete", label: "completes", tone: "muted" };
+    return { state: "not-tested", label: "not tested", tone: "muted" };
+  }
+
+  const HTTP_REASON = Object.freeze({
+    200: "OK",
+    201: "Created",
+    202: "Accepted",
+    204: "No Content",
+    301: "Moved Permanently",
+    302: "Found",
+    303: "See Other",
+    307: "Temporary Redirect",
+    308: "Permanent Redirect",
+    400: "Bad Request",
+    401: "Unauthorized",
+    402: "Payment Required",
+    403: "Forbidden",
+    404: "Not Found",
+    405: "Method Not Allowed",
+    408: "Request Timeout",
+    409: "Conflict",
+    410: "Gone",
+    422: "Unprocessable Entity",
+    429: "Too Many Requests",
+    500: "Internal Server Error",
+    501: "Not Implemented",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+    504: "Gateway Timeout",
+  });
+
+  function httpStatusText(code) {
+    const status = Number(code);
+    if (!Number.isInteger(status) || status <= 0) return "";
+    return `${status} ${HTTP_REASON[status] || ""}`.trim();
+  }
+
+  function responseTone(code) {
+    const status = Number(code);
+    if (!Number.isInteger(status)) return "muted";
+    if (status >= 200 && status < 300) return "good";
+    if (status === 402) return "warning";
+    if (status === 429) return "serious";
+    if (status >= 300 && status < 400) return "warning";
+    return "critical";
+  }
+
+  function finalResponseStep(action, run) {
+    const steps = Array.isArray(action && action.steps) && action.steps.length
+      ? action.steps
+      : (Array.isArray(run && run.steps) ? run.steps : []);
+    const withStatus = steps.filter((step) => step && step.http_status !== null && step.http_status !== undefined);
+    const reads = withStatus.filter((step) => /^GET\s+/i.test(String(step.request || "")));
+    if (reads.length) return reads[reads.length - 1];
+    return withStatus.length ? withStatus[withStatus.length - 1] : null;
+  }
+
+  function depositLine(deposit) {
+    if (!deposit) return { text: "No deposit", tone: "muted" };
+    const stateCode = deposit.deposit_state;
+    const currency = deposit.currency || "USD";
+    const amount = money(deposit.amount != null ? deposit.amount : deposit.captured_amount, currency);
+    if (!stateCode) {
+      const consequence = String(deposit.consequence || "");
+      if (!consequence || /none|no deposit/i.test(consequence)) return { text: "No deposit taken", tone: "muted" };
+      return { text: consequence, tone: "muted" };
+    }
+    const zero = money(0, currency);
+    if (stateCode === "FORFEITED") return { text: `${amount || "Deposit"} forfeited (refund ${zero})`, tone: "critical" };
+    if (stateCode === "REFUNDED") return { text: `${amount || "Deposit"} refunded (refund ${amount || zero})`, tone: "good" };
+    if (stateCode === "RELEASED") return { text: `${amount || "Deposit"} released (refund not needed)`, tone: "good" };
+    if (stateCode === "REFUND_PENDING") return { text: `${amount || "Deposit"} refund pending (refund ${amount || zero})`, tone: "warning" };
+    if (stateCode === "FAILED") return { text: `${amount || "Deposit"} payment failed (refund ${zero})`, tone: "critical" };
+    if (stateCode === "CAPTURED" || stateCode === "AUTHORIZED") {
+      return { text: `${amount || "Deposit"} held (refund after settlement)`, tone: "muted" };
+    }
+    return { text: `${amount || "Deposit"} ${deposit.consequence || humanize(stateCode)}`.trim(), tone: "muted" };
+  }
+
+  function isSessionSummary(message) {
+    const text = String(message || "");
+    return /^Session\s+\S+/i.test(text) && /remaining\s+(budget|window)/i.test(text);
+  }
+
+  function describePlaygroundResponse(action, run) {
+    const violation = (action && action.violation) || (run && run.violation) || null;
+    const deposit = (action && action.deposit) || (run && run.deposit) || null;
+    const refused = Boolean((action && action.outcome === "refused") || (run && run.outcome === "refused"));
+    const failed = Boolean(
+      (action && (action.status === "failed" || action.outcome === "error")) ||
+      (run && (run.status === "failed" || run.status === "cancelled" || run.outcome === "error"))
+    );
+    const step = finalResponseStep(action, run);
+    let statusCode = null;
+    if (refused) statusCode = (violation && violation.http_status) || (step && step.http_status);
+    else if (!failed) statusCode = (step && step.http_status) || 200;
+    else if (step && Number(step.http_status) >= 400) statusCode = step.http_status;
+
+    let message = "";
+    if (refused) {
+      message = (violation && (violation.agent_reason || violation.rule_matched || violation.reason_code))
+        || (step && step.message)
+        || (action && action.error)
+        || (run && run.error)
+        || "The gateway refused the action.";
+    } else if (failed) {
+      message = (action && action.error)
+        || (run && run.error)
+        || (step && step.message)
+        || "The action did not finish.";
+    } else {
+      const stepMessage = step && step.message ? step.message : "";
+      if (stepMessage && !isSessionSummary(stepMessage)) {
+        message = stepMessage;
+      } else if (step && step.request) {
+        const status = step.http_status ? ` (HTTP ${step.http_status})` : "";
+        const page = action && action.rendered_html ? " and returned the page" : "";
+        message = `The gateway allowed ${step.request}${status}${page}.`;
+      } else {
+        message = "The gateway allowed the action.";
+      }
+    }
+
+    const depositInfo = depositLine(deposit);
+    return {
+      status: httpStatusText(statusCode) || (failed ? "Run failed" : refused ? "Refused" : "Completed"),
+      statusTone: statusCode ? responseTone(statusCode) : (failed || refused ? "critical" : "good"),
+      message,
+      deposit: depositInfo.text,
+      depositTone: depositInfo.tone,
+    };
+  }
+
+  function responseRow(label, value, tone) {
+    const text = value === null || value === undefined || value === "" ? "—" : value;
+    return el("div", { className: "pg-response-row" }, [
+      el("dt", { text: label }),
+      el("dd", { dataset: tone ? { tone } : null, text }),
+    ]);
+  }
+
+  function playgroundResponseBlock(step, response) {
+    return el("div", {
+      className: "pg-response",
+      id: `pg-response-${step.id}`,
+      role: "region",
+      "aria-label": `Response for ${step.label}`,
+    }, [
+      el("div", { className: "pg-response-head", text: "Response" }),
+      el("dl", { className: "pg-response-body" }, [
+        responseRow("Status", response.status, response.statusTone),
+        responseRow("Message", response.message),
+        responseRow("Deposit", response.deposit, response.depositTone),
+      ]),
+    ]);
   }
 
   function renderPlayground() {
@@ -1542,8 +1696,6 @@
     if ($("pg-hold")) $("pg-hold").textContent = moneyForSite(site) || "—";
 
     const plan = buildPlaygroundPlan();
-    const firstBad = plan.findIndex((step) => step.tone === "bad");
-    const executable = firstBad === -1 ? plan.length : firstBad + 1;
     const hasRun = Boolean(state.pgRunning) || Object.keys(state.pgResults).length > 0;
     const list = $("pg-plan-list");
     clear(list);
@@ -1556,6 +1708,7 @@
     const tested = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state && resultStates[step.id].state !== "running").length;
     const completed = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state === "completes").length;
     const blocked = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state === "blocked").length;
+    const errored = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state === "error").length;
     const countNode = $("pg-plan-count");
     const summaryNode = $("pg-plan-summary");
     if (!plan.length) {
@@ -1566,25 +1719,43 @@
       summaryNode.textContent = "Select behaviors, then run the plan.";
     } else {
       countNode.textContent = `${tested} of ${plan.length} tested`;
-      summaryNode.textContent = `completes ${completed} · blocks ${blocked} · not tested ${Math.max(0, plan.length - tested)}`;
+      summaryNode.textContent = `completes ${completed} · blocks ${blocked}${errored ? ` · errors ${errored}` : ""} · not tested ${Math.max(0, plan.length - tested)}`;
     }
 
     plan.forEach((step, index) => {
       const result = state.pgResults[step.id];
-      const status = planStatus(step, index, plan, firstBad, result, state.pgRunning, hasRun);
-      const row = el("li", { className: "pg-plan-row", dataset: { state: status.state } }, [
+      const status = planStatus(result, state.pgRunning, hasRun);
+      const response = result && result.response ? result.response : null;
+      const expanded = Boolean(response) && Boolean(result.expanded);
+      const row = el("button", {
+        type: "button",
+        className: "pg-plan-row",
+        dataset: { state: status.state, stepId: step.id },
+        "aria-expanded": response ? (expanded ? "true" : "false") : null,
+        "aria-controls": response && expanded ? `pg-response-${step.id}` : null,
+        title: response ? (expanded ? "Collapse response" : "Show final response") : null,
+        disabled: response ? null : "disabled",
+        onclick: response
+          ? () => {
+              result.expanded = !result.expanded;
+              renderPlayground();
+              const next = document.querySelector(`#pg-plan-list .pg-plan-row[data-step-id="${step.id}"]`);
+              if (next) next.focus();
+            }
+          : null,
+      }, [
         el("span", { className: "pg-plan-num", text: String(index + 1).padStart(2, "0") }),
         el("span", { className: "pg-plan-tone", dataset: { tone: step.tone }, text: step.tone === "safe" ? "SAFE" : "BAD" }),
         el("span", { className: "pg-plan-label" }, [
-          el("span", { text: step.label }),
+          el("span", { className: "pg-plan-name", text: step.label }),
           status.detail ? el("small", { text: status.detail }) : null,
         ]),
         el("span", { className: "pg-plan-status", dataset: { tone: status.tone }, text: status.label }),
+        el("span", { className: "pg-plan-caret", "aria-hidden": "true", text: response ? (expanded ? "▾" : "▸") : "" }),
       ]);
-      list.append(row);
-      if (step.tone === "bad" && index === firstBad && result && result.state === "blocked") {
-        list.append(el("li", { className: "pg-plan-cut", text: `session blocked at #${index + 1}` }));
-      }
+      const item = el("li", { className: "pg-plan-item" }, [row]);
+      if (response && expanded) item.append(playgroundResponseBlock(step, response));
+      list.append(item);
     });
 
     const button = $("pg-run-button");
@@ -1595,17 +1766,17 @@
     else if (!site) disabledReason = "Select a website first.";
     else if (site.status !== "live") disabledReason = `Resume ${site.host} to run the playground.`;
     else if (!plan.length) disabledReason = "Select at least one behavior.";
-    else if (state.pgRunning) disabledReason = `Running ${Math.min(state.pgCurrentIndex + 1, executable)} of ${executable}...`;
+    else if (state.pgRunning) disabledReason = `Running ${Math.min(state.pgCurrentIndex + 1, plan.length)} of ${plan.length}...`;
     else if (state.applying) disabledReason = "Applying the website configuration...";
     button.disabled = Boolean(disabledReason) || state.pgRunning;
     button.textContent = state.pgRunning
-      ? `Running ${Math.min(state.pgCurrentIndex + 1, executable)} of ${executable}`
+      ? `Running ${Math.min(state.pgCurrentIndex + 1, plan.length)} of ${plan.length}`
       : "Run plan";
     hint.textContent =
       disabledReason ||
       (hasRun
-        ? `Runs against ${site.host}. The first BAD step stops the plan; later steps are not tested.`
-        : "Select behaviors, then press Run to test them against the gateway.");
+        ? `Runs against ${site.host}. Each action gets a fresh crawler session, so a blocked step does not stop the rest. Select a tested step to expand or collapse its final response.`
+        : "Select behaviors, then press Run to test each one in its own crawler session.");
   }
 
   async function loadPlayground(force) {
@@ -1647,8 +1818,7 @@
     const site = selectedSite();
     if (!site || state.pgRunning) return;
     const plan = buildPlaygroundPlan();
-    const firstBad = plan.findIndex((step) => step.tone === "bad");
-    const executable = firstBad === -1 ? plan.length : firstBad + 1;
+    const executable = plan.length;
     if (!executable) return;
     if (state.pgCanStart !== true) return;
 
@@ -1657,7 +1827,6 @@
     state.pgCurrentIndex = 0;
     state.pgRunToken = (state.pgRunToken || 0) + 1;
     const token = state.pgRunToken;
-    let hadError = false;
     renderPlayground();
 
     try {
@@ -1680,8 +1849,18 @@
         if (!started.ok) {
           const body = started.body || {};
           const detail = (body.detail && (body.detail.message || body.detail.error)) || body.message;
-          state.pgResults[step.id] = { state: "error", detail: detail || `HTTP ${started.status}` };
-          hadError = true;
+          state.pgResults[step.id] = {
+            state: "error",
+            detail: detail || `HTTP ${started.status}`,
+            response: {
+              status: httpStatusText(started.status) || "Run failed",
+              statusTone: responseTone(started.status),
+              message: detail || `The playground could not start this action (HTTP ${started.status}).`,
+              deposit: "No deposit taken",
+              depositTone: "muted",
+            },
+            expanded: true,
+          };
           break;
         }
         state.pgActiveRunId = started.body.run_id;
@@ -1693,34 +1872,32 @@
         const refused = action.outcome === "refused" || run.outcome === "refused";
         const failed = action.status === "failed" || run.status === "failed" || run.status === "cancelled";
         const detail = violation.rule_matched || violation.reason_code || action.error || run.error || "";
+        const response = describePlaygroundResponse(action, run);
         if (refused) {
-          state.pgResults[step.id] = { state: "blocked", http: violation.http_status, detail };
+          state.pgResults[step.id] = { state: "blocked", http: violation.http_status, detail, response, expanded: true };
         } else if (failed) {
-          state.pgResults[step.id] = { state: "error", detail };
-          hadError = true;
+          state.pgResults[step.id] = { state: "error", detail, response, expanded: true };
         } else {
-          state.pgResults[step.id] = { state: "completes", detail: "" };
+          state.pgResults[step.id] = { state: "completes", detail: "", response, expanded: true };
         }
         renderPlayground();
-        if (step.tone === "bad" || state.pgResults[step.id].state === "error" || state.pgResults[step.id].state === "blocked") break;
-      }
-
-      if (hadError) {
-        toast("critical", "!", "Playground run failed", "A step did not finish. Check the gateway and try again.");
-      } else {
-        const blocked = plan.filter((step) => state.pgResults[step.id] && state.pgResults[step.id].state === "blocked").length;
-        if (blocked) {
-          toast("critical", "✕", "Session blocked", "The first BAD step stopped the plan; later steps were not tested.");
-        } else {
-          toast("good", "✓", "Plan complete", `${site.host} held ${moneyForSite(site)} per session.`);
-        }
       }
     } catch (error) {
-      hadError = true;
       const message = error && error.message ? error.message : "The playground run failed.";
       const step = plan[state.pgCurrentIndex];
       if (step && state.pgResults[step.id] && state.pgResults[step.id].state === "running") {
-        state.pgResults[step.id] = { state: "error", detail: message };
+        state.pgResults[step.id] = {
+          state: "error",
+          detail: message,
+          response: {
+            status: "Run failed",
+            statusTone: "critical",
+            message,
+            deposit: "Deposit state unknown",
+            depositTone: "muted",
+          },
+          expanded: true,
+        };
       }
       const runId = state.pgActiveRunId;
       if (runId) {
@@ -1731,12 +1908,12 @@
         state.pgActiveRunId = null;
       }
       showBanner(message);
-      toast("critical", "!", "Playground run failed", message);
     } finally {
       if (token === state.pgRunToken) {
         state.pgRunning = false;
         state.pgCurrentIndex = -1;
         state.pgActiveRunId = null;
+        state.pgQuietUntil = Date.now() + 10000;
         renderPlayground();
       }
     }
@@ -1754,6 +1931,7 @@
     state.pgActiveRunId = null;
     state.pgRunning = false;
     state.pgCurrentIndex = -1;
+    state.pgQuietUntil = Date.now() + 10000;
     if (clearResults) state.pgResults = {};
   }
 
@@ -2216,10 +2394,22 @@
     while (box.children.length > 4) box.firstChild.remove();
   }
 
+  // Playground runs attribute their crawler as "playground-<run id>". Their violations and
+  // settlements are already shown in the action response panel, so console toasts skip them.
+  const PLAYGROUND_CRAWLER_PREFIX = "playground-";
+  function isPlaygroundCrawler(crawlerId) {
+    return String(crawlerId || "").startsWith(PLAYGROUND_CRAWLER_PREFIX);
+  }
+
   function announceChanges(before, after) {
     if (!before) return;
+    // The playground already shows the final response (including the deposit outcome), so
+    // do not duplicate it with automatic "new deposit" / "refunded" / "violation" toasts.
+    if (state.pgRunning || Date.now() < state.pgQuietUntil) return;
     const old = new Map(before.deposits.map((d) => [d.deposit_id, d.deposit_state]));
     for (const d of after.deposits) {
+      // Playground deposits show their settlement in the action response panel.
+      if (isPlaygroundCrawler(d.crawler_id)) continue;
       const was = old.get(d.deposit_id);
       if (was === d.deposit_state) continue;
       const open = () => { showView("overview"); selectDeposit(d, true); $("explain-card").scrollIntoView({ behavior: "smooth", block: "start" }); };
@@ -2227,7 +2417,12 @@
       else if (d.deposit_state === "FORFEITED") toast("critical", "✕", `Deposit forfeited · ${money(d.amount, d.currency)}`, d.crawler_id, open);
       else if (!was) toast("accent", "$", `New deposit · ${money(d.amount, d.currency)}`, `${d.crawler_id} · ${d.pricing_tier_name || "Base"} tier`, open);
     }
-    const added = after.kpis.policy_violations - before.kpis.policy_violations;
+    // Count only new violation events from crawlers outside the playground. The aggregate KPI
+    // also includes playground violations, which would otherwise raise a duplicate toast.
+    const seen = new Set((before.events || []).map((e) => e.event_id));
+    const added = (after.events || []).filter((e) =>
+      e.event_type === "POLICY_VIOLATION" && !seen.has(e.event_id) && !isPlaygroundCrawler(e.crawler_id)
+    ).length;
     if (added > 0) {
       toast("critical", "⚠", `${added} new policy violation${added === 1 ? "" : "s"}`, "Blocked by the gateway and recorded in the audit log.",
         () => drill({ view: "security", target: "grid-violations" }));
