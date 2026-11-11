@@ -10,7 +10,7 @@
     /* Apply the saved theme before first paint (dark by default). */
     try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
   </script>
-  <link rel="stylesheet" href="/_sara/static/dashboard.css?v=22">
+  <link rel="stylesheet" href="/_sara/static/dashboard.css?v=23">
   <link rel="stylesheet" href="/_sara/static/demo.css">
   <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
           integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
@@ -18,7 +18,7 @@
   <script src="/_sara/static/grid_kit.js" defer></script>
   <script src="/_sara/static/paypal_panel.js" defer></script>
   <script src="/_sara/static/analytics.js" defer></script>
-  <script src="/_sara/static/dashboard.js?v=32" defer></script>
+  <script src="/_sara/static/dashboard.js?v=33" defer></script>
 </head>
 <body>
 <header class="appbar">
@@ -28,7 +28,10 @@
       <span class="brand-name">SARA</span>
     </a>
     <div class="controls">
+      <span class="mode-badge" id="mode-badge" hidden></span>
+      <span class="owner-email" id="owner-email" hidden></span>
       <button type="button" id="theme-toggle" aria-label="Switch color theme">Theme: dark</button>
+      <button type="button" id="signout" class="signout" hidden>Sign out</button>
     </div>
   </div>
 </header>
@@ -36,9 +39,14 @@
 <div class="console">
   <aside class="sidenav" aria-label="Console sections">
     <div class="sidenav-group">
-      <button type="button" class="sidenav-link" data-view="setup" aria-current="page"><span class="nav-icon" aria-hidden="true">⚙</span>Console</button>
-      <button type="button" class="sidenav-link" data-view="operations"><span class="nav-icon" aria-hidden="true">≡</span>Audit log<span class="nav-count" id="count-sessions" title="Crawler sessions">0</span></button>
-      <button type="button" class="sidenav-link" data-view="security"><span class="nav-icon" aria-hidden="true">⚠</span>Policy violations<span class="nav-count" id="count-violations" data-tone="critical" title="Policy violations">0</span></button>
+      <p class="sidenav-label">Gateway</p>
+      <button type="button" class="sidenav-link" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>Overview</button>
+      <button type="button" class="sidenav-link" data-view="setup"><span class="nav-icon" aria-hidden="true">⚙</span>Websites &amp; rules</button>
+      <p class="sidenav-label">Agents</p>
+      <button type="button" class="sidenav-link" data-view="operations"><span class="nav-icon" aria-hidden="true">≡</span>Agent activity<span class="nav-count" id="count-sessions" title="Agent sessions">0</span></button>
+      <button type="button" class="sidenav-link" data-view="security"><span class="nav-icon" aria-hidden="true">⚠</span>Violations<span class="nav-count" id="count-violations" data-tone="critical" title="Policy violations">0</span></button>
+      <p class="sidenav-label">Money</p>
+      <button type="button" class="sidenav-link" data-view="commerce"><span class="nav-icon" aria-hidden="true">$</span>Earnings</button>
       <button type="button" class="sidenav-link" data-view="analytics"><span class="nav-icon" aria-hidden="true">◔</span>Analytics</button>
     </div>
   </aside>
@@ -198,10 +206,10 @@
       <section class="card console-empty" id="console-empty" hidden>
         <span class="section-icon" aria-hidden="true">▶</span>
         <div>
-          <h2>No crawler activity yet</h2>
-          <p class="card-sub">Run an action in the crawler playground above, or ask the assistant in Agent studio to read the news. Its deposit, requests, and violations appear here within a few seconds.</p>
+          <h2>No agent activity yet</h2>
+          <p class="card-sub">Add your website, then send a test agent at it from the playground. Its PayPal deposit, requests, and violations appear here within a few seconds.</p>
         </div>
-        <a class="button-link primary" href="#setup">Open the playground</a>
+        <a class="button-link primary" href="#setup">Set up a website</a>
       </section>
       <section class="kpis" id="kpis" aria-label="Key metrics"></section>
 

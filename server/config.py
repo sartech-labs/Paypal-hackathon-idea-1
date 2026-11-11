@@ -100,6 +100,17 @@ class Settings(BaseModel):
     demo_config_public: bool = Field(default=False)
     demo_origin_allowlist: str = Field(default="")
     config_max_writes_per_hour: int = Field(default=30, ge=1, le=1000)
+    # Owner sign-in for the console. When an owner email and password are set (or demo
+    # sign-in is on), the console pages require a signed-in owner, and a signed-in owner
+    # has the same rights as the admin token.
+    owner_email: str = Field(default="")
+    owner_password: str = Field(default="")
+    # Public demos only: a "use the demo account" button signs visitors in as the owner.
+    demo_signin: bool = Field(default=False)
+    # Signs the owner session cookie. Generated per process when empty (sessions then
+    # end on restart).
+    session_secret: str = Field(default="")
+    owner_session_hours: float = Field(default=12.0, gt=0.0, le=720.0)
     # Transparent edge: classify unsigned clients by User-Agent (a signature always counts).
     # A recognised browser User-Agent is human, everything else is an agent.
     detect_agent_user_agents: bool = Field(default=True)
@@ -220,6 +231,11 @@ class Settings(BaseModel):
         return self
 
     @property
+    def owner_login_enabled(self) -> bool:
+        """Console pages require sign-in when owner credentials or demo sign-in exist."""
+        return bool(self.owner_email.strip() and self.owner_password) or self.demo_signin
+
+    @property
     def paypal_is_sandbox(self) -> bool:
         return urlsplit(self.paypal_base_url).hostname == "api-m.sandbox.paypal.com"
 
@@ -297,6 +313,11 @@ def load_settings_from_env() -> Settings:
         gateway_config_path=Path(os.getenv("GATEWAY_CONFIG_PATH", "storage/gateway_config.json")),
         demo_config_public=_env_bool("DEMO_CONFIG_PUBLIC", False),
         demo_origin_allowlist=os.getenv("DEMO_ORIGIN_ALLOWLIST", ""),
+        owner_email=os.getenv("OWNER_EMAIL", "").strip(),
+        owner_password=os.getenv("OWNER_PASSWORD", ""),
+        demo_signin=_env_bool("DEMO_SIGNIN", False),
+        session_secret=os.getenv("SESSION_SECRET", ""),
+        owner_session_hours=float(os.getenv("OWNER_SESSION_HOURS", "12")),
         config_max_writes_per_hour=int(os.getenv("CONFIG_MAX_WRITES_PER_HOUR", "30")),
         detect_agent_user_agents=_env_bool("DETECT_AGENT_USER_AGENTS", True),
         playground_max_runs_per_hour=int(os.getenv("PLAYGROUND_MAX_RUNS_PER_HOUR", "20")),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import logging
+import secrets
 from typing import AsyncIterator, Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -12,7 +13,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from server.services.origin_proxy import OriginProxy
-from server.api import admin, audit, commerce, dashboard, webhooks, deposits, demo, gateway, paypal, playground, policies, sessions, site
+from server.api import admin, audit, auth, commerce, dashboard, webhooks, deposits, demo, gateway, paypal, playground, policies, sessions, site
+from server.core.owner_auth import OwnerSessionMiddleware
 from server.config import Settings, load_settings_from_env
 from server.dependencies import AppContainer
 from server.services.ai_client import TextGenerator
@@ -37,6 +39,12 @@ def create_app(
 ) -> FastAPI:
     """Create and configure the SARA FastAPI application."""
     resolved_settings = settings or load_settings_from_env()
+    # A signed-in owner acts with the admin token's rights, so sign-in needs one even when
+    # the operator did not set ADMIN_API_TOKEN; generate it for this process.
+    if resolved_settings.owner_login_enabled and not resolved_settings.admin_api_token.strip():
+        resolved_settings = resolved_settings.model_copy(
+            update={"admin_api_token": secrets.token_urlsafe(32)}
+        )
     logging.basicConfig(
         level=getattr(logging, resolved_settings.log_level.upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -132,6 +140,12 @@ def create_app(
             },
         )
 
+    app.add_middleware(
+        OwnerSessionMiddleware,
+        auth=container.owner_auth,
+        admin_token=resolved_settings.admin_api_token.strip(),
+    )
+    app.include_router(auth.router)
     app.include_router(admin.router)
     app.include_router(gateway.router)
     app.include_router(deposits.router)

@@ -9,11 +9,11 @@
   const SLOW_FETCH_MS = 400;
   const REQUESTS_EVERY_MS = 6000;
   const VIEWS = {
-    setup: "Console",
+    setup: "Websites",
     overview: "Overview",
-    commerce: "Commerce",
-    operations: "Audit log",
-    security: "Policy violations",
+    commerce: "Earnings",
+    operations: "Agent activity",
+    security: "Violations",
     analytics: "Analytics",
     policy: "Policy",
   };
@@ -290,7 +290,7 @@
 
   // --- views (sidebar navigation, deep-linkable through the URL hash) --------------------
   function showView(view, fromHash) {
-    if (!VIEWS[view]) view = "setup";
+    if (!VIEWS[view]) view = "overview";
     state.view = view;
     for (const section of document.querySelectorAll(".view")) section.hidden = section.dataset.view !== view;
     for (const link of document.querySelectorAll(".sidenav-link")) {
@@ -299,7 +299,7 @@
     }
     $("page-title").textContent = VIEWS[view];
     if ($("page-head")) $("page-head").hidden = view === "setup";
-    if (!fromHash) history.replaceState(null, "", view === "setup" ? window.location.pathname : `#${view}`);
+    if (!fromHash) history.replaceState(null, "", view === "overview" ? window.location.pathname : `#${view}`);
     if (view === "setup") loadSetup();
     if (view === "operations" || view === "analytics") loadRequests(true);
     if (view === "policy") loadPolicy();
@@ -312,7 +312,7 @@
       link.addEventListener("click", () => showView(link.dataset.view));
     }
     window.addEventListener("hashchange", () => showView(window.location.hash.slice(1), true));
-    showView(window.location.hash.slice(1) || "setup", true);
+    showView(window.location.hash.slice(1) || "overview", true);
   }
 
   // --- grids ---------------------------------------------------------------------------
@@ -1160,7 +1160,7 @@
     state.sitesError = null;
     state.activeSiteId = body.active_site_id || state.activeSiteId || null;
     if (typeof body.config_public === "boolean") {
-      state.configReadOnly = !(state.token || body.config_public);
+      state.configReadOnly = !(state.token || state.owner || body.config_public);
     }
     let candidate = options.selectId || null;
     // Keep the active site as the console context unless the caller explicitly selected
@@ -1451,7 +1451,7 @@
     setAddError(null);
     const input = $("site-add-input");
     if (state.configReadOnly) {
-      showSetupMessage("Read-only. Enter the admin token in the top bar to add a website.");
+      showSetupMessage("Read-only. Sign in as the owner to add a website.");
       return;
     }
     if (state.addingSite || state.applying || state.activating) return;
@@ -1523,7 +1523,7 @@
     const site = state.sites.find((item) => item.id === siteId);
     if (!site || state.applying || state.addingSite || state.activating) return;
     if (state.configReadOnly) {
-      showSetupMessage("Read-only. Enter the admin token in the top bar to pause or resume a website.");
+      showSetupMessage("Read-only. Sign in as the owner to pause or resume a website.");
       return;
     }
     const nextStatus = site.status === "live" ? "paused" : "live";
@@ -1564,7 +1564,7 @@
       return;
     }
     if (state.configReadOnly) {
-      showSetupMessage("Read-only. Enter the admin token in the top bar to remove a website.");
+      showSetupMessage("Read-only. Sign in as the owner to remove a website.");
       return;
     }
     const site = state.sites.find((item) => item.id === siteId);
@@ -1684,7 +1684,7 @@
     let hint = "Changes apply live to the selected website.";
     if (state.setupMessage) hint = state.setupMessage;
     else if (!site) hint = "Add a website to configure the gateway.";
-    else if (state.configReadOnly) hint = "Read-only. Enter the admin token in the top bar to apply changes.";
+    else if (state.configReadOnly) hint = "Read-only. Sign in as the owner to apply changes.";
     else if (state.activating) hint = "Selecting the website...";
     else if (site.status !== "live") hint = `${site.host} is paused. Resume it to apply changes.`;
     else if (state.applying) hint = `Applying the configuration for ${site.host}...`;
@@ -1815,7 +1815,7 @@
         cfg = policy.ok && policy.body ? configFromPolicy(policy.body) : {};
       }
       state.config = cfg;
-      state.configReadOnly = !(state.token || Boolean(cfg && cfg.config_public));
+      state.configReadOnly = !(state.token || state.owner || Boolean(cfg && cfg.config_public));
     }
     // The gateway is the source of truth for the website list; localStorage only helps
     // pick which website to show when the previous selection is still available.
@@ -1833,7 +1833,7 @@
     const site = selectedSite();
     if (!site || state.applying || state.addingSite) return false;
     if (state.configReadOnly) {
-      if (!opts.silent) showSetupMessage("Read-only. Enter the admin token in the top bar to apply changes.");
+      if (!opts.silent) showSetupMessage("Read-only. Sign in as the owner to apply changes.");
       return false;
     }
     if (site.status !== "live") {
@@ -1870,7 +1870,7 @@
       }
       applyRuntimeConfigToSite(site, result.body);
       state.config = Object.assign({}, state.config, result.body);
-      state.configReadOnly = !(state.token || Boolean(result.body && result.body.config_public));
+      state.configReadOnly = !(state.token || state.owner || Boolean(result.body && result.body.config_public));
       // Refresh the website's data from the gateway, keeping the current selection.
       const refreshed = await loadSites({ silent: true, selectId: site.id });
       if (refreshed) {
@@ -2228,7 +2228,7 @@
     const hint = $("pg-run-hint");
     let disabledReason = "";
     if (state.pgCanStart === null) disabledReason = "Loading the playground...";
-    else if (!state.pgCanStart) disabledReason = "Starting runs needs the admin token, or DEMO_PUBLIC=true on a demo deployment.";
+    else if (!state.pgCanStart) disabledReason = "Sign in as the owner to run tests.";
     else if (!site) disabledReason = "Select a website first.";
     else if (site.status !== "live") disabledReason = `Resume ${site.host} to run the playground.`;
     else if (!plan.length) disabledReason = "Select a crawler behavior.";
@@ -2729,7 +2729,7 @@
   }
 
   async function refundOrder(order) {
-    if (!state.token) { showOrderPanel("Refunds need the admin token (Admin menu, top right)."); return; }
+    if (!state.token && !state.owner) { showOrderPanel("Sign in as the owner to refund orders."); return; }
     if (!window.confirm(`Refund ${money(order.amount, order.currency)} for ${order.order_id} through PayPal? Access to what was bought ends.`)) return;
     const result = await getJson(`/commerce/orders/${encodeURIComponent(order.order_id)}/refund`, {
       method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ reason: "Refunded by the publisher" }),
@@ -2739,7 +2739,7 @@
   }
 
   async function shipOrder(order) {
-    if (!state.token) { showOrderPanel("Shipping updates need the admin token (Admin menu, top right)."); return; }
+    if (!state.token && !state.owner) { showOrderPanel("Sign in as the owner to add shipping updates."); return; }
     const tracking = window.prompt("Tracking number", "");
     if (!tracking) return;
     const carrier = (window.prompt("Carrier code (for example UPS, FEDEX, DHL, USPS)", "UPS") || "").trim().toUpperCase();
@@ -2799,6 +2799,40 @@
     }
   }
 
+  // --- owner session -------------------------------------------------------------------
+  async function loadOwner() {
+    try {
+      const response = await fetch("/auth/me", { credentials: "same-origin" });
+      if (!response.ok) return;
+      const me = await response.json();
+      state.loginEnabled = Boolean(me.login_enabled);
+      // Without sign-in configured the console is the operator's own (local) console.
+      state.owner = Boolean(me.login_enabled && me.signed_in);
+      if (me.login_enabled && !me.signed_in) {
+        window.location.replace("/signin");
+        return;
+      }
+      if ($("owner-email")) {
+        $("owner-email").textContent = me.email ? (me.demo ? `${me.email} · demo` : me.email) : "";
+        $("owner-email").hidden = !me.email;
+      }
+      if ($("signout")) $("signout").hidden = !me.login_enabled;
+      if ($("mode-badge")) {
+        const sandbox = me.payment_mode === "paypal_sandbox";
+        $("mode-badge").textContent = sandbox ? "PayPal Sandbox" : me.payment_mode === "mock" ? "Mock payments" : "PayPal";
+        $("mode-badge").hidden = !me.payment_mode;
+      }
+    } catch (_) { /* the console still loads; writes fall back to read-only */ }
+  }
+
+  async function signOut() {
+    try {
+      await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+    } finally {
+      window.location.assign("/");
+    }
+  }
+
   // --- data loop -----------------------------------------------------------------------
   async function refresh() {
     if (state.inFlight) return;
@@ -2808,7 +2842,11 @@
     try {
       const result = await getJson("/dashboard/data", { headers: authHeaders() });
       if (result.status === 401) {
-        showBanner("The dashboard needs public access or an admin token on the gateway.");
+        if (state.loginEnabled) {
+          window.location.replace("/signin");
+          return;
+        }
+        showBanner("Your session has ended. Sign in again to see the console.");
         return;
       }
       if (!result.ok || !result.body) {
@@ -3043,8 +3081,12 @@
 
     initGrids();
     updateAssistantState();
-    initViews();
-    refresh();
+    if ($("signout")) $("signout").addEventListener("click", signOut);
+    // Learn who is signed in before the views decide what is editable.
+    loadOwner().finally(() => {
+      initViews();
+      refresh();
+    });
     state.timer = setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
     // Fetch AG Studio in the background so the Analytics view opens without a wait.
     if (window.CTAnalytics) {

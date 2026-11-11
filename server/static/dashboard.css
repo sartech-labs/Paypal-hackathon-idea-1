@@ -1996,3 +1996,36 @@ body { background-image: none; }
   .site-add-fields .site-add-shell { flex-basis: 100%; }
   .site-editing { display: none; }
 }
+
+/* --- Owner session and grouped navigation ----------------------------------------- */
+.sidenav-label {
+  margin: 14px 10px 4px;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.sidenav-label:first-child { margin-top: 2px; }
+.mode-badge {
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.owner-email {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mode-badge[hidden], .owner-email[hidden], .signout[hidden] { display: none; }
+.signout { padding: 6px 11px; font-size: 13px; }
+@media (max-width: 760px) {
+  .sidenav-label, .owner-email { display: none; }
+}

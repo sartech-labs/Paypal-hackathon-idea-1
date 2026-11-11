@@ -6,9 +6,10 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse, RedirectResponse, Response
 
+from server.api.auth import console_locked
 from server.api.deposits import build_deposit_explanation
 from server.core.security import utc_now_iso
 from server.dependencies import AppContainer, get_container, is_valid_admin_token
@@ -69,14 +70,23 @@ def _needs_attention(deposit: DepositRecord) -> bool:
     )
 
 
+def console_page(request: Request, container: AppContainer) -> Response:
+    """The console for a signed-in owner; the sign-in page otherwise (when sign-in is on)."""
+    if console_locked(request, container):
+        return RedirectResponse("/signin", status_code=status.HTTP_303_SEE_OTHER)
+    return FileResponse(
+        STATIC_DIR / "dashboard.html", media_type="text/html", headers={"Cache-Control": "no-store"}
+    )
+
+
 @router.get("/console", include_in_schema=False)
-async def dashboard_page() -> FileResponse:
-    return FileResponse(STATIC_DIR / "dashboard.html", media_type="text/html")
+async def dashboard_page(request: Request, container: AppContainer = Depends(get_container)) -> Response:
+    return console_page(request, container)
 
 
 @router.get("/dashboard", include_in_schema=False)
-async def dashboard_alias() -> FileResponse:
-    return FileResponse(STATIC_DIR / "dashboard.html", media_type="text/html")
+async def dashboard_alias(request: Request, container: AppContainer = Depends(get_container)) -> Response:
+    return console_page(request, container)
 
 
 @router.get(

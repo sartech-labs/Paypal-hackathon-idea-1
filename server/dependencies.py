@@ -14,6 +14,7 @@ from client.web_bot_auth import WebBotAuth
 from server.config import Settings
 from server.core.agent_identity import AgentDirectory
 from server.core.identity import IdentityService
+from server.core.owner_auth import OwnerAuth
 from server.core.quotas import HourlyQuota
 from server.core.security import constant_time_equals, utc_now_iso
 from server.core.sessions import SessionManager
@@ -100,6 +101,7 @@ class AppContainer:
         origin_proxy: Optional[OriginProxy] = None,
     ) -> None:
         self.settings = settings
+        self.owner_auth = OwnerAuth(settings)
         # Multi-site registry, stored in the same file as the old flat config.
         self.registry_store = SiteRegistryStore(
             settings.gateway_config_path,

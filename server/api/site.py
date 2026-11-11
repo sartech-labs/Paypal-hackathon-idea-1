@@ -20,6 +20,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from server.api.auth import console_locked, home_page
 from server.api.dashboard import STATIC_DIR
 from server.api.gateway import _raw_request_path, handle_agent_request
 from server.dependencies import AppContainer, get_container
@@ -59,6 +60,7 @@ RESERVED_PREFIXES = (
     "admin",
     "agent",
     "audit",
+    "auth",
     "commerce",
     "console",
     "dashboard",
@@ -73,6 +75,7 @@ RESERVED_PREFIXES = (
     "robots.txt",
     "redoc",
     "sessions",
+    "signin",
     "webhooks",
     "docs",
     ".well-known",
@@ -171,7 +174,12 @@ async def site_root(
     # website. A request that explicitly names a site (the playground always does) still
     # goes through the normal gate/proxy path, so "/" works for every configured site.
     if container.settings.sara_mode == "demo" and not explicit_site:
-        return FileResponse(STATIC_DIR / "dashboard.html", media_type="text/html")
+        # With sign-in on, "/" is the product's home page until the owner signs in.
+        if console_locked(request, container):
+            return home_page()
+        return FileResponse(
+            STATIC_DIR / "dashboard.html", media_type="text/html", headers={"Cache-Control": "no-store"}
+        )
     try:
         runtime = _runtime_for_request(request, container)
     except KeyError as exc:

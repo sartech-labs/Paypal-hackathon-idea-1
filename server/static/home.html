@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SARA · Agent gateway</title>
+  <meta name="description" content="SARA sits in front of your website. Every AI agent posts a refundable PayPal deposit and follows your rules, or loses it.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%234c8dff'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='%23fff' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/_sara/static/home.css?v=2">
+  <script src="/_sara/static/home.js?v=2" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="/" aria-label="SARA home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="currentColor"/><path d="m10 16 4 4 8-8" stroke="#0a0f1a" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+      <span>SARA</span>
+    </a>
+    <nav class="topnav" aria-label="Page">
+      <a href="#how">How it works</a>
+      <a href="#paypal">Why PayPal</a>
+      <button type="button" class="btn btn-ghost" data-open-signin>Sign in</button>
+      <a class="btn btn-ghost" href="/console" id="open-console" hidden>Open console</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="eyebrow">A gateway for websites in the age of AI agents · on PayPal</p>
+        <h1><span class="line">Good agents get in.</span><br><span class="line accent">Bad agents pay.</span></h1>
+        <p class="lede">SARA sits in front of your website. Every AI agent places a refundable PayPal deposit and follows your rules. Agents that behave get it back; agents that scrape, probe, or flood your site lose it. Your site does not change.</p>
+        <div class="cta-row">
+          <button type="button" class="btn btn-primary" data-open-signin>Sign in to your gateway <span aria-hidden="true">→</span></button>
+          <a class="btn btn-primary" href="/console" id="hero-console" hidden>Open your console <span aria-hidden="true">→</span></a>
+        </div>
+        <div class="judges" id="judges" hidden>
+          <p class="judges-kicker">Judging or just looking?</p>
+          <p>The demo account opens a working gateway on the PayPal Sandbox. Add a website, set a deposit, and send a test agent at it.</p>
+          <button type="button" class="btn btn-light" data-demo-signin>Open the demo gateway</button>
+        </div>
+      </div>
+
+      <figure class="gatelog" aria-label="Example: what the gateway does with two AI agents">
+        <div class="gatelog-head">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span class="gatelog-title">gateway · news.example.com</span>
+          <span class="gatelog-mode">PayPal Sandbox</span>
+        </div>
+        <div class="gatelog-agent" id="gl-agent">
+          <span class="agent-badge" id="gl-agent-name">ResearchBot/2.1</span>
+          <span class="agent-note" id="gl-agent-note">Signed agent · reading the news</span>
+        </div>
+        <ol class="gatelog-rows" id="gl-rows" aria-live="off"></ol>
+        <div class="gatelog-outcome" id="gl-outcome" hidden>
+          <span class="outcome-label" id="gl-outcome-label">Deposit returned</span>
+          <span class="outcome-amount" id="gl-outcome-amount">$5.00</span>
+          <p class="outcome-why" id="gl-outcome-why">No rules broken. The PayPal hold was voided, so no money moved.</p>
+        </div>
+        <figcaption class="gatelog-caption">An illustration of two agent sessions. Sign in to watch your own.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="steps" id="how">
+    <div class="wrap">
+      <h2>Three steps to an agent-ready website</h2>
+      <ol class="step-grid">
+        <li class="step">
+          <span class="step-num">1</span>
+          <h3>Put SARA in front of your site</h3>
+          <p>Add your website and point its domain at the gateway. People reach your pages exactly as before; AI agents are recognised and gated.</p>
+        </li>
+        <li class="step">
+          <span class="step-num">2</span>
+          <h3>Set the price and the rules</h3>
+          <p>Choose the deposit per agent session, the paths agents may read, the ones they may not, and the rate limit. Your robots.txt is imported and enforced.</p>
+        </li>
+        <li class="step">
+          <span class="step-num">3</span>
+          <h3>Agents pay, or get blocked</h3>
+          <p>Unpaid agents get <code>HTTP 402</code> and a way to pay. Forbidden paths get <code>403</code>, floods get <code>429</code>, and every decision comes with a plain-English AI explanation.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="paypal" id="paypal">
+    <div class="wrap paypal-grid">
+      <div>
+        <h2>Why the money runs on PayPal</h2>
+        <p>A deposit is a PayPal authorization hold. An honest agent's hold is voided, so it never pays a cent. A rule-breaker's hold is captured and lands in your PayPal account. Every decision can be checked against PayPal's own records.</p>
+      </div>
+      <ul class="facts">
+        <li><strong>Orders v2 &amp; Payments v2</strong><span>Deposits as holds: void when the agent behaves, capture when it does not</span></li>
+        <li><strong>Webhooks</strong><span>Every capture, refund, and dispute verified with PayPal before it counts</span></li>
+        <li><strong>PayPal MCP server</strong><span>An AI assistant checks your records against PayPal's, read-only</span></li>
+        <li><strong>Subscriptions &amp; checkout</strong><span>Sell content, plans, and products to agents too</span></li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <span>SARA · Safe Access for Responsible Agents · by Sartech Labs</span>
+    <span>Prototype on the PayPal Sandbox. No real money moves.</span>
+  </div>
+</footer>
+
+<dialog class="signin" id="signin" aria-labelledby="signin-title">
+  <form method="dialog" class="signin-close-form"><button class="signin-close" aria-label="Close">×</button></form>
+  <h2 id="signin-title">Sign in to your gateway</h2>
+  <p class="signin-sub">Manage your websites, deposits, and rules.</p>
+  <form id="signin-form" class="signin-form" novalidate>
+    <label for="signin-email">Email</label>
+    <input id="signin-email" name="email" type="email" autocomplete="username" required>
+    <label for="signin-password">Password</label>
+    <input id="signin-password" name="password" type="password" autocomplete="current-password" required>
+    <p class="signin-error" id="signin-error" role="alert" hidden></p>
+    <button type="submit" class="btn btn-primary btn-block" id="signin-submit">Sign in</button>
+  </form>
+  <div class="signin-demo" id="signin-demo" hidden>
+    <span class="divider"><span>or</span></span>
+    <button type="button" class="btn btn-ghost btn-block" data-demo-signin>Use the demo account</button>
+  </div>
+  <p class="signin-off" id="signin-off" hidden>Password sign-in is not set up on this gateway.</p>
+</dialog>
+</body>
+</html>

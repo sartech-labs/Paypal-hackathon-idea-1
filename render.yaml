@@ -21,9 +21,20 @@ services:
         value: demo
       - key: ADMIN_API_TOKEN
         generateValue: true
-      # Read-only console for judges; admin actions still need ADMIN_API_TOKEN.
-      - key: DASHBOARD_PUBLIC
+      # Owner sign-in: "/" is the home page and the console needs a signed-in owner.
+      # Judges use the "Try the demo account" button (DEMO_SIGNIN); the owner signs in
+      # with OWNER_EMAIL and OWNER_PASSWORD, entered when the Blueprint is created.
+      - key: DEMO_SIGNIN
         value: "true"
+      - key: OWNER_EMAIL
+        sync: false
+      - key: OWNER_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      # Signed-in visitors see the console, so it no longer needs to be public.
+      - key: DASHBOARD_PUBLIC
+        value: "false"
       # Agent studio at /agent: visitors may start crawler runs and ask the read-only
       # PayPal assistant, capped per hour (DEMO_MAX_RUNS_PER_HOUR,
       # DEMO_MAX_QUESTIONS_PER_HOUR). The playground also needs this for public runs.
@@ -37,7 +48,7 @@ services:
       # For a persistent demo, use a paid instance plan, add a disk mounted at
       # /app/storage, and set GATEWAY_CONFIG_PATH=/app/storage/gateway_config.json.
       - key: DEMO_CONFIG_PUBLIC
-        value: "true"
+        value: "false"
       # Public visitors can only point the target URL at these hosts (comma-separated).
       # Empty means the target URL needs the admin token. Add your own site's host to let
       # demo visitors try it against a real website.
