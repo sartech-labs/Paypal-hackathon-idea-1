@@ -20,9 +20,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from server.api.dashboard import STATIC_DIR
+from server.api.dashboard import NO_STORE, STATIC_DIR
 from server.api.gateway import _raw_request_path, handle_agent_request
-from server.dependencies import AppContainer, get_container
+from server.dependencies import AppContainer, console_gate_redirect, get_container
 from server.services.origin_proxy import OriginError
 
 router = APIRouter(tags=["Site edge"])
@@ -171,7 +171,12 @@ async def site_root(
     # website. A request that explicitly names a site (the playground always does) still
     # goes through the normal gate/proxy path, so "/" works for every configured site.
     if container.settings.sara_mode == "demo" and not explicit_site:
-        return FileResponse(STATIC_DIR / "dashboard.html", media_type="text/html")
+        redirect = console_gate_redirect(request, container, request.url.path)
+        if redirect is not None:
+            return redirect
+        return FileResponse(
+            STATIC_DIR / "dashboard.html", media_type="text/html", headers=NO_STORE
+        )
     try:
         runtime = _runtime_for_request(request, container)
     except KeyError as exc:

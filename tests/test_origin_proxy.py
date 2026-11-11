@@ -236,3 +236,67 @@ async def test_allowed_agent_post_forwards_method_body_and_headers(
             b"payload=1",
             "application/x-www-form-urlencoded",
         )
+
+
+async def test_forward_strips_the_console_cookie_from_the_origin_request() -> None:
+    """The proxied origin receives other cookies but never the signed console session cookie."""
+    received: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.append(request.headers.get("cookie"))
+        return httpx.Response(200, text="ok")
+
+    proxy = OriginProxy(
+        "https://origin.example", transport=httpx.MockTransport(handler)
+    )
+    await proxy.forward(
+        "GET",
+        "/page",
+        headers={"cookie": "sid=abc; sara_console=console-secret; theme=dark"},
+    )
+    await proxy.forward("GET", "/page", headers={"cookie": "sara_console=only-cookie"})
+
+    assert received == ["sid=abc; theme=dark", None]
+
+
+async def test_forward_drops_an_origin_console_set_cookie_but_keeps_others() -> None:
+    """An origin cannot set or clear sara_console, while its unrelated Set-Cookie values pass through."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text="ok",
+            headers=[
+                ("set-cookie", "sara_console=forged; Path=/; HttpOnly"),
+                ("set-cookie", "sid=known; Path=/"),
+                ("set-cookie", "theme=dark; Path=/"),
+            ],
+        )
+
+    proxy = OriginProxy(
+        "https://origin.example", transport=httpx.MockTransport(handler)
+    )
+    response = await proxy.forward("GET", "/page")
+
+    cookies = response.headers.get_list("set-cookie")
+    assert cookies == ["sid=known; Path=/", "theme=dark; Path=/"]
+    assert all("sara_console" not in cookie for cookie in cookies)
+
+
+async def test_forward_drops_an_origin_attempt_to_clear_the_console_cookie() -> None:
+    """An expiring sara_console Set-Cookie from the origin is dropped along with any other console cookie write."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text="ok",
+            headers=[
+                ("set-cookie", "sara_console=; Max-Age=0; Path=/"),
+                ("set-cookie", "visited=yes; Path=/"),
+            ],
+        )
+
+    proxy = OriginProxy(
+        "https://origin.example", transport=httpx.MockTransport(handler)
+    )
+    response = await proxy.forward("GET", "/page")
+
+    assert response.headers.get_list("set-cookie") == ["visited=yes; Path=/"]

@@ -7,12 +7,20 @@ from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from client.web_bot_auth import WebBotAuth
 from server.config import Settings
 from server.core.agent_identity import AgentDirectory
+from server.core.console_auth import (
+    COOKIE_NAME,
+    auth_required_redirect,
+    console_auth_enabled,
+    read_console_session,
+    resolve_console_credentials,
+)
 from server.core.identity import IdentityService
 from server.core.quotas import HourlyQuota
 from server.core.security import constant_time_equals, utc_now_iso
@@ -26,7 +34,6 @@ from server.schemas import (
     SiteConfig,
     SiteCreateRequest,
     SiteListResponse,
-    SiteMetaUpdate,
     SiteSummary,
 )
 from server.services.ai_client import TextGenerator, build_text_generator
@@ -100,6 +107,18 @@ class AppContainer:
         origin_proxy: Optional[OriginProxy] = None,
     ) -> None:
         self.settings = settings
+        # Console sign-in is required by default. Credentials come from the environment, or
+        # are generated once and stored next to the session-signing key. An explicit
+        # CONSOLE_AUTH=off leaves the console open for a public demo deployment.
+        if console_auth_enabled(settings):
+            credentials = resolve_console_credentials(settings)
+            self.console_username = credentials.username
+            self.console_password = credentials.password
+            self.console_session_secret = credentials.session_secret
+        else:
+            self.console_username = ""
+            self.console_password = ""
+            self.console_session_secret = ""
         # Multi-site registry, stored in the same file as the old flat config.
         self.registry_store = SiteRegistryStore(
             settings.gateway_config_path,
@@ -116,6 +135,9 @@ class AppContainer:
         self._origin_proxy_override = origin_proxy
         self._origin_proxy_override_site_id = self.registry.active_site_id if origin_proxy else None
         self.rate_limiter = rate_limiter or SlidingWindowRateLimiter()
+        # Login attempts use a namespaced key, so they can share the main limiter (and its
+        # injected clock in tests) without colliding with crawler sessions.
+        self.login_limiter = self.rate_limiter
         active_runtime = self._build_site_runtime(self._active_site)
         self._runtimes[active_runtime.site.site_id] = active_runtime
         active_site_config = active_runtime.site_config
@@ -739,6 +761,35 @@ def get_container(request: Request) -> AppContainer:
     return container
 
 
+def console_user(request: Request, container: AppContainer) -> Optional[str]:
+    """Return the signed-in console user, or None when auth is off or unauthenticated."""
+    if not console_auth_enabled(container.settings):
+        return None
+    session = read_console_session(
+        request.cookies.get(COOKIE_NAME), container.console_session_secret
+    )
+    if session is None or session["u"] != container.console_username:
+        return None
+    return session["u"]
+
+
+def is_console_admin(request: Request, container: AppContainer) -> bool:
+    """True when the request carries a valid console session cookie."""
+    return console_user(request, container) is not None
+
+
+def console_gate_redirect(
+    request: Request, container: AppContainer, path: str
+) -> Optional[RedirectResponse]:
+    """Return a sign-in redirect for an unauthenticated console page, else None.
+
+    Shared by every console page route so the gate cannot drift between them.
+    """
+    if console_auth_enabled(container.settings) and not is_console_admin(request, container):
+        return RedirectResponse(auth_required_redirect(path), status_code=303)
+    return None
+
+
 def extract_optional_bearer_token(
     authorization: Optional[str] = Header(default=None),
 ) -> Optional[str]:
@@ -774,13 +825,25 @@ def is_valid_admin_token(
     return constant_time_equals(configured, x_admin_token.strip())
 
 
-def demo_access(container: AppContainer, x_admin_token: Optional[str]) -> str:
-    """'admin' with a valid admin token, 'public' on a public demo, else 'none'."""
+def demo_access(
+    container: AppContainer,
+    x_admin_token: Optional[str],
+    request: Optional[Request] = None,
+) -> str:
+    """'admin' with an admin token or console session, 'public' on a public demo, else 'none'."""
     if is_valid_admin_token(container, x_admin_token):
+        return "admin"
+    if request is not None and is_console_admin(request, container):
         return "admin"
     # A public-demo console may run the playground/agent even when the older
     # DEMO_PUBLIC flag is off: DEMO_CONFIG_PUBLIC already opens the same console.
-    if x_admin_token is None and (container.settings.demo_public or container.config_public):
+    # A configured console password outranks both flags, so enabling sign-in actually
+    # closes the console instead of leaving a login wall in front of open endpoints.
+    if (
+        x_admin_token is None
+        and not console_auth_enabled(container.settings)
+        and (container.settings.demo_public or container.config_public)
+    ):
         return "public"
     return "none"
 

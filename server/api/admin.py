@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 
-from server.dependencies import AppContainer, get_container, is_valid_admin_token
+from server.core.console_auth import console_auth_enabled
+from server.dependencies import AppContainer, get_container, is_console_admin, is_valid_admin_token
 from server.schemas import (
     OriginStatus,
     OriginTestRequest,
@@ -29,7 +29,13 @@ def _config_access(
     """Return 'admin' or 'public'; reject when neither applies."""
     if is_valid_admin_token(container, x_admin_token):
         return "admin"
-    if x_admin_token is None and container.config_public:
+    if is_console_admin(request, container):
+        return "admin"
+    if (
+        x_admin_token is None
+        and not console_auth_enabled(container.settings)
+        and container.config_public
+    ):
         return "public"
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

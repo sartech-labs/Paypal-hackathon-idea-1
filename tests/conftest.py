@@ -60,6 +60,11 @@ def test_settings(tmp_path: Path) -> Settings:
         commerce_db_path=tmp_path / "commerce_db.json",
         admin_api_token="test-admin-secret-token-999",
         gateway_config_path=tmp_path / "gateway_config.json",
+        # Console sign-in is required by default; these settings model the documented
+        # public-demo deployment (CONSOLE_AUTH=off), so proxy/payment tests are unaffected.
+        # tests/test_console_auth.py opts back in with an explicit password.
+        console_auth="off",
+        console_credentials_path=tmp_path / "console_credentials.json",
         log_level="WARNING",
         # Never call a live AI API from tests; AI tests inject a fake generator. The
         # provider is pinned so a developer's OPENAI_API_KEY cannot change auto-detection.

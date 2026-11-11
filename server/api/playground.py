@@ -29,11 +29,12 @@ router = APIRouter(prefix="/playground", tags=["Crawler playground"])
 
 @router.get("/actions", response_model=PlaygroundConfigResponse, summary="List playground actions and agent availability")
 async def list_actions(
+    request: Request,
     site_id: Optional[str] = Query(default=None),
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> PlaygroundConfigResponse:
-    access = _require_view(container, x_admin_token)
+    access = _require_view(container, x_admin_token, request)
     try:
         runtime = container.resolve_site(site_id=site_id)
     except KeyError as exc:
@@ -77,7 +78,7 @@ async def start_run(
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> PlaygroundRunResponse:
-    if demo_access(container, x_admin_token) == "none":
+    if demo_access(container, x_admin_token, request) == "none":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -148,31 +149,34 @@ def _get_run(container: AppContainer, run_id: str):  # type: ignore[no-untyped-d
 @router.get("/runs/{run_id}", response_model=PlaygroundRunResponse, summary="Poll one playground run")
 async def get_run(
     run_id: str,
+    request: Request,
     after: int = Query(default=0, ge=0),
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> PlaygroundRunResponse:
-    _require_view(container, x_admin_token)
+    _require_view(container, x_admin_token, request)
     return _get_run(container, run_id).snapshot(after=after)
 
 
 @router.get("/runs", response_model=list[PlaygroundRecentRun], summary="Recent playground runs")
 async def recent_runs(
+    request: Request,
     limit: int = Query(default=8, ge=1, le=20),
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> list[PlaygroundRecentRun]:
-    _require_view(container, x_admin_token)
+    _require_view(container, x_admin_token, request)
     return container.playground_runner.recent(limit=limit)
 
 
 @router.post("/runs/{run_id}/cancel", response_model=PlaygroundRunResponse, summary="Stop a playground run")
 async def cancel_run(
     run_id: str,
+    request: Request,
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> PlaygroundRunResponse:
-    if demo_access(container, x_admin_token) == "none":
+    if demo_access(container, x_admin_token, request) == "none":
         raise HTTPException(status_code=401, detail={"error": "playground_authorization_required"})
     run = _get_run(container, run_id)
     container.playground_runner.cancel(run_id)

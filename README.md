@@ -406,7 +406,12 @@ Copy `.env.example` to `.env`. Settings are validated at startup (`server/config
 | `COMMERCE_CATALOG_PATH` | `data/commerce_catalog.json` | Pay-per-access items, subscription plans, members pages, products, and downloads |
 | `COMMERCE_DB_PATH` | `storage/commerce_db.json` | Orders, subscriptions, access-token hashes, and cached PayPal plan IDs |
 | `ADMIN_API_TOKEN` | empty | Secret for `X-Admin-Token` (global audit, admin console, policy assistant, reconciliation) |
-| `DASHBOARD_PUBLIC` | `false` (`true` in `.env.example`) | Read-only console without the admin token, for demos; keep `false` in production |
+| `CONSOLE_USERNAME` / `CONSOLE_PASSWORD` | `admin` / empty | Console sign-in for `/console`, `/dashboard`, and the demo-mode `/`; always required, and an empty password is generated once and stored in `CONSOLE_CREDENTIALS_PATH` |
+| `CONSOLE_AUTH` | `on` | `off` disables console sign-in for a public demo deployment, which re-enables `DASHBOARD_PUBLIC`, `DEMO_PUBLIC`, and `DEMO_CONFIG_PUBLIC` |
+| `CONSOLE_CREDENTIALS_PATH` | `storage/console_credentials.json` | Where the generated password and cookie-signing key are stored (owner-only); set `CONSOLE_PASSWORD` to avoid generating one |
+| `CONSOLE_SESSION_SECRET` | empty | HMAC key for the signed `sara_console` cookie; generated and stored beside the password when empty, and rotating it signs every console session out |
+| `CONSOLE_SESSION_TTL_SECONDS` | `43200` | Console session lifetime (12 hours) |
+| `DASHBOARD_PUBLIC` | `false` (`true` in `.env.example`) | Read-only console without the admin token, for demos; keep `false` in production, and ignored while `CONSOLE_PASSWORD` is set |
 | `DEMO_PUBLIC` | `false` (`true` in `.env.example`) | Anyone may start agent-studio runs and ask the read-only PayPal assistant, within the hourly caps; also opens public playground runs |
 | `DEMO_MAX_RUNS_PER_HOUR` / `DEMO_MAX_QUESTIONS_PER_HOUR` | `20` / `30` | Caps for demo runs (all callers) and public PayPal assistant requests |
 | `AI_PROVIDER` | `auto` | `openai`, `anthropic`, or `auto` (Claude if Anthropic credentials resolve, otherwise OpenAI if `OPENAI_API_KEY` is set) |
@@ -448,6 +453,10 @@ Interactive docs: **`/docs`** (Swagger UI) and **`/redoc`**.
 | GET | `/paid/{path}` | access token, or 402 with offers | Paid media, members pages, and downloads |
 | GET | `/commerce/summary` | admin, or public when `DASHBOARD_PUBLIC=true` | Revenue by payment type, orders, subscriptions |
 | GET | `/` | none | Owner console in demo mode; proxied owner site in gateway mode |
+| GET | `/console`, `/dashboard` | console session when `CONSOLE_PASSWORD` is set, otherwise none | Owner console page; redirects to `/_sara/login` when sign-in is required |
+| GET/POST | `/_sara/login` | none | Console sign-in form; disabled (404 through the site edge) unless `CONSOLE_PASSWORD` is set |
+| POST | `/_sara/logout` | console session | Clear the console cookie |
+| GET | `/_sara/session` | none | `{"authenticated", "username", "enabled"}` for the console's sign-out control |
 | GET | `/agent` | none | Agent studio (personal agent and crawler scenarios) |
 | GET | `/crawler`, `/demo` | none | Older crawler deposit page (kept for the video recorder; not linked) |
 | GET | `/admin/config` | admin, or public when `DEMO_CONFIG_PUBLIC=true` in demo mode | Selected website's target URL, tier deposits, rules, and origin status |

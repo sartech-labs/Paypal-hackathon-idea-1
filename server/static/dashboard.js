@@ -20,6 +20,7 @@
 
   const state = {
     token: null,
+    consoleAuth: null,
     data: null,
     requests: null,
     requestsAt: 0,
@@ -260,6 +261,19 @@
       store.set("localStorage", "ct-theme", next === "dark" ? null : next);
       applyTheme(next);
     });
+  }
+
+  // --- sign out (shown only when this deployment enables auth) -------------------------
+  function initSignOut() {
+    fetch("/_sara/session")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((session) => {
+        if (!session) return;
+        state.consoleAuth = session;
+        const form = $("signout-form");
+        if (form && session.authenticated === true) form.hidden = false;
+      })
+      .catch(() => {});
   }
 
   // --- banner --------------------------------------------------------------------------
@@ -2744,6 +2758,12 @@
     try {
       const result = await getJson("/dashboard/data", { headers: authHeaders() });
       if (result.status === 401) {
+        // With sign-in enabled, an expired session belongs at the login page rather than
+        // behind a permanent "no access" banner.
+        if (state.consoleAuth && state.consoleAuth.enabled) {
+          location.assign(`/_sara/login?next=${encodeURIComponent(location.pathname)}`);
+          return;
+        }
         showBanner("The dashboard needs public access or an admin token on the gateway.");
         return;
       }
@@ -2865,6 +2885,7 @@
   // --- init ----------------------------------------------------------------------------
   function init() {
     initTheme();
+    initSignOut();
 
     state.pgSelected = defaultBehaviorSelection();
     if ($("site-add-form")) $("site-add-form").addEventListener("submit", addSite);

@@ -91,6 +91,23 @@ class Settings(BaseModel):
     commerce_db_path: Path = Field(default=Path("storage/commerce_db.json"))
 
     admin_api_token: str = Field(default="")
+    # Console sign-in is always required. Credentials come from CONSOLE_PASSWORD when it is
+    # set; otherwise a password is generated on first start and stored in this file.
+    console_username: str = Field(default="admin")
+    console_password: str = Field(default="")
+    # Always ask for credentials by default. "off" is an explicit opt-out for a public demo
+    # deployment: it disables the sign-in gate and lets DASHBOARD_PUBLIC / DEMO_PUBLIC /
+    # DEMO_CONFIG_PUBLIC govern access again.
+    console_auth: Literal["on", "off"] = Field(default="on")
+    # HMAC key for the signed console cookie. When empty, a key is generated and stored next
+    # to the credentials so sessions survive a restart and multiple workers.
+    console_session_secret: str = Field(default="")
+    # Console session lifetime in seconds (default 12 hours).
+    console_session_ttl_seconds: int = Field(default=43200, ge=60, le=604800)
+    # Generated console credentials (0600) when CONSOLE_PASSWORD is not configured.
+    console_credentials_path: Path = Field(
+        default=Path("storage/console_credentials.json")
+    )
     # Read-only publisher dashboard without the admin token (for demo deployments only).
     dashboard_public: bool = Field(default=False)
     # Owner-editable runtime configuration (target URL, deposits, rules), persisted here.
@@ -293,6 +310,14 @@ def load_settings_from_env() -> Settings:
         commerce_catalog_path=Path(os.getenv("COMMERCE_CATALOG_PATH", "data/commerce_catalog.json")),
         commerce_db_path=Path(os.getenv("COMMERCE_DB_PATH", "storage/commerce_db.json")),
         admin_api_token=os.getenv("ADMIN_API_TOKEN", ""),
+        console_username=os.getenv("CONSOLE_USERNAME", "admin"),
+        console_password=os.getenv("CONSOLE_PASSWORD", ""),
+        console_auth=os.getenv("CONSOLE_AUTH", "on").strip().lower() or "on",  # type: ignore[arg-type]
+        console_session_secret=os.getenv("CONSOLE_SESSION_SECRET", ""),
+        console_session_ttl_seconds=int(os.getenv("CONSOLE_SESSION_TTL_SECONDS", "43200")),
+        console_credentials_path=Path(
+            os.getenv("CONSOLE_CREDENTIALS_PATH", "storage/console_credentials.json")
+        ),
         dashboard_public=_env_bool("DASHBOARD_PUBLIC", False),
         gateway_config_path=Path(os.getenv("GATEWAY_CONFIG_PATH", "storage/gateway_config.json")),
         demo_config_public=_env_bool("DEMO_CONFIG_PUBLIC", False),

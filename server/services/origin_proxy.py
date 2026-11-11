@@ -21,7 +21,29 @@ from urllib.parse import urljoin
 
 import httpx
 
+from server.core.console_auth import COOKIE_NAME
+
 logger = logging.getLogger("sara.origin")
+
+
+def _strip_console_cookie(value: str) -> str | None:
+    """Remove the console session cookie from a Cookie header value.
+
+    The signed console cookie must never reach the proxied site: that site would
+    otherwise hold a credential for this console for the token's whole lifetime.
+    """
+    pairs = [
+        pair
+        for pair in value.split(";")
+        if pair.strip() and pair.split("=", 1)[0].strip() != COOKIE_NAME
+    ]
+    return "; ".join(pair.strip() for pair in pairs) if pairs else None
+
+
+def _sets_console_cookie(name: str, value: str) -> bool:
+    """True when an origin response tries to set or clear the console cookie."""
+    return name.lower() == "set-cookie" and value.split("=", 1)[0].strip() == COOKIE_NAME
+
 
 # Response headers worth passing through to agents; cookies and hop-by-hop headers are dropped.
 PASS_HEADERS = ("cache-control", "etag", "last-modified", "content-language", "expires", "vary")
@@ -227,6 +249,12 @@ class OriginProxy:
             for key, value in (headers or {}).items()
             if key.lower() not in HOP_BY_HOP
         }
+        for key in [k for k in safe_headers if k.lower() == "cookie"]:
+            filtered = _strip_console_cookie(safe_headers[key])
+            if filtered is None:
+                safe_headers.pop(key)
+            else:
+                safe_headers[key] = filtered
         try:
             async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport, follow_redirects=False) as client:
                 res = await client.request(
@@ -240,7 +268,7 @@ class OriginProxy:
         response_headers = OriginHeaders(
             (key, value)
             for key, value in res.headers.multi_items()
-            if key.lower() not in HOP_BY_HOP
+            if key.lower() not in HOP_BY_HOP and not _sets_console_cookie(key, value)
         )
         return OriginResponse(
             status_code=res.status_code,

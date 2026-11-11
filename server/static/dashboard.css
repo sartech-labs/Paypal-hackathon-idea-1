@@ -1605,14 +1605,17 @@ body { background-image: none; }
 
 .appbar-inner { padding: 8px 24px; }
 .brand-name { font-size: 15px; }
-#theme-toggle {
+.signout-form { margin: 0; }
+#theme-toggle,
+.signout-form button {
   padding: 5px 9px;
   border-color: transparent;
   background: transparent;
   color: var(--text-secondary);
   font-size: 12.5px;
 }
-#theme-toggle:hover:not(:disabled) { background: var(--surface-2); color: var(--text-primary); }
+#theme-toggle:hover:not(:disabled),
+.signout-form button:hover:not(:disabled) { background: var(--surface-2); color: var(--text-primary); }
 
 .console { grid-template-columns: 196px minmax(0, 1fr); }
 .sidenav {

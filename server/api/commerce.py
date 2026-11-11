@@ -12,7 +12,7 @@ import html
 from decimal import Decimal
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from server.api.dashboard import _dashboard_access
@@ -347,10 +347,11 @@ async def paypal_cancel() -> HTMLResponse:
 
 @router.get("/commerce/summary", summary="Publisher view: revenue by payment type, orders and subscriptions")
 async def commerce_summary(
+    request: Request,
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> dict[str, Any]:
-    _dashboard_access(container, x_admin_token)
+    _dashboard_access(container, x_admin_token, request)
     data = await container.commerce.summary()
     deposits = await container.deposit_manager.list_deposits()
     forfeited = [d for d in deposits if d.deposit_state.value == "FORFEITED"]
