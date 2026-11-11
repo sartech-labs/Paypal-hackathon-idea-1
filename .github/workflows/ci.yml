@@ -18,5 +18,5 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Run the test suite (offline: PayPal, AI providers, and MCP are faked)
+      - name: "Run the test suite (offline: PayPal, AI providers, and MCP are faked)"
         run: python -m pytest -q
