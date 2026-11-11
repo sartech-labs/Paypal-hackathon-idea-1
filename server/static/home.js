@@ -1,4 +1,4 @@
-/* SARA home page: sign-in dialog, demo sign-in, and the illustrated gate log. */
+/* SARA home page: sign-in dialog and the illustrated gate log. */
 (() => {
   "use strict";
 
@@ -6,7 +6,7 @@
   const all = (selector) => Array.from(document.querySelectorAll(selector));
 
   // --- sign-in -------------------------------------------------------------------------
-  let auth = { login_enabled: true, password_login: true, demo_signin: false, signed_in: false };
+  let auth = { login_enabled: true, signed_in: false };
 
   function goToConsole() {
     window.location.assign("/console");
@@ -15,13 +15,8 @@
   function applyAuth() {
     const signedIn = auth.signed_in && auth.login_enabled;
     for (const node of all("[data-open-signin]")) node.hidden = signedIn || !auth.login_enabled;
-    for (const node of all("[data-demo-signin]")) node.hidden = signedIn || !auth.demo_signin;
-    if ($("judges")) $("judges").hidden = signedIn || !auth.demo_signin;
     if ($("open-console")) $("open-console").hidden = !(signedIn || !auth.login_enabled);
     if ($("hero-console")) $("hero-console").hidden = !(signedIn || !auth.login_enabled);
-    if ($("signin-form")) $("signin-form").hidden = !auth.password_login;
-    if ($("signin-off")) $("signin-off").hidden = auth.password_login;
-    if ($("signin-demo")) $("signin-demo").hidden = !auth.demo_signin;
   }
 
   function showError(message) {
@@ -38,7 +33,7 @@
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
     const email = $("signin-email");
-    if (email && auth.password_login) email.focus();
+    if (email) email.focus();
   }
 
   async function postJson(url, body) {
@@ -76,25 +71,6 @@
     } finally {
       button.disabled = false;
       button.textContent = "Sign in";
-    }
-  }
-
-  async function demoSignIn(event) {
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      const result = await postJson("/auth/demo");
-      if (result.ok) {
-        goToConsole();
-        return;
-      }
-      openSignin();
-      showError(result.data.message || "The demo account is not available.");
-    } catch (_) {
-      openSignin();
-      showError("Could not reach the gateway. Try again in a moment.");
-    } finally {
-      button.disabled = false;
     }
   }
 
@@ -195,7 +171,6 @@
 
   function init() {
     for (const node of all("[data-open-signin]")) node.addEventListener("click", openSignin);
-    for (const node of all("[data-demo-signin]")) node.addEventListener("click", demoSignIn);
     if ($("signin-form")) $("signin-form").addEventListener("submit", signIn);
     loadAuth();
     playGateLog();

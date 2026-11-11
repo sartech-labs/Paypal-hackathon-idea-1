@@ -782,3 +782,90 @@ async def test_demo_root_gates_an_explicitly_selected_site(
         console = await client.get("/", headers={"User-Agent": "crawler/1.0"})
         assert console.status_code == 200
         assert "SARA console" in console.text
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_gateway_can_start_with_no_website(
+    test_settings: Settings, fake_clock: FakeClock, monkeypatch
+) -> None:
+    _patch_origins(monkeypatch)
+    empty = test_settings.model_copy(update={"seed_default_site": False})
+    async with _client(empty, fake_clock) as client:
+        listed = (await client.get("/admin/sites", headers=ADMIN)).json()
+        assert listed["sites"] == [] and listed["active_site_id"] is None
+        assert (await client.get("/admin/config", headers=ADMIN)).status_code == 200
+        assert (await client.get("/health")).status_code == 200
+        # An agent arriving before any website exists gets an answer, not a server error.
+        assert (await client.get("/news", headers={"User-Agent": "TestBot/1.0"})).status_code < 500
+
+        first = await _create_site(client, "http://first.internal", set_active=True)
+        listed = (await client.get("/admin/sites", headers=ADMIN)).json()
+        assert [site["site_id"] for site in listed["sites"]] == [first["site_id"]]
+        assert listed["active_site_id"] == first["site_id"]
+
+        # Without the bundled demo site, the owner may remove their last website again.
+        removed = await client.delete(f"/admin/sites/{first['site_id']}", headers=ADMIN)
+        assert removed.status_code in (200, 204), removed.text
+        listed = (await client.get("/admin/sites", headers=ADMIN)).json()
+        assert listed["sites"] == [] and listed["active_site_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_seeded_gateway_keeps_its_last_website(
+    test_settings: Settings, fake_clock: FakeClock, monkeypatch
+) -> None:
+    _patch_origins(monkeypatch)
+    async with _client(test_settings, fake_clock) as client:
+        listed = (await client.get("/admin/sites", headers=ADMIN)).json()
+        assert len(listed["sites"]) == 1
+        only = listed["sites"][0]["site_id"]
+        refused = await client.delete(f"/admin/sites/{only}", headers=ADMIN)
+        assert refused.status_code >= 400
+
+
+@pytest.mark.asyncio
+async def test_dashboard_counts_each_website_separately(
+    test_settings: Settings, fake_clock: FakeClock, monkeypatch
+) -> None:
+    _patch_origins(monkeypatch)
+    empty = test_settings.model_copy(update={"seed_default_site": False})
+    async with _client(empty, fake_clock) as client:
+        site_a = await _create_site(client, "http://site-a.internal", set_active=True, disallowed_paths=["/admin"])
+        site_b = await _create_site(client, "http://site-b.internal", set_active=False)
+
+        issued_a = await _complete_flow(client, "/gateway/news", crawler_id="crawler-a", site_id=site_a["site_id"])
+        await _complete_flow(client, "/gateway/news", crawler_id="crawler-b", site_id=site_b["site_id"])
+        # One allowed read and one forbidden path on site A only.
+        token_a = {"Authorization": f"Bearer {issued_a['access_token']}", "X-SARA-Site": site_a["site_id"]}
+        assert (await client.get("/gateway/news", headers=token_a)).status_code == 200
+        assert (await client.get("/gateway/admin", headers=token_a)).status_code == 403
+
+        async def data(site: str) -> dict:
+            response = await client.get(f"/dashboard/data?site={site}", headers=ADMIN)
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        only_a, only_b, both = await data(site_a["site_id"]), await data(site_b["site_id"]), await data("all")
+        assert {d["crawler_id"] for d in only_a["deposits"]} == {"crawler-a"}
+        assert {d["crawler_id"] for d in only_b["deposits"]} == {"crawler-b"}
+        assert {d["crawler_id"] for d in both["deposits"]} == {"crawler-a", "crawler-b"}
+        assert [s["crawler_id"] for s in only_b["sessions"]] == ["crawler-b"]
+
+        assert only_a["kpis"]["policy_violations"] >= 1
+        assert only_b["kpis"]["policy_violations"] == 0
+        assert only_a["kpis"]["gateway_requests_allowed"] >= 1
+        assert only_b["kpis"]["gateway_requests_allowed"] == 0
+        assert all(e["crawler_id"] != "crawler-a" for e in only_b["events"])
+        assert both["kpis"]["policy_violations"] == only_a["kpis"]["policy_violations"]
+
+        history_b = await client.get(f"/demo/requests?site={site_b['site_id']}", headers=ADMIN)
+        assert history_b.status_code == 200, history_b.text
+        assert all(row["crawler_id"] == "crawler-b" for row in history_b.json()["rows"])
+
+        assert (await client.get("/dashboard/data?site=nope", headers=ADMIN)).status_code == 404
+
+        # Removing a website removes its activity from "all websites".
+        assert (await client.delete(f"/admin/sites/{site_a['site_id']}", headers=ADMIN)).status_code in (200, 204)
+        after = await data("all")
+        assert {d["crawler_id"] for d in after["deposits"]} == {"crawler-b"}
+        assert after["kpis"]["policy_violations"] == 0

@@ -23,7 +23,7 @@ from typing import Any, Callable, Optional
 
 import httpx
 
-from client.agent import PERSONAS, CrawlerAgent
+from client.agent import PERSONAS, CrawlerAgent, make_goal_persona
 from client.agent_tools import GatewayToolbox
 from client.assistant_agent import DEFAULT_TASK, make_persona
 from client.assistant_tools import ASSISTANT_TOOL_DEFINITIONS, PAYMENT_TYPES, AssistantToolbox, SpendingMandate
@@ -112,6 +112,8 @@ class DemoRun:
     pending_decision: Optional[dict[str, Any]] = None
     mandate: Optional[dict[str, Any]] = None
     decision_value: Optional[bool] = None
+    site_id: Optional[str] = None
+    pay_with: Optional[str] = None
     events: list[DemoRunEvent] = field(default_factory=list)
     cancel_event: threading.Event = field(default_factory=threading.Event)
     approved_event: threading.Event = field(default_factory=threading.Event)
@@ -154,6 +156,8 @@ class DemoRun:
                 task=self.task,
                 pending_decision=dict(self.pending_decision) if self.pending_decision else None,
                 mandate=dict(self.mandate) if self.mandate else None,
+                site_id=self.site_id,
+                pay_with=self.pay_with,
                 events=[event for event in self.events if event.seq >= after],
                 next_seq=len(self.events),
             )
@@ -267,9 +271,19 @@ class DemoRunner:
         allowed_merchants: Optional[list[str]] = None,
         purchase_review: bool = True,
         save_payment_method: bool = False,
+        goal: Optional[str] = None,
+        site_id: Optional[str] = None,
+        pay_with: Optional[str] = None,
     ) -> DemoRun:
         mandate_config: Optional[dict[str, Any]] = None
-        if persona == "assistant":
+        if persona == "goal":
+            if driver != "ai":
+                raise DemoRunError("The test agent is AI-driven; start it with driver 'ai'.")
+            goal = " ".join((goal or "").split())
+            if len(goal) < 8:
+                raise DemoRunError("Tell the agent what to do in at least a few words.")
+            task = goal
+        elif persona == "assistant":
             if driver != "ai":
                 raise DemoRunError("The personal agent is AI-driven only; start it with driver 'ai'.")
             spend = Decimal(budget or DEFAULT_BUDGET).quantize(Decimal("0.01"))
@@ -293,6 +307,8 @@ class DemoRunner:
             task = " ".join((task or DEFAULT_TASK).split())
         elif persona not in PERSONAS:
             raise DemoRunError(f"Unknown persona {persona!r}.")
+        else:
+            task = None
         if driver == "ai" and not ai_available:
             raise DemoUnavailableError(
                 "No AI key is configured on the gateway. Set OPENAI_API_KEY or ANTHROPIC_API_KEY, "
@@ -313,7 +329,9 @@ class DemoRunner:
                 driver=driver,
                 persona=persona,
                 crawler_id=f"aria-{secrets.token_hex(4)}" if persona == "assistant" else f"{prefix}-{persona}-{secrets.token_hex(3)}",
-                task=task if persona == "assistant" else None,
+                task=task if persona in ("assistant", "goal") else None,
+                site_id=site_id,
+                pay_with=pay_with if persona == "goal" else None,
                 mandate_config=mandate_config,
                 provider=provider,
                 model=ai_model if driver == "ai" else "scripted",
@@ -363,7 +381,7 @@ class DemoRunner:
     # --- run execution (background thread) -----------------------------------------------
 
     def _execute(self, run: DemoRun, base_url: str, effort: str) -> None:
-        persona = PERSONAS[run.persona]
+        persona = make_goal_persona(run.task or "") if run.persona == "goal" else PERSONAS[run.persona]
         tier = run.pricing_tier
         if tier:
             resources = ", ".join(tier["resources"])
@@ -393,10 +411,14 @@ class DemoRunner:
             with self._http_factory(base_url) as http:
                 if self.agent_signer is not None and run.persona != "rogue" and hasattr(http, "auth"):
                     http.auth = self.agent_signer
+                # A playground test agent goes to the website the owner picked.
+                if run.site_id and hasattr(http, "headers"):
+                    http.headers["X-SARA-Site"] = run.site_id
                 toolbox = GatewayToolbox(
                     http=http,
                     crawler_id=run.crawler_id,
                     max_deposit=self._max_deposit,
+                    wallet={"pay_with": run.pay_with} if run.pay_with else {},
                     sleep=self._sleep or (lambda seconds: run.cancel_event.wait(seconds)),
                 )
                 toolbox.approval_handler = lambda url: self._await_approval(run, toolbox, http, url)

@@ -231,6 +231,10 @@ class PaymentProvider(abc.ABC):
         """True when deposits complete without a buyer approval step (Sandbox test card)."""
         return False
 
+    async def account_identity(self, *, order_id: Optional[str] = None) -> dict[str, Any]:
+        """Which merchant account receives payments. Simulated providers have none."""
+        return {"connected": True, "simulated": True}
+
     @abc.abstractmethod
     async def create_order(
         self,
@@ -901,6 +905,30 @@ class PayPalSandboxProvider(PaymentProvider):
     def autopay(self) -> bool:
         """True when deposits are paid with PayPal's Sandbox test card (no buyer approval)."""
         return self._autopay
+
+    async def account_identity(self, *, order_id: Optional[str] = None) -> dict[str, Any]:
+        """Prove the app credentials work, and read the receiving (payee) account from an order.
+
+        PayPal's client-credentials token does not name the business account, but every order
+        the app created carries its payee: the account the money lands in."""
+        hint = f"...{self._client_id[-6:]}" if len(self._client_id) > 6 else None
+        async with self._build_client() as client:
+            token = await self._get_access_token(client)
+            identity: dict[str, Any] = {"connected": True, "simulated": False, "client_id_hint": hint}
+            if order_id:
+                try:
+                    response = await client.get(
+                        f"/v2/checkout/orders/{order_id}",
+                        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                    )
+                except httpx.HTTPError:
+                    return identity
+                if response.status_code == 200:
+                    units = (response.json() or {}).get("purchase_units") or [{}]
+                    payee = units[0].get("payee") or {}
+                    identity["merchant_email"] = payee.get("email_address")
+                    identity["merchant_id"] = payee.get("merchant_id")
+            return identity
 
     def _ensure_credentials(self) -> None:
         if not self._client_id or not self._client_secret:

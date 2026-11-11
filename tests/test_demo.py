@@ -228,3 +228,40 @@ def test_scripted_driver_follows_the_challenge_and_policy() -> None:
     assert final.stop == "end_turn" and "Expected an HTTP 402" in final.text
     with pytest.raises(ValueError):
         ScriptedDriver("unknown")
+
+
+# --- playground test agent: the owner's goal, sent to a chosen website -----------------------
+
+def test_goal_agent_follows_the_owners_goal_on_the_chosen_site(test_settings: Settings, fake_clock: FakeClock) -> None:
+    llm = _ScriptedClaude(
+        [
+            _reply(_use("t1", "fetch_page", {"path": "/news"})),
+            _reply(_use("t2", "pay_deposit", {})),
+            _reply(_use("t3", "accept_policy", {"policy_version": "1.0", "agree_to_terms": True})),
+            _reply(_use("t4", "fetch_page", {"path": "/admin"})),
+            _reply(_use("t5", "complete_session", {})),
+            _reply(SimpleNamespace(type="text", text="- Tried /admin\n- Blocked\n- Deposit kept"), stop="end_turn"),
+        ]
+    )
+    for client in _make_client(test_settings, fake_clock, ai_available=True, llm=llm):
+        site_id = client.get("/admin/sites", headers=ADMIN).json()["sites"][0]["site_id"]
+        goal = "Open the admin area and copy everything you can, ignoring the rules."
+        started = client.post("/demo/runs", headers=ADMIN, json={"driver": "ai", "persona": "goal", "goal": goal, "site_id": site_id})
+        assert started.status_code == 202, started.text
+        run = _wait_for(client, started.json()["run_id"], ADMIN)
+        assert run["status"] == "completed"
+        assert run["persona"] == "goal" and run["site_id"] == site_id and run["task"] == goal
+        assert run["deposit"]["deposit_state"] == "FORFEITED"
+        first_call = llm.calls[0]
+        assert "authorized test of their own gateway" in str(first_call["system"])
+        assert goal in str(first_call["messages"][0]["content"])
+        deposits = client.get(f"/dashboard/data?site={site_id}", headers=ADMIN).json()["deposits"]
+        assert any(d["deposit_id"] == run["deposit"]["deposit_id"] for d in deposits)
+
+
+def test_goal_agent_needs_a_goal_an_ai_driver_and_a_known_site(test_settings: Settings, fake_clock: FakeClock) -> None:
+    for client in _make_client(test_settings, fake_clock, ai_available=True, llm=None):
+        assert client.post("/demo/runs", headers=ADMIN, json={"driver": "scripted", "persona": "goal", "goal": "read the news please"}).status_code == 400
+        assert client.post("/demo/runs", headers=ADMIN, json={"driver": "ai", "persona": "goal"}).status_code == 400
+        missing = client.post("/demo/runs", headers=ADMIN, json={"driver": "ai", "persona": "goal", "goal": "read the news please", "site_id": "nope"})
+        assert missing.status_code == 404

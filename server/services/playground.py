@@ -133,6 +133,13 @@ ACTIONS: tuple[dict[str, Any], ...] = (
         "expected": "HTTP 403 INVALID_PATH; deposit forfeited.",
     },
     {
+        "action_id": "session_reuse",
+        "label": "Reuse a finished session",
+        "tone": "bad",
+        "description": "Pay, read a page, end the session, then try to keep reading with the same token.",
+        "expected": "HTTP 4xx SESSION_ALREADY_COMPLETED; the finished session opens nothing.",
+    },
+    {
         "action_id": "forged_signature",
         "label": "Forged signature",
         "tone": "bad",
@@ -840,6 +847,8 @@ class PlaygroundRunner:
             return self._budget_overrun(run, http, headers, session, policy, plan)
         if action == "path_traversal":
             return self._path_traversal(run, http, headers, session, policy)
+        if action == "session_reuse":
+            return self._session_reuse(run, http, headers, session, policy, plan)
         raise PlaygroundActionError(f"Unknown playground action: {action}")
 
     # --- actions --------------------------------------------------------------------
@@ -1384,6 +1393,46 @@ class PlaygroundRunner:
             "outcome": "refused",
             "violation": violation,
             "deposit": deposit,
+        }
+
+    def _session_reuse(
+        self,
+        run: PlaygroundRun,
+        http: Any,
+        headers: dict[str, str],
+        session: dict[str, Any],
+        policy: dict[str, Any],
+        plan: _PagePlan,
+    ) -> dict[str, Any]:
+        """End a paid session properly, then try to keep using its token."""
+        token_headers = {**headers, "Authorization": f"Bearer {session['token']}"}
+        path = plan.reads[0] if plan.reads else plan.challenge
+        first = http.get(path, headers=token_headers)
+        run.emit(
+            "Read an allowed page with the paid token",
+            request=f"GET {path}",
+            http_status=first.status_code,
+            reason_code=_reason(first),
+            allowed=first.status_code == 200,
+            message="The session is valid, so the gateway serves the page.",
+        )
+        deposit = self._complete_and_settle(run, http, headers, session)
+        reuse = http.get(path, headers=token_headers)
+        run.emit(
+            "Reuse the finished session's token",
+            request=f"GET {path}",
+            http_status=reuse.status_code,
+            reason_code=_reason(reuse),
+            allowed=reuse.status_code == 200,
+            message=_message(reuse) or "A finished session must not open anything.",
+        )
+        if reuse.status_code == 200:
+            return {"outcome": "allowed", "deposit": deposit, "session_id": (session.get("session") or {}).get("session_id")}
+        return {
+            "outcome": "refused",
+            "deposit": deposit,
+            "session_id": (session.get("session") or {}).get("session_id"),
+            "violation": _violation_from_response(reuse, policy, action="session_reuse", deposit=deposit),
         }
 
     def _complete_and_settle(

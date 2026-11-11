@@ -10,6 +10,8 @@ from fastapi.responses import FileResponse
 
 from server.api.dashboard import STATIC_DIR
 from server.core.security import utc_now_iso, validate_crawler_id
+from server.api.dashboard import resolve_site_scope
+from server.services.site_scope import SiteAttribution
 from server.dependencies import AppContainer, demo_access, get_container, is_valid_admin_token
 from server.schemas import (
     DemoConfigResponse,
@@ -136,6 +138,7 @@ MAX_HISTORY_ROWS = 200
 async def request_history(
     crawler_id: Optional[str] = Query(default=None, max_length=128),
     limit: int = Query(default=MAX_HISTORY_ROWS, ge=1, le=MAX_HISTORY_ROWS),
+    site: Optional[str] = Query(default=None, max_length=64, description="A website id, or 'all' (default) for every current website"),
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> DemoRequestHistoryResponse:
@@ -153,9 +156,16 @@ async def request_history(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={"error": "invalid_crawler_id", "message": str(exc)},
             ) from exc
+    scope = resolve_site_scope(container, site)
+    all_deposits = await container.deposit_manager.list_deposits()
+    attribution = SiteAttribution.build(all_deposits, await container.session_manager.list_sessions())
     events = await container.audit_logger.get_events(crawler_id=crawler_id, limit=AUDIT_SCAN_LIMIT)
-    requests = [event for event in events if event.event_type in GATEWAY_REQUEST_EVENTS][-limit:]
-    deposits = {d.deposit_id: d for d in await container.deposit_manager.list_deposits()}
+    requests = [
+        event
+        for event in events
+        if event.event_type in GATEWAY_REQUEST_EVENTS and attribution.event_site(event) in scope
+    ][-limit:]
+    deposits = {d.deposit_id: d for d in all_deposits}
     pricing = container.pricing
 
     rows: list[DemoRequestRow] = []
@@ -235,6 +245,20 @@ async def start_run(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={"error": "unknown_pricing_tier", "message": f"Unknown pricing tier: {payload.tier}"},
             )
+    site_id = None
+    if payload.persona == "goal":
+        try:
+            site_id = container.resolve_site(site_id=payload.site_id).site.site_id
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": "site_not_found", "message": str(exc)},
+            ) from exc
+        if not container.registry.sites:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"error": "no_website", "message": "Add a website before sending a test agent."},
+            )
     try:
         run = container.demo_runner.start(
             driver=payload.driver,
@@ -253,6 +277,9 @@ async def start_run(
             allowed_merchants=payload.allowed_merchants,
             purchase_review=payload.purchase_review,
             save_payment_method=payload.save_payment_method,
+            goal=payload.goal,
+            site_id=site_id,
+            pay_with=payload.pay_with,
         )
     except DemoRunError as exc:
         raise HTTPException(

@@ -1647,3 +1647,48 @@ async def test_paypal_failed_or_pending_refund_preserves_captured_record(
 
         assert final_dep["refund_status"] == "REFUND_PENDING"
         assert final_dep["deposit_state"] == "REFUND_PENDING"
+
+
+@pytest.mark.asyncio
+async def test_pay_with_paypal_skips_the_test_card_so_a_person_approves(
+    test_settings: Settings,
+) -> None:
+    test_settings.payment_mode = "paypal_sandbox"
+    settings = test_settings.model_copy(update={"paypal_sandbox_autopay": True})
+    order_requests: list[dict[str, Any]] = []
+    provider = PayPalSandboxProvider(settings, transport=_build_paypal_mock_transport(order_requests=order_requests))
+    app = create_app(settings=settings, payment_provider=provider)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        challenge = (await client.get("/gateway/news", headers={"X-Crawler-Id": "crawler-approves"})).json()
+        created = await client.post(
+            "/deposits/create",
+            json={"challenge_id": challenge["challenge_id"], "crawler_id": "crawler-approves", "pay_with": "paypal"},
+        )
+        assert created.status_code == 201, created.text
+    source = order_requests[0]["body"]["payment_source"]
+    assert "card" not in source and "paypal" in source
+    assert created.json()["approval_url"]
+
+
+@pytest.mark.asyncio
+async def test_paypal_account_reports_the_connected_payout_account(test_settings: Settings) -> None:
+    test_settings.payment_mode = "paypal_sandbox"
+    settings = test_settings.model_copy(update={"paypal_merchant_email": "owner-biz@example.test"})
+    provider = PayPalSandboxProvider(settings, transport=_build_paypal_mock_transport())
+    app = create_app(settings=settings, payment_provider=provider)
+    admin = {"X-Admin-Token": settings.admin_api_token}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        account = (await client.get("/paypal/account", headers=admin)).json()
+        assert (await client.get("/paypal/account")).status_code == 401
+    assert account["connected"] is True and account["environment"] == "sandbox"
+    assert account["merchant_email"] == "owner-biz@example.test"
+    assert account["settlement_mode"] in ("refund", "authorization")
+
+
+@pytest.mark.asyncio
+async def test_paypal_account_is_simulated_in_mock_mode(test_settings: Settings) -> None:
+    app = create_app(settings=test_settings)
+    admin = {"X-Admin-Token": test_settings.admin_api_token}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        account = (await client.get("/paypal/account", headers=admin)).json()
+    assert account["simulated"] is True and account["environment"] == "simulated"

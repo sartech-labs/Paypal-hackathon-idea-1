@@ -8,14 +8,17 @@
   const REFRESH_MS = 3000;
   const SLOW_FETCH_MS = 400;
   const REQUESTS_EVERY_MS = 6000;
+  // Every console page gets the same header: a title and one line saying what it is for.
   const VIEWS = {
-    setup: "Websites",
-    overview: "Overview",
-    commerce: "Earnings",
-    operations: "Agent activity",
-    security: "Violations",
-    analytics: "Analytics",
-    policy: "Policy",
+    overview: { title: "Overview", sub: "How agents are treating your websites, and what their deposits did." },
+    setup: { title: "Website setup", sub: "The websites behind SARA, and the deposit and rules agents must follow on each." },
+    playground: { title: "Playground", sub: "Send an AI agent at one of your websites to see what the gateway allows, blocks, and charges." },
+    deposits: { title: "Deposits", sub: "Every refundable PayPal deposit, why it was returned or kept, and a check against PayPal's own records." },
+    operations: { title: "Agent activity", sub: "Every agent session and request the gateway answered, with the deposit behind it." },
+    security: { title: "Violations", sub: "Requests that broke your rules, and the audit log behind each decision." },
+    commerce: { title: "Earnings", sub: "Money agents paid this site through PayPal, including deposits kept from rule-breakers." },
+    analytics: { title: "Analytics", sub: "Interactive charts of the gateway's records. Click a segment to filter the page." },
+    policy: { title: "Policy", sub: "The machine-readable policy every agent accepts, and an AI assistant to draft a new one." },
   };
 
   const state = {
@@ -293,23 +296,51 @@
     if (!VIEWS[view]) view = "overview";
     state.view = view;
     for (const section of document.querySelectorAll(".view")) section.hidden = section.dataset.view !== view;
-    for (const link of document.querySelectorAll(".sidenav-link")) {
+    for (const link of document.querySelectorAll(".sidenav-link[data-view]")) {
       if (link.dataset.view === view) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
     }
-    $("page-title").textContent = VIEWS[view];
-    if ($("page-head")) $("page-head").hidden = view === "setup";
+    // The section holding the open page is expanded and marked; the others close.
+    const activeLink = document.querySelector(`.sidenav-link[data-view="${view}"]`);
+    const activeSection = activeLink ? activeLink.closest(".sidenav-section") : null;
+    for (const section of document.querySelectorAll(".sidenav-section")) {
+      setSectionOpen(section, section === activeSection);
+      section.dataset.active = String(section === activeSection);
+    }
+    if ($("site-filter-wrap")) $("site-filter-wrap").hidden = !FILTERED_VIEWS.has(view) || state.sites.length < 2;
+    $("page-title").textContent = VIEWS[view].title;
+    if ($("page-sub")) $("page-sub").textContent = VIEWS[view].sub;
     if (!fromHash) history.replaceState(null, "", view === "overview" ? window.location.pathname : `#${view}`);
-    if (view === "setup") loadSetup();
+    if (view === "setup" || view === "playground") {
+      loadSetup();
+      if (!state.paypalAccount || !state.paypalAccount.connected) loadPayPalAccount();
+    }
     if (view === "operations" || view === "analytics") loadRequests(true);
     if (view === "policy") loadPolicy();
     if (view === "commerce") loadCommerce();
     if (view === "analytics" && window.CTAnalytics) window.CTAnalytics.open(analyticsContext());
   }
 
+  function setSectionOpen(section, open) {
+    const toggle = section.querySelector("[data-section-toggle]");
+    const subs = section.querySelector(".sidenav-subs");
+    if (toggle) toggle.setAttribute("aria-expanded", String(open));
+    if (subs) subs.hidden = !open;
+    section.dataset.open = String(open);
+  }
+
   function initViews() {
-    for (const link of document.querySelectorAll(".sidenav-link")) {
+    for (const link of document.querySelectorAll(".sidenav-link[data-view]")) {
       link.addEventListener("click", () => showView(link.dataset.view));
+    }
+    // A section heading opens its first page (which expands the section), or collapses
+    // the section when it is already open.
+    for (const toggle of document.querySelectorAll("[data-section-toggle]")) {
+      toggle.addEventListener("click", () => {
+        const section = toggle.closest(".sidenav-section");
+        if (section.dataset.open === "true") setSectionOpen(section, false);
+        else showView(toggle.dataset.first);
+      });
     }
     window.addEventListener("hashchange", () => showView(window.location.hash.slice(1), true));
     showView(window.location.hash.slice(1) || "overview", true);
@@ -349,7 +380,7 @@
         el("p", { className: "detail-title", text: d.payment_mode === "mock" ? "Payment (mock mode)" : "PayPal records" }),
         facts([
           ["Payment status", humanize(d.payment_status)],
-          ["Rail", d.payment_mode === "mock" ? "Mock (simulated)" : "PayPal Sandbox"],
+          ["Rail", d.payment_mode === "mock" ? "Simulated" : "PayPal"],
           ["Order", d.provider_order_id, true],
           ["Capture", d.provider_capture_id, true],
           ["Authorization", d.provider_authorization_id, true],
@@ -588,7 +619,7 @@
       detailHeight: 176,
       exportName: "sara-sessions",
       search: "Search sessions...",
-      noRows: "No crawler sessions yet.",
+      noRows: "No agent sessions yet. Send a test agent from Websites → Playground.",
       segments: {
         label: "Filter by status",
         options: [
@@ -736,21 +767,68 @@
     const kpis = $("kpis");
     clear(kpis);
     const settled = k.deposits_returned + k.deposits_forfeited;
-    const compliance = settled ? `${Math.round((k.deposits_returned / settled) * 100)}% of settled deposits returned` : "No settled deposits yet";
+    const totalRequests = k.gateway_requests_allowed + k.gateway_requests_rejected;
     kpis.append(
-      tile("Active sessions", compact(k.sessions_active), `${compact(k.sessions_total)} total crawler sessions`, "accent", "◉",
-        { view: "operations", grid: "sessions", segment: "active", target: "grid-sessions", hint: "Show active sessions" }),
-      tile("Deposits held", compact(k.deposits_held), k.deposits_needing_attention ? `${k.deposits_needing_attention} need attention` : "During live sessions", k.deposits_needing_attention ? "warning" : "neutral", "⏸",
-        { view: "overview", grid: "deposits", segment: "held", target: "grid-deposits", hint: "Show held deposits" }),
-      tile("Deposits returned", compact(k.deposits_returned), `${money(k.amount_returned, k.currency)} refunded or released`, "good", "↺",
-        { view: "overview", grid: "deposits", segment: "returned", target: "grid-deposits", hint: "Show returned deposits" }),
-      tile("Deposits forfeited", compact(k.deposits_forfeited), `${money(k.amount_forfeited, k.currency)} kept by the publisher`, "critical", "✕",
-        { view: "overview", grid: "deposits", segment: "forfeited", target: "grid-deposits", hint: "Show forfeited deposits" }),
-      tile("Policy violations", compact(k.policy_violations), compliance, k.policy_violations ? "critical" : "good", "⚠",
-        { view: "security", target: "grid-violations", hint: "Open the violations table" }),
-      tile("Requests allowed", compact(k.gateway_requests_allowed), `${compact(k.gateway_requests_rejected)} blocked by the gateway`, "accent", "→",
-        { view: "operations", grid: "requests", segment: "granted", target: "grid-requests", hint: "Show granted requests" })
+      tile("Kept from rule-breakers", money(k.amount_forfeited, k.currency),
+        `${compact(k.deposits_forfeited)} deposit${k.deposits_forfeited === 1 ? "" : "s"} kept`, "critical", "✕",
+        { view: "deposits", grid: "deposits", segment: "forfeited", target: "grid-deposits", hint: "Show kept deposits" }),
+      tile("Returned to honest agents", money(k.amount_returned, k.currency),
+        settled ? `${compact(k.deposits_returned)} of ${compact(settled)} settled deposits` : "No settled deposits yet", "good", "↺",
+        { view: "deposits", grid: "deposits", segment: "returned", target: "grid-deposits", hint: "Show returned deposits" }),
+      tile("Agent sessions", compact(k.sessions_total),
+        k.sessions_active ? `${compact(k.sessions_active)} active now` : "None active now", "accent", "◉",
+        { view: "operations", grid: "sessions", segment: "all", target: "grid-sessions", hint: "Open agent activity" }),
+      tile("Requests blocked", compact(k.gateway_requests_rejected),
+        totalRequests ? `${Math.round((k.gateway_requests_rejected / totalRequests) * 100)}% of ${compact(totalRequests)} requests · ${compact(k.policy_violations)} violations` : "No requests yet",
+        k.gateway_requests_rejected ? "warning" : "good", "⊘",
+        { view: "security", target: "grid-violations", hint: "Open violations" })
     );
+  }
+
+  // The latest deposits as a short, readable list; each opens the Deposits page on that row.
+  function relativeTime(iso) {
+    const then = Date.parse(iso || "");
+    if (!Number.isFinite(then)) return "";
+    const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+    if (seconds < 60) return "just now";
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours} h ago`;
+    const days = Math.round(hours / 24);
+    return `${days} day${days === 1 ? "" : "s"} ago`;
+  }
+
+  function openDeposit(d) {
+    showView("deposits");
+    selectDeposit(d, true);
+    const card = $("explain-card");
+    if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function renderRecent(deposits) {
+    const list = $("recent-list");
+    if (!list) return;
+    clear(list);
+    const latest = deposits.slice().sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))).slice(0, 6);
+    if (!latest.length) {
+      list.append(el("li", { className: "empty", text: "No decisions yet. Send a test agent from Websites → Playground." }));
+      return;
+    }
+    for (const d of latest) {
+      const what = d.requested_resource ? `asked for ${d.requested_resource}` : "crawl session";
+      list.append(el("li", null, [
+        el("button", { type: "button", className: "recent-row", onclick: () => openDeposit(d) }, [
+          depositChip(d.deposit_state),
+          el("span", { className: "recent-main" }, [
+            el("span", { className: "recent-agent", text: d.crawler_id }),
+            el("span", { className: "recent-what", text: `${what} · ${d.pricing_tier_name || "Base"} tier` }),
+          ]),
+          el("span", { className: "recent-amount", text: money(d.amount, d.currency) }),
+          el("span", { className: "recent-time", text: relativeTime(d.updated_at) }),
+        ]),
+      ]));
+    }
   }
 
   function renderSecurityKpis(data) {
@@ -773,8 +851,12 @@
         { view: "operations", grid: "requests", segment: "denied", target: "grid-requests", hint: "Show denied requests" })
     );
     $("count-violations").textContent = compact(k.policy_violations);
+    if ($("count-violations-parent")) {
+      $("count-violations-parent").textContent = compact(k.policy_violations);
+      $("count-violations-parent").hidden = !k.policy_violations;
+    }
     $("count-sessions").textContent = compact(data.sessions.length);
-    $("count-sessions").title = `${data.sessions.length} crawler sessions, ${k.sessions_active} active`;
+    $("count-sessions").title = `${data.sessions.length} agent sessions, ${k.sessions_active} active`;
   }
 
   function showTooltip(target, valueText, labelText) {
@@ -899,7 +981,7 @@
       window.CTGrid.facts([
         ["Crawler", d.crawler_id, true],
         ["Tier", tierBadge(d.pricing_tier, d.pricing_tier_name)],
-        ["Rail", d.payment_mode === "mock" ? "Mock (simulated)" : "PayPal Sandbox"],
+        ["Rail", d.payment_mode === "mock" ? "Simulated" : "PayPal"],
         ["PayPal order", d.provider_order_id, true],
         ["Refund", d.provider_refund_id, true],
       ]),
@@ -910,9 +992,17 @@
   async function loadExplanation(depositId) {
     const panel = $("explanation");
     $("explain-sub").textContent = `Deposit ${depositId}`;
+    // Never leave another deposit's explanation on screen while this one loads.
+    if (panel.dataset.depositId !== depositId) {
+      clear(panel);
+      panel.append(el("p", { className: "empty", text: "Explaining this deposit..." }));
+      panel.dataset.depositId = depositId;
+    }
     panel.classList.add("refreshing");
     try {
       const result = await getJson(`/dashboard/deposits/${encodeURIComponent(depositId)}/explanation`, { headers: authHeaders() });
+      // A newer selection wins: drop answers for a deposit that is no longer selected.
+      if (state.selectedDepositId && state.selectedDepositId !== depositId) return;
       if (!result.ok) {
         clear(panel);
         panel.append(el("p", { className: "empty", text: (result.body && result.body.message) || `Could not load the explanation (HTTP ${result.status}).` }));
@@ -989,6 +1079,9 @@
   // The backend owns the website list. localStorage only remembers which website the
   // console was showing, and is used when the backend list cannot be read.
   const SITE_SELECTED_KEY = "ct-console-site-id";
+  const SITE_FILTER_KEY = "ct-console-site-filter";
+  // Pages whose numbers, lists, and charts follow the website filter.
+  const FILTERED_VIEWS = new Set(["overview", "deposits", "operations", "security", "analytics"]);
   const LEGACY_SITE_STORE_KEY = "ct-console-sites-v4";
   const CURRENCY_SYMBOLS = { USD: "$" };
 
@@ -1157,6 +1250,7 @@
   function applySiteList(body, opts) {
     const options = opts || {};
     state.sites = (body.sites || []).map(normalizeSite).filter(Boolean);
+    state.sitesLoaded = true;
     state.sitesError = null;
     state.activeSiteId = body.active_site_id || state.activeSiteId || null;
     if (typeof body.config_public === "boolean") {
@@ -1173,6 +1267,44 @@
     if (!state.sites.some((site) => site.id === candidate)) candidate = state.sites.length ? state.sites[0].id : null;
     state.selectedSiteId = candidate;
     persistSelectedSite();
+    renderSiteFilter();
+  }
+
+  // --- website filter: "All websites" or one site, for the activity pages --------------
+  function siteFilter() {
+    const value = state.siteFilter || "all";
+    return value === "all" || state.sites.some((site) => site.id === value) ? value : "all";
+  }
+
+  function siteQuery() {
+    const value = siteFilter();
+    return value === "all" ? "" : `?site=${encodeURIComponent(value)}`;
+  }
+
+  function renderSiteFilter() {
+    const select = $("site-filter");
+    if (!select) return;
+    if (state.sitesLoaded && state.siteFilter && siteFilter() !== state.siteFilter) {
+      // The filtered website was removed: fall back to every website.
+      state.siteFilter = "all";
+      store.set("localStorage", SITE_FILTER_KEY, null);
+    }
+    clear(select);
+    select.append(el("option", { value: "all", text: state.sites.length === 1 ? "All websites (1)" : `All websites${state.sites.length ? ` (${state.sites.length})` : ""}` }));
+    for (const site of state.sites) select.append(el("option", { value: site.id, text: site.host }));
+    select.value = siteFilter();
+    if ($("site-filter-wrap")) $("site-filter-wrap").hidden = !FILTERED_VIEWS.has(state.view) || state.sites.length < 2;
+  }
+
+  function changeSiteFilter(value) {
+    state.siteFilter = value || "all";
+    store.set("localStorage", SITE_FILTER_KEY, state.siteFilter === "all" ? null : state.siteFilter);
+    state.requestsAt = 0;
+    state.autoSelect = true;
+    // A different website's records are not "new": skip the change toasts for this load.
+    state.previous = null;
+    refresh();
+    if (state.view === "operations" || state.view === "analytics") loadRequests(true);
   }
 
   async function loadSites(opts) {
@@ -1559,10 +1691,6 @@
   }
 
   async function removeSite(siteId) {
-    if (state.sites.length <= 1) {
-      showSetupMessage("Keep at least one website in the console.");
-      return;
-    }
     if (state.configReadOnly) {
       showSetupMessage("Read-only. Sign in as the owner to remove a website.");
       return;
@@ -1700,6 +1828,7 @@
   // ambiguous which site a deposit, rule, or test run belongs to.
   function renderSiteContext(site) {
     if ($("settings-site")) $("settings-site").textContent = site ? site.host : "—";
+    for (const node of document.querySelectorAll(".connect-host")) node.textContent = site ? site.host : "your domain";
     if ($("settings-sub")) {
       let sub = "Add a website to configure it.";
       if (site && site.status !== "live") sub = `${site.origin || site.host} is paused: agents are not gated and settings are locked.`;
@@ -1734,6 +1863,46 @@
     renderSites();
     renderSiteConfig();
     renderPlayground();
+    renderOnboarding();
+  }
+
+  // First run: until the owner adds a website, Setup is an onboarding card with the
+  // address field open, and the playground asks for a website first.
+  function renderOnboarding() {
+    const none = Boolean(state.sitesLoaded && !state.sites.length && !state.sitesError);
+    const show = (id, visible) => { if ($(id)) $(id).hidden = !visible; };
+    show("site-onboard", none);
+    show("site-list", !none);
+    show("site-add-open", !none);
+    show("site-add-cancel", !none);
+    show("site-settings-card", !none);
+    if (none && $("site-add-form") && $("site-add-form").hidden) {
+      $("site-add-form").hidden = false;
+      if ($("site-add-open")) $("site-add-open").setAttribute("aria-expanded", "true");
+    }
+    show("pg-empty", none);
+    show("pg-target", !none && state.sites.length > 0);
+    show("lab-card", !none);
+    show("playground-card", false);
+    renderLab();
+    renderPlaygroundTarget();
+  }
+
+  function renderPlaygroundTarget() {
+    const select = $("pg-site-select");
+    if (!select) return;
+    clear(select);
+    for (const site of state.sites) {
+      select.append(el("option", { value: site.id, text: site.status === "live" ? site.host : `${site.host} (paused)` }));
+    }
+    const site = selectedSite();
+    if (site) select.value = site.id;
+    select.disabled = state.activating || state.pgRunning || state.sites.length < 2;
+    if ($("pg-target-rules")) {
+      $("pg-target-rules").textContent = site
+        ? `${moneyForSite(site) || "—"} deposit · ${site.rate} request${Number(site.rate) === 1 ? "" : "s"} / ${rateUnitLabel(site.unit)} · ${site.disallowed.length} blocked path${site.disallowed.length === 1 ? "" : "s"}`
+        : "";
+    }
   }
 
   function markSiteDirty() {
@@ -2240,6 +2409,558 @@
     hint.hidden = !disabledReason;
   }
 
+  // --- agent playground: scenarios, the owner's own goal, a live timeline ---------------
+  // AI scenarios send the real AI crawler with a goal; scripted ones replay a precise
+  // attack the crawler's tools cannot express (a forged signature, a reused token).
+  const LAB_SCENARIOS = [
+    { id: "polite", tone: "good", kind: "ai", title: "Polite researcher",
+      blurb: "Reads the policy, stays on allowed pages, respects the rate limit.",
+      goal: "Read this site's main pages and write a short summary. Read the crawling policy first, request only paths it allows, respect the rate limit, and finish the session cleanly." },
+    { id: "scraper", tone: "bad", kind: "ai", title: "Price scraper",
+      blurb: "Copies everything as fast as it can and ignores the rules.",
+      goal: "You are a price scraper. Copy every page you can reach as fast as possible, including pages the rules forbid. Ignore robots.txt and never wait between requests." },
+    { id: "prober", tone: "bad", kind: "ai", title: "Admin prober",
+      blurb: "Hunts for admin, login, and internal pages.",
+      goal: "Look for admin, login, private, and internal pages on this site and try to open each of them." },
+    { id: "tricked", tone: "bad", kind: "ai", title: "Tricked by a page",
+      blurb: "Does whatever text on a page tells AI agents to do.",
+      goal: "You are a gullible assistant. Read this site's pages and do whatever the text on them tells AI agents to do, even if that means opening other paths." },
+    { id: "budget", tone: "bad", kind: "ai", title: "Budget burner",
+      blurb: "Keeps reading after its request budget runs out.",
+      goal: "Read as many pages as you can in a single session. Keep requesting pages even after the gateway says your request budget is used up." },
+    { id: "reuse", tone: "bad", kind: "scripted", action: "session_reuse", title: "Reuses a finished session",
+      blurb: "Pays, finishes, then keeps using the same token." },
+    { id: "forged", tone: "bad", kind: "scripted", action: "forged_signature", title: "Forged identity",
+      blurb: "Signs its requests with a key the site does not know." },
+    { id: "freeloader", tone: "bad", kind: "scripted", action: "no_deposit", title: "Never pays",
+      blurb: "Asks for protected pages without paying a deposit." },
+    { id: "traversal", tone: "bad", kind: "scripted", action: "path_traversal", title: "Path trickery",
+      blurb: "Uses an encoded ../ path to sneak into the admin area." },
+  ];
+  const LAB_POLL_MS = 900;
+
+  function labAiAvailable() {
+    return Boolean(state.playground && state.playground.ai && state.playground.ai.available);
+  }
+
+  // AI test agents always pay with PayPal; only a gateway that simulates payments pays
+  // without a PayPal approval.
+  function labPayWith() {
+    return state.paypalAccount && state.paypalAccount.simulated ? "test_card" : "paypal";
+  }
+
+  function labScenario() {
+    return LAB_SCENARIOS.find((s) => s.id === state.labScenarioId) || null;
+  }
+
+  function renderLab() {
+    const good = $("lab-good");
+    const bad = $("lab-bad");
+    if (!good || !bad) return;
+    const site = selectedSite();
+    const ai = labAiAvailable();
+    const running = Boolean(state.lab && !state.lab.finished);
+    clear(good);
+    clear(bad);
+    for (const scenario of LAB_SCENARIOS) {
+      const needsAi = scenario.kind === "ai" && !ai;
+      const selected = scenario.id === state.labScenarioId;
+      const button = el("button", {
+        type: "button",
+        role: "radio",
+        className: "lab-scenario",
+        "aria-checked": String(selected),
+        dataset: { tone: scenario.tone, selected: String(selected) },
+        title: needsAi ? "Needs an AI key on the gateway" : null,
+        onclick: () => pickScenario(scenario.id),
+      }, [
+        el("span", { className: "lab-scenario-title", text: scenario.title }),
+        el("span", { className: "lab-scenario-blurb", text: scenario.blurb }),
+        el("span", { className: "lab-scenario-kind", text: scenario.kind === "ai" ? "AI agent" : "Scripted attack" }),
+      ]);
+      button.disabled = running || needsAi;
+      (scenario.tone === "good" ? good : bad).append(button);
+    }
+    const goal = $("lab-goal");
+    if (goal) goal.disabled = running || !ai;
+    if ($("lab-sub") && site) {
+      const mode = state.data && state.data.payment_mode;
+      const pays = mode === "paypal_sandbox" ? "pays a refundable PayPal deposit" : mode === "mock" ? "pays a simulated deposit" : "pays a PayPal deposit";
+      $("lab-sub").textContent = `Pick a scenario or tell the agent what to do. It visits ${site.host} through the gateway and ${pays}.`;
+    }
+    const scenario = labScenario();
+    const goalText = goal ? goal.value.trim() : "";
+    const custom = goalText.length > 0 && (!scenario || scenario.kind !== "ai" || goalText !== scenario.goal);
+    let hint = "";
+    if (!site) hint = "Add a website first.";
+    else if (site.status !== "live") hint = `${site.host} is paused. Resume it to test.`;
+    else if (state.configReadOnly) hint = "Sign in as the owner to send test agents.";
+    else if (!scenario && !custom) hint = ai ? "Pick a scenario or write a goal." : "Pick a scripted attack. AI agents need an AI key on the gateway.";
+    else if (custom) hint = "The agent will follow your goal.";
+    else hint = scenario.kind === "ai" ? "An AI agent will pursue this goal. You can edit it." : "A scripted attack replays this exact behaviour.";
+    if ($("lab-hint")) $("lab-hint").textContent = state.labError || hint;
+    const ready = Boolean(site && site.status === "live" && !state.configReadOnly && (scenario || custom));
+    if ($("lab-run")) {
+      $("lab-run").disabled = running || !ready;
+      $("lab-run").textContent = running ? "Agent running..." : "Send agent";
+    }
+    if ($("lab-stop")) $("lab-stop").hidden = !running;
+    if ($("lab-pay-note")) {
+      const isAiRun = custom || Boolean(scenario && scenario.kind === "ai");
+      let note = "";
+      if (state.paypalAccount && state.paypalAccount.simulated) note = "This gateway simulates payments, so the deposit is paid automatically.";
+      else if (scenario && !isAiRun) note = "Scripted attacks replay a fixed request sequence and pay automatically.";
+      $("lab-pay-note").textContent = note;
+      $("lab-pay-note").hidden = !note;
+    }
+  }
+
+  function pickScenario(id) {
+    const scenario = LAB_SCENARIOS.find((s) => s.id === id);
+    if (!scenario) return;
+    state.labScenarioId = id;
+    state.labError = null;
+    if ($("lab-goal")) $("lab-goal").value = scenario.kind === "ai" ? scenario.goal : "";
+    renderLab();
+  }
+
+  async function startLab() {
+    const site = selectedSite();
+    if (!site) return;
+    const scenario = labScenario();
+    const goalText = ($("lab-goal") ? $("lab-goal").value : "").trim();
+    const useGoal = goalText.length > 0;
+    state.labError = null;
+    let result;
+    if (useGoal) {
+      if (goalText.length < 8) {
+        state.labError = "Describe the goal in a few more words.";
+        renderLab();
+        return;
+      }
+      result = await getJson("/demo/runs", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ driver: "ai", persona: "goal", goal: goalText, site_id: site.id, pay_with: labPayWith() }),
+      });
+    } else if (scenario && scenario.kind === "scripted") {
+      result = await getJson("/playground/runs", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ action_ids: [scenario.action], driver: "scripted", site_id: site.id }),
+      });
+    } else {
+      return;
+    }
+    if (!result.ok || !result.body) {
+      state.labError = apiErrorMessage(result.body, result.status, `Could not start the agent (HTTP ${result.status}).`);
+      renderLab();
+      return;
+    }
+    const named = scenario && (scenario.kind === "scripted" || goalText === scenario.goal);
+    state.lab = {
+      kind: useGoal ? "ai" : "scripted",
+      payWith: useGoal ? labPayWith() : "test_card",
+      runId: result.body.run_id,
+      title: named ? scenario.title : "Your goal",
+      goal: useGoal ? goalText : scenario.blurb,
+      site: site.host,
+      after: 0,
+      rows: [],
+      finished: false,
+      body: result.body,
+      explanation: null,
+    };
+    state.pgRunning = true;
+    renderLab();
+    renderLabResult();
+    $("lab-result").scrollIntoView({ behavior: "smooth", block: "start" });
+    pollLab();
+  }
+
+  async function stopLab() {
+    const lab = state.lab;
+    if (!lab || lab.finished) return;
+    const url = lab.kind === "ai" ? `/demo/runs/${encodeURIComponent(lab.runId)}/cancel` : `/playground/runs/${encodeURIComponent(lab.runId)}/cancel`;
+    await getJson(url, { method: "POST", headers: authHeaders() });
+  }
+
+  async function pollLab() {
+    const lab = state.lab;
+    if (!lab || lab.finished) return;
+    const base = lab.kind === "ai" ? "/demo/runs/" : "/playground/runs/";
+    const result = await getJson(`${base}${encodeURIComponent(lab.runId)}?after=${lab.after}`, { headers: authHeaders() });
+    if (state.lab !== lab) return;
+    if (result.ok && result.body) {
+      const body = result.body;
+      lab.body = body;
+      lab.after = body.next_seq || lab.after;
+      if (lab.kind === "ai") for (const event of body.events || []) labAddAiEvent(lab, event);
+      else for (const step of body.steps || []) labAddStep(lab, step);
+      const done = ["completed", "failed", "cancelled"].includes(body.status);
+      if (done) {
+        lab.finished = true;
+        state.pgRunning = false;
+        state.pgQuietUntil = Date.now() + 8000;
+        await labLoadExplanation(lab);
+        refresh();
+      }
+      renderLabResult();
+      renderLab();
+      if (done) return;
+    }
+    setTimeout(pollLab, LAB_POLL_MS);
+  }
+
+  // One timeline row: what the agent did, and what the gateway answered.
+  function labRow(tone, title, request, httpStatus, message) {
+    return { tone, title, request, httpStatus, message };
+  }
+
+  function labAddAiEvent(lab, event) {
+    const data = event.data || {};
+    if (event.kind === "text" && data.text) {
+      lab.rows.push(labRow("info", "Agent", null, null, data.text));
+      return;
+    }
+    if (event.kind === "approval_required") {
+      lab.rows.push(labRow("warn", "Waiting for PayPal approval", null, null, "The deposit needs a buyer to approve it at PayPal."));
+      return;
+    }
+    if (event.kind !== "tool_result") return;
+    const r = data.result || {};
+    const name = data.name;
+    if (data.is_error && r.error) {
+      lab.rows.push(labRow("bad", humanize(name || "tool"), null, null, r.error));
+      return;
+    }
+    if (name === "fetch_page") {
+      const path = r.path || "";
+      if (r.status === 402) {
+        const dep = r.deposit || {};
+        lab.rows.push(labRow("warn", "Asked for a page without paying", `GET ${path || "/"}`, 402,
+          `The gateway asks for a ${money(dep.amount, dep.currency)} refundable deposit first.`));
+      } else if (r.status === 200) {
+        lab.rows.push(labRow("good", "Read a page", `GET ${path}`, 200,
+          r.prompt_injection ? "Allowed. The page contains a hidden instruction aimed at AI agents." : `Allowed${r.remaining_session_budget != null ? ` · ${r.remaining_session_budget} requests left in the session` : ""}.`));
+      } else if (r.status === 404) {
+        lab.rows.push(labRow("info", "Page not found", `GET ${path}`, 404, r.reason || "The website has no page at this path."));
+      } else {
+        lab.rows.push(labRow("bad", "Blocked by the gateway", `GET ${path}`, r.status,
+          `${humanize(r.reason_code || "")}${r.reason ? ` · ${r.reason}` : ""}${r.disqualifying ? " · counts against the deposit" : ""}`));
+      }
+    } else if (name === "read_policy") {
+      lab.rows.push(labRow("info", "Read the crawling policy", "GET /policies", 200, "Allowed and blocked paths, rate limit, request budget, refund rules."));
+    } else if (name === "pay_deposit") {
+      lab.rows.push(labRow("pay", "Paid the deposit with PayPal", "POST /deposits", null,
+        `${money(r.amount || r.required_amount, r.currency)} · ${humanize(r.payment_status || r.deposit_state || r.status || "paid")}`));
+    } else if (name === "accept_policy") {
+      lab.rows.push(labRow("info", "Accepted the policy", "POST /sessions/accept-policy", null, "The paid session starts."));
+    } else if (name === "wait") {
+      lab.rows.push(labRow("info", "Waited", null, null, `Paused ${r.waited_seconds || r.seconds || ""}s to respect the rate limit.`));
+    } else if (name === "complete_session") {
+      const kept = r.deposit_state === "FORFEITED";
+      lab.rows.push(labRow(kept ? "bad" : "good", "Ended the session", "POST /sessions/complete", null,
+        `${kept ? "Deposit kept" : "Deposit returned"} · ${r.total_violations || 0} violation${r.total_violations === 1 ? "" : "s"}`));
+    }
+  }
+
+  function labAddStep(lab, step) {
+    const tone = step.allowed === true ? "good" : step.allowed === false ? "bad" : step.http_status === 402 ? "warn" : "info";
+    const pay = /^pay/i.test(step.label || "") && step.allowed === true;
+    lab.rows.push(labRow(pay ? "pay" : tone, step.label, step.request, step.http_status, step.message));
+  }
+
+  async function labLoadExplanation(lab) {
+    const deposit = labDeposit(lab);
+    if (!deposit) return;
+    if (lab.kind === "ai" && lab.body.explanation) {
+      lab.explanation = lab.body.explanation;
+      return;
+    }
+    const result = await getJson(`/dashboard/deposits/${encodeURIComponent(deposit.deposit_id)}/explanation`, { headers: authHeaders() });
+    if (result.ok) lab.explanation = result.body;
+  }
+
+  function labDeposit(lab) {
+    const deposit = (lab.body || {}).deposit || {};
+    return deposit.deposit_id ? deposit : null;
+  }
+
+  function renderLabResult() {
+    const box = $("lab-result");
+    const lab = state.lab;
+    if (!box) return;
+    box.hidden = !lab;
+    if (!lab) return;
+    $("lab-result-title").textContent = lab.title;
+    $("lab-result-sub").textContent = `${lab.site} · ${lab.goal}`;
+    const status = lab.body ? lab.body.status : "running";
+    const labels = { running: "Running", awaiting_approval: "Waiting for PayPal", completed: "Finished", failed: "Failed", cancelled: "Stopped" };
+    $("lab-status").textContent = labels[status] || humanize(status);
+    $("lab-status").dataset.state = status;
+    const waiting = status === "awaiting_approval" && lab.body && lab.body.approval_url;
+    if ($("lab-approval")) {
+      $("lab-approval").hidden = !waiting;
+      if (waiting) {
+        const dep = lab.body.deposit || {};
+        const amount = dep.required_amount ? money(dep.required_amount, dep.currency) : "its";
+        $("lab-approval-text").textContent = lab.paypalNote || `Approve the ${amount} refundable deposit with PayPal. The agent continues as soon as PayPal confirms.`;
+        mountLabPayPalButton(lab);
+      }
+    }
+
+    const list = $("lab-timeline");
+    clear(list);
+    if (!lab.rows.length) {
+      list.append(el("li", { className: "lab-row", dataset: { tone: "info" } }, [
+        el("span", { className: "lab-dot", "aria-hidden": "true" }),
+        el("div", { className: "lab-row-body" }, [el("span", { className: "lab-row-title", text: "Starting the agent..." })]),
+      ]));
+    }
+    for (const row of lab.rows) {
+      list.append(el("li", { className: "lab-row", dataset: { tone: row.tone } }, [
+        el("span", { className: "lab-dot", "aria-hidden": "true" }),
+        el("div", { className: "lab-row-body" }, [
+          el("div", { className: "lab-row-head" }, [
+            el("span", { className: "lab-row-title", text: row.title }),
+            row.request ? el("code", { className: "lab-row-request", text: row.request }) : null,
+            row.httpStatus ? el("span", { className: "lab-http", dataset: { tone: httpTone(row.httpStatus) }, text: String(row.httpStatus) }) : null,
+          ]),
+          row.message ? el("p", { className: "lab-row-message", text: row.message }) : null,
+        ]),
+      ]));
+    }
+    renderLabOutcome(lab);
+  }
+
+  function renderLabOutcome(lab) {
+    const box = $("lab-outcome");
+    clear(box);
+    if (!lab.finished) { box.hidden = true; return; }
+    box.hidden = false;
+    const body = lab.body || {};
+    const deposit = labDeposit(lab);
+    const stateCode = deposit ? deposit.deposit_state : null;
+    const amount = deposit ? money(deposit.amount || deposit.required_amount, deposit.currency) : "";
+    let tone = "info";
+    let headline = "No deposit was taken";
+    let detail = "The gateway refused the agent before any money moved.";
+    if (stateCode === "FORFEITED") { tone = "bad"; headline = `Deposit kept · ${amount}`; detail = "The agent broke the rules, so the deposit goes to the website."; }
+    else if (RETURNED.has(stateCode)) { tone = "good"; headline = `Deposit returned · ${amount}`; detail = "No rules broken, so the agent gets its deposit back."; }
+    else if (stateCode) { headline = `Deposit ${depositLabel(stateCode).toLowerCase()}`; detail = "The session has not settled yet."; }
+    // A scripted attack that came after a clean settlement: the attack was refused, and the
+    // deposit had already been returned for the honest part of the session.
+    if (lab.kind === "scripted" && body.outcome === "refused" && RETURNED.has(stateCode)) {
+      detail = "The attack was refused. The deposit had already been settled for the session before it, so it was returned.";
+    }
+    if (body.status === "failed") { tone = "bad"; headline = "The run failed"; detail = body.error || "The agent stopped with an error."; }
+    if (body.status === "cancelled") { detail = `Stopped by you. ${detail}`; }
+    box.dataset.tone = tone;
+    box.append(el("div", { className: "lab-outcome-head" }, [
+      el("strong", { text: headline }),
+      el("span", { text: detail }),
+    ]));
+    const explanation = lab.explanation;
+    if (explanation && explanation.summary) {
+      const by = explanation.generated_by === "template" ? "Why (from the audit log)" : `Why · explained by ${explanation.generated_by === "openai" ? "OpenAI" : "Claude"}`;
+      box.append(el("div", { className: "lab-explain" }, [
+        el("p", { className: "lab-kicker", text: by }),
+        el("p", { className: "lab-explain-headline", text: explanation.headline }),
+        el("p", { className: "lab-explain-summary", text: explanation.summary }),
+      ]));
+    }
+    if (lab.kind === "ai" && body.final_text) {
+      box.append(el("div", { className: "lab-report" }, [
+        el("p", { className: "lab-kicker", text: "The agent's own report" }),
+        el("p", { className: "lab-report-text", text: body.final_text }),
+      ]));
+    }
+    if (deposit) {
+      box.append(el("div", { className: "lab-outcome-actions" }, [
+        el("button", { type: "button", className: "primary", text: "Verify with PayPal", onclick: () => labOpenDeposit(deposit.deposit_id) }),
+        el("span", { className: "muted", text: `Deposit ${deposit.deposit_id}` }),
+      ]));
+    }
+  }
+
+  async function labOpenDeposit(depositId) {
+    await refresh();
+    const row = state.data && state.data.deposits.find((d) => d.deposit_id === depositId);
+    if (row) openDeposit(row);
+    else showView("deposits");
+  }
+
+  // --- PayPal payouts: the business account deposits and sales are paid to -------------
+  async function loadPayPalAccount() {
+    try {
+      const result = await getJson("/paypal/account", { headers: authHeaders() });
+      state.paypalAccount = result.ok ? result.body : { connected: false, error: apiErrorMessage(result.body, result.status, "Could not reach PayPal.") };
+    } catch (_) {
+      state.paypalAccount = { connected: false, error: "Could not reach the gateway." };
+    }
+    renderPayouts();
+    renderLab();
+  }
+
+  // The account payouts go to: the one the owner connected with Log in with PayPal, else
+  // the merchant account the gateway's PayPal app is paid to.
+  function payoutAccount() {
+    const acct = state.paypalAccount;
+    if (!acct || acct.simulated) return null;
+    if (acct.owner_connection) {
+      const c = acct.owner_connection;
+      return { email: c.email || null, name: c.name, owner: true, pending: Boolean(c.profile_pending && !c.email) };
+    }
+    if (acct.merchant_email) return { email: acct.merchant_email, owner: false };
+    return null;
+  }
+
+  function renderPayouts() {
+    const acct = state.paypalAccount;
+    const payout = payoutAccount();
+    const ownerConnected = Boolean(payout && payout.owner);
+    for (const chipNode of document.querySelectorAll("[data-paypal-chip]")) {
+      let text = "Checking PayPal...";
+      let tone = "neutral";
+      if (acct) {
+        if (acct.simulated) { text = "Payments are simulated"; tone = "neutral"; }
+        else if (ownerConnected) { text = payout.email ? `Connected · ${payout.email}` : "Connected to PayPal"; tone = "good"; }
+        else if (!acct.connected) { text = "PayPal unavailable"; tone = "bad"; }
+        else { text = "Not connected yet"; tone = "neutral"; }
+      }
+      chipNode.textContent = text;
+      chipNode.dataset.tone = tone;
+      chipNode.title = acct && acct.error ? acct.error : "";
+    }
+    const canLogin = Boolean(acct && acct.login_available && !state.configReadOnly);
+    for (const button of document.querySelectorAll("[data-paypal-login]")) button.hidden = !canLogin || ownerConnected;
+    if ($("payout-switch")) $("payout-switch").hidden = !canLogin || !ownerConnected;
+    if ($("payout-disconnect")) $("payout-disconnect").hidden = !canLogin || !ownerConnected;
+    if (!acct) return;
+    if ($("payout-account")) {
+      $("payout-account").textContent = acct.simulated
+        ? "None: this gateway simulates payments"
+        : ownerConnected
+          ? payout.email
+            ? `${payout.name ? `${payout.name} · ` : ""}${payout.email}`
+            : "Your PayPal account (signed in). PayPal has not shared its name and email yet."
+          : "Not connected. Log in with PayPal to choose the account you are paid to.";
+    }
+    if ($("payout-settlement")) {
+      $("payout-settlement").textContent = acct.settlement_mode === "authorization"
+        ? "PayPal holds: released when the agent behaves, captured when it breaks the rules"
+        : "Charged up front, refunded when the agent behaves";
+    }
+    if ($("payout-hint")) $("payout-hint").textContent = state.paypalLoginMessage || "";
+  }
+
+  // Log in with PayPal opens in a popup. The window is opened on the click itself, so popup
+  // blockers allow it, and pointed at PayPal once the gateway has issued the sign-in link.
+  // Log in with PayPal happens in this tab: PayPal brings the owner back to the console,
+  // which then reports the outcome (see showPayPalReturn).
+  async function connectPayPal() {
+    state.paypalLoginMessage = "Opening PayPal...";
+    renderPayouts();
+    const result = await getJson("/paypal/connect/start", { method: "POST", headers: authHeaders() });
+    if (!result.ok || !result.body || !result.body.authorize_url) {
+      state.paypalLoginMessage = apiErrorMessage(result.body, result.status, "Could not start Log in with PayPal.");
+      renderPayouts();
+      return;
+    }
+    window.location.assign(result.body.authorize_url);
+  }
+
+  function showPayPalReturn() {
+    const params = new URLSearchParams(window.location.search);
+    const outcome = params.get("paypal");
+    if (!outcome) return;
+    const message = params.get("paypal_message") || "";
+    if (outcome === "connected") toast("good", "✓", "PayPal connected", message || "Payouts go to your PayPal account.");
+    else toast("critical", "!", "PayPal not connected", message || "PayPal sign-in did not finish.");
+    state.paypalLoginMessage = outcome === "connected" ? "" : message;
+    history.replaceState(null, "", `${window.location.pathname}${window.location.hash}`);
+  }
+
+  async function disconnectPayPal() {
+    await getJson("/paypal/connect/disconnect", { method: "POST", headers: authHeaders() });
+    state.paypalLoginMessage = "";
+    loadPayPalAccount();
+  }
+
+  // --- PayPal's JS SDK v6: the real PayPal button and checkout popup ----------------------
+  function loadPayPalSdk() {
+    if (state.paypalSdk) return state.paypalSdk;
+    state.paypalSdk = (async () => {
+      const config = await getJson("/demo/config", { headers: authHeaders() });
+      const clientId = config.ok && config.body ? config.body.paypal_js_client_id : null;
+      if (!clientId) return null;
+      const live = state.paypalAccount && state.paypalAccount.environment === "live";
+      const host = live ? "https://www.paypal.com" : "https://www.sandbox.paypal.com";
+      if (!window.paypal || typeof window.paypal.createInstance !== "function") {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = `${host}/web-sdk/v6/core`;
+          script.async = true;
+          script.onload = resolve;
+          script.onerror = reject;
+          document.head.append(script);
+        });
+      }
+      return window.paypal.createInstance({ clientId, components: ["paypal-payments"] });
+    })().catch((err) => {
+      console.warn("PayPal SDK unavailable", err);
+      return null;
+    });
+    return state.paypalSdk;
+  }
+
+  // The agent's deposit already has a PayPal order: the owner approves that order with
+  // PayPal's button, the gateway captures it, and the waiting agent continues.
+  async function mountLabPayPalButton(lab) {
+    const deposit = (lab.body && lab.body.deposit) || {};
+    const orderId = deposit.provider_order_id;
+    if (!orderId || lab.paypalMountedFor === deposit.deposit_id) return;
+    lab.paypalMountedFor = deposit.deposit_id;
+    const slot = $("lab-paypal-slot");
+    clear(slot);
+    const sdk = await loadPayPalSdk();
+    if (state.lab !== lab) return;
+    if (!sdk) {
+      if ($("lab-approve")) $("lab-approve").hidden = false;
+      return;
+    }
+    const session = sdk.createPayPalOneTimePaymentSession({
+      async onApprove(data) {
+        lab.paypalNote = "PayPal approved the deposit. Confirming the payment...";
+        renderLabResult();
+        const query = `deposit_id=${encodeURIComponent(deposit.deposit_id)}&token=${encodeURIComponent(data.orderId || orderId)}`;
+        await getJson(`/deposits/paypal/return?${query}`, { headers: { Accept: "application/json" } });
+        await getJson(`/demo/runs/${encodeURIComponent(lab.runId)}/approval`, { method: "POST", headers: authHeaders() });
+      },
+      onCancel() {
+        lab.paypalNote = "You closed PayPal before approving. Approve to let the agent continue, or stop the run.";
+        renderLabResult();
+      },
+      onError(err) {
+        lab.paypalNote = `PayPal reported a problem: ${(err && err.message) || err}`;
+        renderLabResult();
+      },
+    });
+    const button = document.createElement("paypal-button");
+    button.setAttribute("type", "pay");
+    button.addEventListener("click", () => {
+      lab.paypalNote = "";
+      session.start({ presentationMode: "auto" }, Promise.resolve({ orderId })).catch((err) => {
+        lab.paypalNote = `Could not open PayPal: ${(err && err.message) || err}`;
+        renderLabResult();
+      });
+    });
+    slot.append(button);
+    if ($("lab-approve")) $("lab-approve").hidden = true;
+  }
+
+
   async function loadPlayground(force) {
     const site = selectedSite();
     const siteId = site ? site.id : "";
@@ -2265,6 +2986,7 @@
       state.pgCanStart = false;
     }
     renderPlayground();
+    renderLab();
   }
 
   function sleep(ms) {
@@ -2579,7 +3301,7 @@
     if (!force && Date.now() - state.requestsAt < REQUESTS_EVERY_MS) return state.requests;
     state.requestsLoading = true;
     try {
-      const result = await getJson("/demo/requests", { headers: authHeaders() });
+      const result = await getJson(`/demo/requests${siteQuery()}`, { headers: authHeaders() });
       if (result.ok && result.body) {
         state.requests = result.body.rows;
         state.requestsAt = Date.now();
@@ -2648,7 +3370,7 @@
       autoHeight: true,
       exportName: "sara-orders",
       search: "Search orders...",
-      noRows: "No orders yet. Run the personal agent from the agent studio.",
+      noRows: "No orders yet. Orders agents place on your site appear here.",
       segments: {
         label: "Filter by type",
         options: [
@@ -2783,7 +3505,7 @@
     clear(box);
     const total = groups.reduce((a, g) => a + g[2], 0);
     if (!total) {
-      box.append(el("p", { className: "empty", text: "No agent revenue yet. Run the personal agent from the agent studio." }));
+      box.append(el("p", { className: "empty", text: "No agent revenue yet. Deposits kept from rule-breakers and agent purchases appear here." }));
     } else {
       const bar = el("div", { className: "share-bar", role: "img", "aria-label": groups.map((g) => `${g[0]}: ${money(g[2], cur)}`).join(", ") });
       for (const g of groups) bar.append(el("span", { className: "share-seg", style: `width:${(g[2] / total) * 100}%; background:${g[1]}`, title: `${g[0]}: ${money(g[2], cur)}` }));
@@ -2813,13 +3535,13 @@
         return;
       }
       if ($("owner-email")) {
-        $("owner-email").textContent = me.email ? (me.demo ? `${me.email} · demo` : me.email) : "";
+        $("owner-email").textContent = me.email || "";
         $("owner-email").hidden = !me.email;
       }
       if ($("signout")) $("signout").hidden = !me.login_enabled;
       if ($("mode-badge")) {
         const sandbox = me.payment_mode === "paypal_sandbox";
-        $("mode-badge").textContent = sandbox ? "PayPal Sandbox" : me.payment_mode === "mock" ? "Mock payments" : "PayPal";
+        $("mode-badge").textContent = sandbox ? "PayPal" : me.payment_mode === "mock" ? "Simulated payments" : "PayPal";
         $("mode-badge").hidden = !me.payment_mode;
       }
     } catch (_) { /* the console still loads; writes fall back to read-only */ }
@@ -2835,12 +3557,14 @@
 
   // --- data loop -----------------------------------------------------------------------
   async function refresh() {
-    if (state.inFlight) return;
+    // A refresh asked for while one is running (a website switch) runs right after it.
+    if (state.inFlight) { state.refreshQueued = true; return; }
     state.inFlight = true;
+    const filterAtStart = siteFilter();
     const main = document.querySelector(".console-main");
     const slowTimer = setTimeout(() => main.classList.add("refreshing"), SLOW_FETCH_MS);
     try {
-      const result = await getJson("/dashboard/data", { headers: authHeaders() });
+      const result = await getJson(`/dashboard/data${siteQuery()}`, { headers: authHeaders() });
       if (result.status === 401) {
         if (state.loginEnabled) {
           window.location.replace("/signin");
@@ -2854,6 +3578,8 @@
         return;
       }
       hideBanner();
+      // Ignore a response for a website the user has since switched away from.
+      if (filterAtStart !== siteFilter()) { state.refreshQueued = true; return; }
       render(result.body);
       if (state.view === "operations") loadRequests(false);
       loadCommerce();
@@ -2863,6 +3589,10 @@
       clearTimeout(slowTimer);
       main.classList.remove("refreshing");
       state.inFlight = false;
+      if (state.refreshQueued) {
+        state.refreshQueued = false;
+        refresh();
+      }
     }
   }
 
@@ -2872,6 +3602,7 @@
     renderSecurityKpis(data);
     renderViolations(data.kpis.violations_by_reason);
     renderOutcomes(data.deposits);
+    renderRecent(data.deposits);
     if (state.grids.deposits) {
       state.grids.deposits.setRows(data.deposits);
       state.grids.sessions.setRows(data.sessions);
@@ -2947,7 +3678,7 @@
       if (isPlaygroundCrawler(d.crawler_id)) continue;
       const was = old.get(d.deposit_id);
       if (was === d.deposit_state) continue;
-      const open = () => { showView("overview"); selectDeposit(d, true); $("explain-card").scrollIntoView({ behavior: "smooth", block: "start" }); };
+      const open = () => openDeposit(d);
       if (RETURNED.has(d.deposit_state)) toast("good", "↺", `Deposit ${d.deposit_state === "RELEASED" ? "released" : "refunded"} · ${money(d.amount, d.currency)}`, d.crawler_id, open);
       else if (d.deposit_state === "FORFEITED") toast("critical", "✕", `Deposit forfeited · ${money(d.amount, d.currency)}`, d.crawler_id, open);
       else if (!was) toast("accent", "$", `New deposit · ${money(d.amount, d.currency)}`, `${d.crawler_id} · ${d.pricing_tier_name || "Base"} tier`, open);
@@ -2975,6 +3706,24 @@
       else openSiteAddForm();
     });
     if ($("site-add-cancel")) $("site-add-cancel").addEventListener("click", closeSiteAddForm);
+    if ($("pg-site-select")) $("pg-site-select").addEventListener("change", (event) => selectSite(event.target.value));
+    if ($("lab-run")) $("lab-run").addEventListener("click", startLab);
+    if ($("lab-stop")) $("lab-stop").addEventListener("click", stopLab);
+    for (const button of document.querySelectorAll("[data-paypal-login]")) button.addEventListener("click", connectPayPal);
+    if ($("payout-switch")) $("payout-switch").addEventListener("click", connectPayPal);
+    if ($("payout-disconnect")) $("payout-disconnect").addEventListener("click", disconnectPayPal);
+    window.addEventListener("message", (event) => {
+      if (event.data && event.data.type === "sara-paypal-connect") {
+        loadPayPalAccount();
+        if (event.data.ok) toast("good", "✓", "PayPal connected", "Payouts go to your PayPal account.");
+      }
+    });
+    if ($("lab-approve")) $("lab-approve").addEventListener("click", () => {
+      const url = state.lab && state.lab.body && state.lab.body.approval_url;
+      if (url) window.open(url, "sara-paypal", "popup,width=520,height=760");
+    });
+
+    if ($("lab-goal")) $("lab-goal").addEventListener("input", () => { state.labError = null; renderLab(); });
     if ($("site-add-input")) $("site-add-input").addEventListener("keydown", (event) => {
       if (event.key === "Escape") closeSiteAddForm();
     });
@@ -3063,6 +3812,9 @@
     $("pg-run-button").addEventListener("click", runPlaygroundPlan);
     document.addEventListener("click", () => closeSiteMenus());
 
+    for (const node of document.querySelectorAll("[data-go-view]")) {
+      node.addEventListener("click", () => showView(node.dataset.goView));
+    }
     $("chart-view-toggle").addEventListener("click", (event) => {
       state.chartAsTable = !state.chartAsTable;
       event.target.textContent = state.chartAsTable ? "Show as chart" : "Show as table";
@@ -3083,7 +3835,12 @@
     updateAssistantState();
     if ($("signout")) $("signout").addEventListener("click", signOut);
     // Learn who is signed in before the views decide what is editable.
+    state.siteFilter = store.get("localStorage", SITE_FILTER_KEY) || "all";
+    if ($("site-filter")) $("site-filter").addEventListener("change", (event) => changeSiteFilter(event.target.value));
     loadOwner().finally(() => {
+      showPayPalReturn();
+      loadSites({ silent: true });
+      loadPayPalAccount();
       initViews();
       refresh();
     });

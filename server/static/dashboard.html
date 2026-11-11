@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SARA console</title>
-  <meta name="description" content="SARA console: AI crawler sessions, refundable PayPal deposits, policy violations, analytics, and AI explanations.">
+  <meta name="description" content="SARA console: AI agent sessions, refundable PayPal deposits, policy violations, analytics, and AI explanations.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%234c8dff'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <script>
     /* Apply the saved theme before first paint (dark by default). */
     try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
   </script>
-  <link rel="stylesheet" href="/_sara/static/dashboard.css?v=23">
+  <link rel="stylesheet" href="/_sara/static/dashboard.css?v=35">
   <link rel="stylesheet" href="/_sara/static/demo.css">
   <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
           integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
@@ -18,7 +18,7 @@
   <script src="/_sara/static/grid_kit.js" defer></script>
   <script src="/_sara/static/paypal_panel.js" defer></script>
   <script src="/_sara/static/analytics.js" defer></script>
-  <script src="/_sara/static/dashboard.js?v=33" defer></script>
+  <script src="/_sara/static/dashboard.js?v=52" defer></script>
 </head>
 <body>
 <header class="appbar">
@@ -38,24 +38,43 @@
 
 <div class="console">
   <aside class="sidenav" aria-label="Console sections">
-    <div class="sidenav-group">
-      <p class="sidenav-label">Gateway</p>
-      <button type="button" class="sidenav-link" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>Overview</button>
-      <button type="button" class="sidenav-link" data-view="setup"><span class="nav-icon" aria-hidden="true">⚙</span>Websites &amp; rules</button>
-      <p class="sidenav-label">Agents</p>
-      <button type="button" class="sidenav-link" data-view="operations"><span class="nav-icon" aria-hidden="true">≡</span>Agent activity<span class="nav-count" id="count-sessions" title="Agent sessions">0</span></button>
-      <button type="button" class="sidenav-link" data-view="security"><span class="nav-icon" aria-hidden="true">⚠</span>Violations<span class="nav-count" id="count-violations" data-tone="critical" title="Policy violations">0</span></button>
-      <p class="sidenav-label">Money</p>
-      <button type="button" class="sidenav-link" data-view="commerce"><span class="nav-icon" aria-hidden="true">$</span>Earnings</button>
-      <button type="button" class="sidenav-link" data-view="analytics"><span class="nav-icon" aria-hidden="true">◔</span>Analytics</button>
-    </div>
+    <nav class="sidenav-group" aria-label="Console">
+      <button type="button" class="sidenav-link" data-view="overview" aria-current="page"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z"/></svg>Overview</button>
+      <div class="sidenav-section" data-section="websites">
+        <button type="button" class="sidenav-link sidenav-parent" data-section-toggle="websites" data-first="setup" aria-expanded="false" aria-controls="nav-websites"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>Websites<svg class="nav-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+        <div class="sidenav-subs" id="nav-websites" hidden>
+          <button type="button" class="sidenav-link sidenav-sub" data-view="setup">Setup</button>
+          <button type="button" class="sidenav-link sidenav-sub" data-view="playground">Playground</button>
+        </div>
+      </div>
+      <div class="sidenav-section" data-section="agents">
+        <button type="button" class="sidenav-link sidenav-parent" data-section-toggle="agents" data-first="operations" aria-expanded="false" aria-controls="nav-agents"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Agents<span class="nav-count" id="count-violations-parent" data-tone="critical" title="Policy violations" hidden>0</span><svg class="nav-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+        <div class="sidenav-subs" id="nav-agents" hidden>
+          <button type="button" class="sidenav-link sidenav-sub" data-view="operations">Activity<span class="nav-count" id="count-sessions" title="Agent sessions">0</span></button>
+          <button type="button" class="sidenav-link sidenav-sub" data-view="security">Violations<span class="nav-count" id="count-violations" data-tone="critical" title="Policy violations">0</span></button>
+        </div>
+      </div>
+      <div class="sidenav-section" data-section="money">
+        <button type="button" class="sidenav-link sidenav-parent" data-section-toggle="money" data-first="deposits" aria-expanded="false" aria-controls="nav-money"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h15V9H5a2 2 0 0 1-2-2z"/><path d="M16 14.5h.01"/></svg>Money<svg class="nav-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+        <div class="sidenav-subs" id="nav-money" hidden>
+          <button type="button" class="sidenav-link sidenav-sub" data-view="deposits">Deposits</button>
+          <button type="button" class="sidenav-link sidenav-sub" data-view="commerce">Earnings</button>
+          <button type="button" class="sidenav-link sidenav-sub" data-view="analytics">Analytics</button>
+        </div>
+      </div>
+    </nav>
   </aside>
 
   <main class="console-main">
     <div class="page-head" id="page-head">
       <div>
-        <h1 id="page-title">Console</h1>
+        <h1 id="page-title">Overview</h1>
+        <p class="page-sub" id="page-sub"></p>
       </div>
+      <label class="site-filter" id="site-filter-wrap" hidden>
+        <span>Website</span>
+        <select id="site-filter" aria-label="Show activity for"></select>
+      </label>
     </div>
 
     <section class="banner" id="banner" role="status" hidden></section>
@@ -72,6 +91,20 @@
             <p class="card-sub">Agents visiting these websites go through SARA. Select one to edit its rules.</p>
           </div>
           <button type="button" class="btn-sm" id="site-add-open" aria-expanded="false" aria-controls="site-add-form">+ Add website</button>
+        </div>
+        <div class="site-onboard" id="site-onboard" hidden>
+          <p class="onboard-kicker">Get started</p>
+          <h3>Add the website you want to protect</h3>
+          <ol class="onboard-steps">
+            <li><strong>Add your website.</strong> SARA reads its robots.txt and starts with your default deposit.</li>
+            <li><strong>Connect PayPal to get paid.</strong> Deposits kept from rule-breakers, and anything agents buy, are paid to your PayPal account. <span class="paypal-chip" data-paypal-chip>Checking PayPal...</span>
+              <div class="onboard-paypal"><button type="button" class="lipp-button" data-paypal-login hidden><img src="https://www.paypalobjects.com/devdoc/log-in-with-paypal-button.png" alt="Log in with PayPal" width="211" height="48"></button></div>
+            </li>
+            <li><strong>Prove you own it.</strong> Add a DNS TXT record so no one can put SARA in front of a site that is not theirs. <span class="demo-skip">Skipped in this demo</span></li>
+            <li><strong>Route agents through SARA.</strong> Point the domain at the gateway and lock the origin so agents cannot go around it. <span class="demo-skip">Skipped in this demo</span></li>
+            <li><strong>Set the deposit and rules.</strong> Choose what agents may read, what they may not, and how fast.</li>
+            <li><strong>Test it.</strong> Send an AI agent at it from the playground and watch it pay or get blocked.</li>
+          </ol>
         </div>
         <form class="site-add" id="site-add-form" autocomplete="off" hidden>
           <label class="site-add-label" for="site-add-input">Website address</label>
@@ -169,13 +202,123 @@
             </div>
           </div>
         </div>
+
+        <hr class="section-divider">
+        <div class="section-block payouts-block">
+          <div class="section-head">
+            <div>
+              <h3>Payouts</h3>
+              <p class="hint">Where the money goes when an agent breaks the rules or buys something.</p>
+            </div>
+            <span class="paypal-chip" data-paypal-chip>Checking PayPal...</span>
+          </div>
+          <dl class="payout-facts">
+            <div><dt>PayPal account</dt><dd id="payout-account">—</dd></div>
+            <div><dt>Deposits are taken as</dt><dd id="payout-settlement">—</dd></div>
+          </dl>
+          <div class="payout-actions">
+            <button type="button" class="lipp-button" data-paypal-login hidden><img src="https://www.paypalobjects.com/devdoc/log-in-with-paypal-button.png" alt="Log in with PayPal" width="211" height="48"></button>
+            <button type="button" class="btn-sm" id="payout-switch" hidden>Use a different PayPal account</button>
+            <button type="button" class="btn-sm" id="payout-disconnect" hidden>Disconnect</button>
+            <span class="hint" id="payout-hint"></span>
+          </div>
+        </div>
+
+        <hr class="section-divider">
+        <div class="section-block connect-block">
+          <div class="section-head">
+            <div>
+              <h3>Connect your domain</h3>
+              <p class="hint">In production these steps put SARA in front of your real traffic. This demo skips them: the playground sends its test agents to the gateway directly.</p>
+            </div>
+          </div>
+          <ol class="connect-steps">
+            <li>
+              <div><strong>Verify ownership</strong><span>Add a TXT record <code>sara-verify=&lt;token&gt;</code> to <span class="connect-host">your domain</span>. Until it is found, the gateway does not charge agents for this site.</span></div>
+              <span class="demo-skip">Skipped in this demo</span>
+            </li>
+            <li>
+              <div><strong>Point the domain at SARA</strong><span>Change the DNS record (or your CDN's origin) for <span class="connect-host">your domain</span> to the gateway. SARA forwards people and paying agents to your origin server.</span></div>
+              <span class="demo-skip">Skipped in this demo</span>
+            </li>
+            <li>
+              <div><strong>Lock the origin</strong><span>Accept only requests that carry SARA's secret <code>X-SARA-Origin-Key</code> header, so agents cannot reach the origin directly.</span></div>
+              <span class="demo-skip">Skipped in this demo</span>
+            </li>
+          </ol>
+        </div>
       </section>
 
-      <section class="card playground-card" id="playground-card">
+    </section>
+
+    <!-- Playground: send a test agent at one website ----------------------------- -->
+    <section class="view" data-view="playground" hidden>
+      <section class="card pg-empty" id="pg-empty" hidden>
+        <h2>Add a website to test</h2>
+        <p class="card-sub">The playground sends an AI agent at one of your websites through the gateway, so you can see what it allows, blocks, and charges.</p>
+        <button type="button" class="primary" data-go-view="setup">Add your first website</button>
+      </section>
+      <div class="pg-target" id="pg-target">
+        <label for="pg-site-select">Website under test</label>
+        <select id="pg-site-select"></select>
+        <span class="pg-target-rules" id="pg-target-rules"></span>
+      </div>
+      <section class="card lab-card" id="lab-card">
+        <div class="card-head">
+          <div>
+            <h2>Send a test agent</h2>
+            <p class="card-sub" id="lab-sub">Pick a scenario or tell the agent what to do. It visits your website through the gateway and pays a refundable PayPal deposit.</p>
+          </div>
+        </div>
+        <div class="lab-groups">
+          <div>
+            <p class="lab-group-title" data-tone="good">Well-behaved</p>
+            <div class="lab-scenarios" id="lab-good" role="radiogroup" aria-label="Well-behaved agents"></div>
+          </div>
+          <div>
+            <p class="lab-group-title" data-tone="bad">Misbehaving</p>
+            <div class="lab-scenarios" id="lab-bad" role="radiogroup" aria-label="Misbehaving agents"></div>
+          </div>
+        </div>
+        <label class="lab-goal-label" for="lab-goal">Or tell the agent what to do</label>
+        <textarea id="lab-goal" rows="3" maxlength="600" placeholder="For example: copy every article, ignore robots.txt, and go as fast as you can"></textarea>
+        <div class="lab-pay" id="lab-pay">
+          <span class="lab-pay-logo"><img src="https://www.paypalobjects.com/webstatic/mktg/Logo/pp-logo-100px.png" alt="PayPal" width="100" height="26"></span>
+          <p><strong>The agent pays its refundable deposit with PayPal.</strong> When it asks to pay, PayPal's button appears below and you approve the deposit as the agent's owner.</p>
+          <p class="hint lab-pay-note" id="lab-pay-note" hidden></p>
+        </div>
+        <div class="lab-actions">
+          <span class="hint" id="lab-hint"></span>
+          <button type="button" class="btn-sm" id="lab-stop" hidden>Stop</button>
+          <button type="button" class="primary" id="lab-run">Send agent</button>
+        </div>
+      </section>
+
+      <section class="card lab-result" id="lab-result" aria-labelledby="lab-result-title" hidden>
+        <div class="card-head">
+          <div>
+            <h2 id="lab-result-title">What happened</h2>
+            <p class="card-sub" id="lab-result-sub"></p>
+          </div>
+          <span class="lab-status" id="lab-status"></span>
+        </div>
+        <div class="lab-approval" id="lab-approval" hidden>
+          <div>
+            <strong>The agent wants to pay its deposit</strong>
+            <span id="lab-approval-text">Approve the deposit with PayPal. The agent continues as soon as PayPal confirms.</span>
+          </div>
+          <div class="lab-paypal-slot" id="lab-paypal-slot"></div>
+          <button type="button" class="primary paypal-button" id="lab-approve" hidden>Continue at PayPal</button>
+        </div>
+        <ol class="lab-timeline" id="lab-timeline" aria-live="polite"></ol>
+        <div class="lab-outcome" id="lab-outcome" hidden></div>
+      </section>
+
+      <section class="card playground-card legacy-playground" id="playground-card" hidden>
         <div class="card-head">
           <div>
             <div class="card-title-line">
-              <h2>Playground</h2>
+              <h2>Test agent</h2>
             </div>
             <p class="card-sub" id="pg-sub">Send a test agent through the gateway</p>
           </div>
@@ -186,7 +329,7 @@
         </div>
         <p class="hint pg-run-hint" id="pg-run-hint">Loading the playground...</p>
         <div class="pg-behaviors-head">
-          <span class="pg-kicker">Select crawler behavior</span>
+          <span class="pg-kicker">What should the agent do?</span>
         </div>
         <div class="pg-choice-grid" id="pg-choices"></div>
         <hr class="section-divider">
@@ -201,65 +344,75 @@
       </section>
     </section>
 
-    <!-- Overview ------------------------------------------------------------------ -->
+    <!-- Overview: a summary that links into the detail pages ------------------------ -->
     <section class="view" data-view="overview" aria-labelledby="page-title">
       <section class="card console-empty" id="console-empty" hidden>
         <span class="section-icon" aria-hidden="true">▶</span>
         <div>
           <h2>No agent activity yet</h2>
-          <p class="card-sub">Add your website, then send a test agent at it from the playground. Its PayPal deposit, requests, and violations appear here within a few seconds.</p>
+          <p class="card-sub">Add your website in Websites → Setup, then send a test agent at it from the Playground. Its PayPal deposit, requests, and violations appear here within a few seconds.</p>
         </div>
         <a class="button-link primary" href="#setup">Set up a website</a>
       </section>
-      <section class="kpis" id="kpis" aria-label="Key metrics"></section>
+      <section class="kpis kpis-4" id="kpis" aria-label="Key metrics"></section>
 
+      <div class="overview-grid">
+        <section class="card" aria-labelledby="recent-title">
+          <div class="card-head">
+            <div>
+              <h2 id="recent-title">Recent decisions</h2>
+              <p class="card-sub">The latest agent sessions and what happened to their PayPal deposit.</p>
+            </div>
+            <button type="button" class="link" data-go-view="deposits">All deposits →</button>
+          </div>
+          <ol class="recent-list" id="recent-list"></ol>
+        </section>
+
+        <div class="overview-side">
+          <section class="card" aria-labelledby="outcome-title">
+            <div class="card-head">
+              <div>
+                <h2 id="outcome-title">Deposit outcomes</h2>
+                <p class="card-sub">Every deposit by its current state, and the value behind each.</p>
+              </div>
+            </div>
+            <div id="outcome-chart"></div>
+          </section>
+          <section class="card" aria-labelledby="chart-title">
+            <div class="card-head">
+              <div>
+                <h2 id="chart-title">Why agents were blocked</h2>
+                <p class="card-sub">Requests that broke a rule, by reason.</p>
+              </div>
+              <button type="button" class="link" id="chart-view-toggle" aria-pressed="false">Show as table</button>
+            </div>
+            <div id="violations-chart"></div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- Deposits: every PayPal deposit, the inspector, and Verify with PayPal --------- -->
+    <section class="view" data-view="deposits" hidden>
       <div class="layout">
         <div class="col-main">
           <section class="card" aria-labelledby="deposits-title">
             <div class="card-head">
-              <div class="section-title">
-                <span class="section-icon" aria-hidden="true">$</span>
-                <div>
-                  <h2 id="deposits-title">Deposits &amp; PayPal transactions</h2>
-                  <p class="card-sub">Each AI crawler session is backed by a refundable PayPal deposit. Select a row to inspect it, see why it was returned or kept, and verify it with PayPal; expand it for every PayPal ID.</p>
-                </div>
+              <div>
+                <h2 id="deposits-title">Deposits &amp; PayPal transactions</h2>
+                <p class="card-sub">Select a row to see why it was returned or kept, and to verify it with PayPal. Expand a row for every PayPal ID.</p>
               </div>
             </div>
             <div id="grid-deposits" class="grid grid-deposits"></div>
           </section>
-
-          <div class="split-2">
-            <section class="card" aria-labelledby="chart-title">
-              <div class="card-head">
-                <div>
-                  <h2 id="chart-title">Policy violations by reason</h2>
-                  <p class="card-sub">Blocked requests that counted as violations, all sessions.</p>
-                </div>
-                <button type="button" class="link" id="chart-view-toggle" aria-pressed="false">Show as table</button>
-              </div>
-              <div id="violations-chart"></div>
-            </section>
-            <section class="card" aria-labelledby="outcome-title">
-              <div class="card-head">
-                <div>
-                  <h2 id="outcome-title">Deposit outcomes</h2>
-                  <p class="card-sub">Every deposit by its current state, and the value behind each.</p>
-                </div>
-              </div>
-              <div id="outcome-chart"></div>
-            </section>
-          </div>
         </div>
 
         <aside class="col-side">
           <section class="card" aria-labelledby="explain-title" id="explain-card">
             <div class="card-head">
-              <div class="section-title">
-                <span class="section-icon" aria-hidden="true">?</span>
-                <div>
-                  <h2 id="explain-title">Deposit inspector</h2>
-                  <p class="card-sub" id="explain-sub">Select a deposit to explain its refund or forfeiture.</p>
-                </div>
+              <div>
+                <h2 id="explain-title">Deposit inspector</h2>
+                <p class="card-sub" id="explain-sub">Select a deposit to explain its refund or forfeiture.</p>
               </div>
             </div>
             <div id="deposit-facts"></div>
@@ -273,12 +426,6 @@
 
     <!-- Commerce ------------------------------------------------------------------- -->
     <section class="view" data-view="commerce" hidden>
-      <div class="view-head">
-        <div>
-          <p>Everything AI agents paid this site through PayPal: refundable crawl deposits, pay-per-access items, subscriptions, and product orders.</p>
-        </div>
-        <a class="button-link" href="/agent">Open the agent studio</a>
-      </div>
       <section class="kpis" id="commerce-kpis" aria-label="Commerce metrics"></section>
       <section class="card" aria-labelledby="mix-title">
         <div class="card-head">
@@ -312,15 +459,10 @@
 
     <!-- Operations ------------------------------------------------------------------ -->
     <section class="view" data-view="operations" hidden>
-      <div class="view-head">
-        <div>
-          <p>Paid sessions, and every request the gateway answered, joined with the deposit that paid for it.</p>
-        </div>
-      </div>
       <section class="card" aria-labelledby="sessions-title">
         <div class="card-head">
           <div>
-            <h2 id="sessions-title">Crawler sessions</h2>
+            <h2 id="sessions-title">Agent sessions</h2>
             <p class="card-sub">Requests and violations counted by the gateway for every paid session. Expand a session for its deposit and timing.</p>
           </div>
         </div>
@@ -340,11 +482,6 @@
 
     <!-- Security ------------------------------------------------------------------ -->
     <section class="view" data-view="security" hidden>
-      <div class="view-head">
-        <div>
-          <p>Policy violations and the append-only audit log behind every decision.</p>
-        </div>
-      </div>
       <section class="kpis" id="security-kpis" aria-label="Security metrics"></section>
       <section class="card" aria-labelledby="violations-title">
         <div class="card-head">
@@ -369,9 +506,6 @@
     <!-- Analytics (AG Studio) ------------------------------------------------------- -->
     <section class="view" data-view="analytics" hidden>
       <div class="view-head">
-        <div>
-          <p>Interactive dashboards built with AG Studio from the gateway's live records. Click a chart segment to cross-filter the page; switch to Edit to build your own views.</p>
-        </div>
         <div class="studio-toolbar">
           <div class="segmented" id="studio-pages" role="group" aria-label="Dashboard pages"></div>
           <button type="button" class="btn-sm" id="studio-refresh">Refresh data</button>
@@ -387,11 +521,6 @@
 
     <!-- Policy ------------------------------------------------------------------ -->
     <section class="view" data-view="policy" hidden>
-      <div class="view-head">
-        <div>
-          <p>The machine-readable policy every crawler accepts, and an AI assistant to draft a new one.</p>
-        </div>
-      </div>
       <div class="split-2">
         <section class="card" aria-labelledby="policy-title">
           <div class="card-head">

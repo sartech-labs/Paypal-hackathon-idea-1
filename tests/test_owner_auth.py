@@ -116,19 +116,10 @@ async def test_cross_site_writes_do_not_ride_the_owner_cookie(
 
 
 @pytest.mark.asyncio
-async def test_demo_sign_in_only_when_enabled(test_settings: Settings, fake_clock: FakeClock) -> None:
-    async with _client(test_settings, fake_clock) as client:
-        assert (await client.post("/auth/demo")).status_code == 404
-
-    demo = test_settings.model_copy(update={"demo_signin": True})
-    async with _client(demo, fake_clock) as client:
+async def test_there_is_no_passwordless_sign_in(owner_settings: Settings, fake_clock: FakeClock) -> None:
+    async with _client(owner_settings, fake_clock) as client:
+        assert (await client.post("/auth/demo")).status_code in (404, 405)
         assert (await client.get("/console")).status_code == 303
-        signed = await client.post("/auth/demo")
-        assert signed.status_code == 200 and signed.json()["demo"] is True
-        me = (await client.get("/auth/me")).json()
-        assert me["signed_in"] is True and me["demo"] is True
-        assert me["password_login"] is False
-        assert (await client.get("/console")).status_code == 200
 
 
 @pytest.mark.asyncio

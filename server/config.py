@@ -30,6 +30,9 @@ class Settings(BaseModel):
     paypal_base_url: str = Field(default="https://api-m.sandbox.paypal.com")
     paypal_client_id: str = Field(default="")
     paypal_client_secret: str = Field(default="")
+    # Optional: the PayPal business account the console names as the payout account before
+    # any order exists. Once an order exists, its payee (read from PayPal) is shown instead.
+    paypal_merchant_email: str = Field(default="")
     paypal_currency: str = Field(default="USD")
     paypal_timeout_seconds: float = Field(default=15.0, gt=0.0, le=120.0)
     # Sandbox only: pay deposits with PayPal's Sandbox test card instead of buyer approval,
@@ -100,17 +103,17 @@ class Settings(BaseModel):
     demo_config_public: bool = Field(default=False)
     demo_origin_allowlist: str = Field(default="")
     config_max_writes_per_hour: int = Field(default=30, ge=1, le=1000)
-    # Owner sign-in for the console. When an owner email and password are set (or demo
-    # sign-in is on), the console pages require a signed-in owner, and a signed-in owner
-    # has the same rights as the admin token.
+    # Owner sign-in for the console. When an owner email and password are set, the console
+    # pages require a signed-in owner, and a signed-in owner has the admin token's rights.
     owner_email: str = Field(default="")
     owner_password: str = Field(default="")
-    # Public demos only: a "use the demo account" button signs visitors in as the owner.
-    demo_signin: bool = Field(default=False)
     # Signs the owner session cookie. Generated per process when empty (sessions then
     # end on restart).
     session_secret: str = Field(default="")
     owner_session_hours: float = Field(default=12.0, gt=0.0, le=720.0)
+    # A fresh gateway starts with the bundled demo website when true. Set false for a real
+    # deployment: the owner adds their first website in the console.
+    seed_default_site: bool = Field(default=True)
     # Transparent edge: classify unsigned clients by User-Agent (a signature always counts).
     # A recognised browser User-Agent is human, everything else is an agent.
     detect_agent_user_agents: bool = Field(default=True)
@@ -232,8 +235,8 @@ class Settings(BaseModel):
 
     @property
     def owner_login_enabled(self) -> bool:
-        """Console pages require sign-in when owner credentials or demo sign-in exist."""
-        return bool(self.owner_email.strip() and self.owner_password) or self.demo_signin
+        """Console pages require sign-in when owner credentials are configured."""
+        return bool(self.owner_email.strip() and self.owner_password)
 
     @property
     def paypal_is_sandbox(self) -> bool:
@@ -271,6 +274,7 @@ def load_settings_from_env() -> Settings:
         paypal_base_url=os.getenv("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com"),
         paypal_client_id=os.getenv("PAYPAL_CLIENT_ID", ""),
         paypal_client_secret=os.getenv("PAYPAL_CLIENT_SECRET", ""),
+        paypal_merchant_email=os.getenv("PAYPAL_MERCHANT_EMAIL", "").strip(),
         paypal_currency=os.getenv("PAYPAL_CURRENCY", "USD"),
         paypal_timeout_seconds=float(os.getenv("PAYPAL_TIMEOUT_SECONDS", "15.0")),
         paypal_sandbox_autopay=_env_bool("PAYPAL_SANDBOX_AUTOPAY", False),
@@ -315,9 +319,9 @@ def load_settings_from_env() -> Settings:
         demo_origin_allowlist=os.getenv("DEMO_ORIGIN_ALLOWLIST", ""),
         owner_email=os.getenv("OWNER_EMAIL", "").strip(),
         owner_password=os.getenv("OWNER_PASSWORD", ""),
-        demo_signin=_env_bool("DEMO_SIGNIN", False),
         session_secret=os.getenv("SESSION_SECRET", ""),
         owner_session_hours=float(os.getenv("OWNER_SESSION_HOURS", "12")),
+        seed_default_site=_env_bool("SEED_DEFAULT_SITE", True),
         config_max_writes_per_hour=int(os.getenv("CONFIG_MAX_WRITES_PER_HOUR", "30")),
         detect_agent_user_agents=_env_bool("DETECT_AGENT_USER_AGENTS", True),
         playground_max_runs_per_hour=int(os.getenv("PLAYGROUND_MAX_RUNS_PER_HOUR", "20")),

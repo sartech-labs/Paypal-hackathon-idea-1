@@ -285,6 +285,7 @@ async def create_deposit(
             crawler_id=payload.crawler_id,
             save_payment_method=payload.save_payment_method,
             payment_method_id=payload.payment_method_id,
+            autopay=False if payload.pay_with == "paypal" else None,
         )
     except KeyError as exc:
         raise HTTPException(

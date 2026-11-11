@@ -15,6 +15,8 @@ from server.config import Settings
 from server.core.agent_identity import AgentDirectory
 from server.core.identity import IdentityService
 from server.core.owner_auth import OwnerAuth
+from server.core.site_context import set_current_site
+from server.services.paypal_login import PayPalLogin
 from server.core.quotas import HourlyQuota
 from server.core.security import constant_time_equals, utc_now_iso
 from server.core.sessions import SessionManager
@@ -63,6 +65,7 @@ from server.services.runtime_config import (
 )
 from server.services.site_registry import (
     GatewaySite,
+    SiteRegistryData,
     SiteRegistryStore,
     host_of,
     slugify_site_id,
@@ -102,16 +105,23 @@ class AppContainer:
     ) -> None:
         self.settings = settings
         self.owner_auth = OwnerAuth(settings)
+        self.paypal_login = PayPalLogin(settings)
         # Multi-site registry, stored in the same file as the old flat config.
         self.registry_store = SiteRegistryStore(
             settings.gateway_config_path,
             default_origin_url=settings.origin_url,
         )
-        self.registry = self.registry_store.load()
-        if not self.registry.sites:
+        # The engine always has a site to run on. Before the owner adds a website (with
+        # SEED_DEFAULT_SITE=false) it runs on this placeholder, which is never listed.
+        self._fallback_site = self.registry_store.default_registry().sites[0]
+        if settings.seed_default_site or settings.gateway_config_path.exists():
+            self.registry = self.registry_store.load()
+        else:
+            self.registry = SiteRegistryData(active_site_id=None, sites=[])
+        if not self.registry.sites and settings.seed_default_site:
             self.registry = self.registry_store.default_registry()
         if self.registry.active_site_id not in {site.site_id for site in self.registry.sites}:
-            self.registry.active_site_id = self.registry.sites[0].site_id
+            self.registry.active_site_id = self.registry.sites[0].site_id if self.registry.sites else None
         self._runtimes: dict[str, SiteRuntime] = {}
         # Tests and embedded deployments can inject a proxy; bind it to the startup site so
         # later host/site routing still builds independent proxies for every other site.
@@ -194,7 +204,7 @@ class AppContainer:
         for site in self.registry.sites:
             if site.site_id == active_id:
                 return site
-        return self.registry.sites[0]
+        return self.registry.sites[0] if self.registry.sites else self._fallback_site
 
     @property
     def active_site_id(self) -> Optional[str]:
@@ -230,7 +240,7 @@ class AppContainer:
 
     @property
     def _active_runtime(self) -> SiteRuntime:
-        return self._runtime_for_id(self._active_site.site_id)
+        return self._runtime_for_site(self._active_site)
 
     def _site_by_id(self, site_id: Optional[str]) -> Optional[GatewaySite]:
         if not site_id:
@@ -261,7 +271,14 @@ class AppContainer:
         return bool(site_host) and requested == site_host.strip().lower().split(":", 1)[0]
 
     def resolve_site(self, site_id: Optional[str] = None, host: Optional[str] = None) -> SiteRuntime:
-        """Resolve a request's site: explicit id, then Host, then the active site."""
+        """Resolve a request's site: explicit id, then Host, then the active site.
+
+        The resolved site is recorded for this request, so its audit events name it."""
+        runtime = self._resolve_site_runtime(site_id=site_id, host=host)
+        set_current_site(runtime.site.site_id)
+        return runtime
+
+    def _resolve_site_runtime(self, site_id: Optional[str] = None, host: Optional[str] = None) -> SiteRuntime:
         if site_id:
             return self._runtime_for_id(site_id)
         if host:
@@ -493,13 +510,13 @@ class AppContainer:
         site = self._site_by_id(site_id)
         if site is None:
             raise SiteNotFoundError(site_id)
-        if len(self.registry.sites) <= 1:
+        if len(self.registry.sites) <= 1 and self.settings.seed_default_site:
             raise ValueError("At least one site must remain configured.")
         was_active = site.site_id == self.active_site_id
         self.registry.sites = [item for item in self.registry.sites if item.site_id != site_id]
         self._runtimes.pop(site_id, None)
         if was_active:
-            self.registry.active_site_id = self.registry.sites[0].site_id
+            self.registry.active_site_id = self.registry.sites[0].site_id if self.registry.sites else None
             self._sync_active_services()
         self.registry_store.save(self.registry)
 

@@ -140,7 +140,10 @@ def payment_fields(wallet: dict[str, Any]) -> dict[str, Any]:
     """Request fields for the agent's payment method: the saved one, or consent to save one."""
     if wallet.get("pm"):
         return {"payment_method_id": wallet["pm"]}
-    return {"save_payment_method": True} if wallet.get("save") else {}
+    fields: dict[str, Any] = {"save_payment_method": True} if wallet.get("save") else {}
+    if wallet.get("pay_with") == "paypal":
+        fields["pay_with"] = "paypal"  # a person approves this deposit at PayPal
+    return fields
 
 
 def remember_payment_method(wallet: dict[str, Any], response: dict[str, Any]) -> None:

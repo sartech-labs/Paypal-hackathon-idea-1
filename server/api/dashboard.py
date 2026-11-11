@@ -13,6 +13,7 @@ from server.api.auth import console_locked
 from server.api.deposits import build_deposit_explanation
 from server.core.security import utc_now_iso
 from server.dependencies import AppContainer, get_container, is_valid_admin_token
+from server.services.site_scope import SiteAttribution, count_events
 from server.schemas import (
     DashboardDataResponse,
     DashboardDepositRow,
@@ -50,6 +51,22 @@ def _dashboard_access(container: AppContainer, x_admin_token: Optional[str]) -> 
             ),
         },
     )
+
+
+def resolve_site_scope(container: AppContainer, site: Optional[str]) -> set[str]:
+    """The websites a view covers: one site, or (by default) every current website.
+
+    Records for removed websites, or for the placeholder a gateway runs on before its first
+    website, belong to no current website and are never counted."""
+    known = {item.site_id for item in container.registry.sites}
+    if site and site != "all":
+        if site not in known:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error": "site_not_found", "message": f"No website with id {site!r}."},
+            )
+        return {site}
+    return known
 
 
 def _is_held(deposit: DepositRecord) -> bool:
@@ -95,16 +112,22 @@ async def dashboard_alias(request: Request, container: AppContainer = Depends(ge
     summary="Dashboard data: KPIs, deposits, sessions, and recent audit events",
 )
 async def dashboard_data(
+    site: Optional[str] = Query(default=None, max_length=64, description="A website id, or 'all' (default) for every current website"),
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> DashboardDataResponse:
     access = _dashboard_access(container, x_admin_token)
-    deposits = await container.deposit_manager.list_deposits()
-    sessions = await container.session_manager.list_sessions()
-    summary = await container.audit_logger.build_summary(
-        deposits=deposits, sessions=sessions, scope="global"
-    )
-    events = await container.audit_logger.get_events(limit=MAX_EVENTS)
+    scope = resolve_site_scope(container, site)
+    all_deposits = await container.deposit_manager.list_deposits()
+    all_sessions = await container.session_manager.list_sessions()
+    attribution = SiteAttribution.build(all_deposits, all_sessions)
+    deposits = [d for d in all_deposits if d.site_id in scope]
+    sessions = [s for s in all_sessions if attribution.session_site(s) in scope]
+    scoped_events = [
+        e for e in await container.audit_logger.get_events(limit=0) if attribution.event_site(e) in scope
+    ]
+    counts = count_events(scoped_events)
+    events = scoped_events[-MAX_EVENTS:]
 
     returned = [d for d in deposits if d.deposit_state in (DepositState.REFUNDED, DepositState.RELEASED)]
     forfeited = [d for d in deposits if d.deposit_state == DepositState.FORFEITED]
@@ -124,11 +147,11 @@ async def dashboard_data(
         amount_returned=f"{amount_returned:.2f}",
         amount_forfeited=f"{amount_forfeited:.2f}",
         currency=container.site_config.currency,
-        gateway_requests_allowed=summary.allowed_gateway_requests,
-        gateway_requests_rejected=summary.rejected_gateway_requests,
-        policy_violations=summary.policy_violations,
+        gateway_requests_allowed=counts.allowed,
+        gateway_requests_rejected=counts.rejected,
+        policy_violations=counts.violations,
         violations_by_reason=dict(
-            sorted(summary.violation_counts_by_reason.items(), key=lambda item: (-item[1], item[0]))
+            sorted((counts.violations_by_reason or {}).items(), key=lambda item: (-item[1], item[0]))
         ),
     )
 

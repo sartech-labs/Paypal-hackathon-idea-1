@@ -72,11 +72,8 @@ async def auth_me(request: Request, container: AppContainer = Depends(get_contai
     session = signed_in_owner(request, container)
     return {
         "login_enabled": auth.enabled,
-        "password_login": auth.password_login,
-        "demo_signin": container.settings.demo_signin,
         "signed_in": bool(session) or not auth.enabled,
         "email": (session or {}).get("email"),
-        "demo": bool((session or {}).get("demo")),
         "sara_mode": container.settings.sara_mode,
         "payment_mode": container.payment_provider.mode.value,
     }
@@ -90,7 +87,7 @@ async def auth_login(
 ) -> Response:
     auth = owner_auth(container)
     client = request.client.host if request.client else "unknown"
-    if not auth.password_login:
+    if not auth.enabled:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content={"error": "password_login_disabled", "message": "Password sign-in is not set up on this gateway."},
@@ -109,19 +106,6 @@ async def auth_login(
         )
     response = JSONResponse({"signed_in": True, "email": container.settings.owner_email.strip()})
     _set_cookie(response, request, auth, auth.issue(container.settings.owner_email.strip()))
-    return response
-
-
-@router.post("/auth/demo", summary="Sign in with the public demo account")
-async def auth_demo(request: Request, container: AppContainer = Depends(get_container)) -> Response:
-    auth = owner_auth(container)
-    if not container.settings.demo_signin:
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content={"error": "demo_signin_disabled", "message": "The demo account is not enabled on this gateway."},
-        )
-    response = JSONResponse({"signed_in": True, "email": auth.demo_email, "demo": True})
-    _set_cookie(response, request, auth, auth.issue(auth.demo_email, demo=True))
     return response
 
 

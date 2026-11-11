@@ -21,17 +21,18 @@ services:
         value: demo
       - key: ADMIN_API_TOKEN
         generateValue: true
-      # Owner sign-in: "/" is the home page and the console needs a signed-in owner.
-      # Judges use the "Try the demo account" button (DEMO_SIGNIN); the owner signs in
-      # with OWNER_EMAIL and OWNER_PASSWORD, entered when the Blueprint is created.
-      - key: DEMO_SIGNIN
-        value: "true"
+      # Owner sign-in: "/" is the home page and the console needs a signed-in owner, using
+      # OWNER_EMAIL and OWNER_PASSWORD (entered when the Blueprint is created). Share these
+      # with judges privately, for example in the Devpost testing instructions.
       - key: OWNER_EMAIL
         sync: false
       - key: OWNER_PASSWORD
         sync: false
       - key: SESSION_SECRET
         generateValue: true
+      # Start with no website: the owner adds theirs on first sign-in.
+      - key: SEED_DEFAULT_SITE
+        value: "false"
       # Signed-in visitors see the console, so it no longer needs to be public.
       - key: DASHBOARD_PUBLIC
         value: "false"

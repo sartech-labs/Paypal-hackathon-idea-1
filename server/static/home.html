@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/_sara/static/home.css?v=2">
-  <script src="/_sara/static/home.js?v=2" defer></script>
+  <link rel="stylesheet" href="/_sara/static/home.css?v=4">
+  <script src="/_sara/static/home.js?v=4" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -38,19 +38,20 @@
         <div class="cta-row">
           <button type="button" class="btn btn-primary" data-open-signin>Sign in to your gateway <span aria-hidden="true">→</span></button>
           <a class="btn btn-primary" href="/console" id="hero-console" hidden>Open your console <span aria-hidden="true">→</span></a>
+          <a class="btn btn-ghost" href="#how">See how it works</a>
         </div>
-        <div class="judges" id="judges" hidden>
-          <p class="judges-kicker">Judging or just looking?</p>
-          <p>The demo account opens a working gateway on the PayPal Sandbox. Add a website, set a deposit, and send a test agent at it.</p>
-          <button type="button" class="btn btn-light" data-demo-signin>Open the demo gateway</button>
-        </div>
+        <ul class="proof" aria-label="At a glance">
+          <li><strong>No code changes</strong><span>Point your domain at SARA</span></li>
+          <li><strong>Honest agents pay $0</strong><span>Their PayPal hold is voided</span></li>
+          <li><strong>Every decision explained</strong><span>Cited from the audit log</span></li>
+        </ul>
       </div>
 
       <figure class="gatelog" aria-label="Example: what the gateway does with two AI agents">
         <div class="gatelog-head">
           <span class="live-dot" aria-hidden="true"></span>
           <span class="gatelog-title">gateway · news.example.com</span>
-          <span class="gatelog-mode">PayPal Sandbox</span>
+          <span class="gatelog-mode">PayPal</span>
         </div>
         <div class="gatelog-agent" id="gl-agent">
           <span class="agent-badge" id="gl-agent-name">ResearchBot/2.1</span>
@@ -109,7 +110,7 @@
 <footer class="footer">
   <div class="wrap footer-inner">
     <span>SARA · Safe Access for Responsible Agents · by Sartech Labs</span>
-    <span>Prototype on the PayPal Sandbox. No real money moves.</span>
+    <span>Prototype. No real money moves.</span>
   </div>
 </footer>
 
@@ -125,11 +126,6 @@
     <p class="signin-error" id="signin-error" role="alert" hidden></p>
     <button type="submit" class="btn btn-primary btn-block" id="signin-submit">Sign in</button>
   </form>
-  <div class="signin-demo" id="signin-demo" hidden>
-    <span class="divider"><span>or</span></span>
-    <button type="button" class="btn btn-ghost btn-block" data-demo-signin>Use the demo account</button>
-  </div>
-  <p class="signin-off" id="signin-off" hidden>Password sign-in is not set up on this gateway.</p>
 </dialog>
 </body>
 </html>

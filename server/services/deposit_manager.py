@@ -415,6 +415,7 @@ class DepositManager:
         crawler_id: str,
         save_payment_method: bool = False,
         payment_method_id: Optional[str] = None,
+        autopay: Optional[bool] = None,
     ) -> DepositRecord:
         """
         Validate the challenge, mark it consumed (single-use), create a pending
@@ -487,6 +488,7 @@ class DepositManager:
                 ),
                 save_method=save_payment_method and payment_token is None,
                 payment_token=payment_token,
+                autopay=autopay,
             )
         except PaymentProviderError as exc:
             async with self._lock:

@@ -47,17 +47,9 @@ class OwnerAuth:
     def enabled(self) -> bool:
         return self.settings.owner_login_enabled
 
-    @property
-    def password_login(self) -> bool:
-        return bool(self.settings.owner_email.strip() and self.settings.owner_password)
-
-    @property
-    def demo_email(self) -> str:
-        return self.settings.owner_email.strip() or "demo@sara.local"
-
     # --- credentials -------------------------------------------------------------------
     def check_password(self, email: str, password: str) -> bool:
-        if not self.password_login:
+        if not self.enabled:
             return False
         email_ok = hmac.compare_digest(
             email.strip().lower().encode("utf-8"),
@@ -82,11 +74,10 @@ class OwnerAuth:
             self._attempts.setdefault(client, []).append(now)
 
     # --- cookies -----------------------------------------------------------------------
-    def issue(self, email: str, *, demo: bool = False, now: Optional[float] = None) -> str:
+    def issue(self, email: str, *, now: Optional[float] = None) -> str:
         now = time.time() if now is None else now
         payload = {
             "email": email,
-            "demo": demo,
             "exp": int(now + self.settings.owner_session_hours * 3600),
         }
         body = _b64(json.dumps(payload, separators=(",", ":")).encode("utf-8"))

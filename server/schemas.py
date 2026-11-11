@@ -283,6 +283,9 @@ class DepositCreateRequest(BaseModel):
     save_payment_method: bool = False
     # ...or pay with a method saved earlier (an opaque pm_ ID; card details never reach the agent).
     payment_method_id: Optional[str] = Field(default=None, max_length=64)
+    # "paypal": skip the Sandbox test card even when auto-pay is on, so a person approves the
+    # deposit at PayPal. "test_card" (or unset): the gateway's default.
+    pay_with: Optional[Literal["test_card", "paypal"]] = None
 
 
 class DepositRecord(BaseModel):
@@ -546,6 +549,8 @@ class AuditEvent(BaseModel):
     policy_version: Optional[str] = None
     payment_mode: Optional[str] = None
     details: dict[str, Any] = Field(default_factory=dict)
+    # The website the request was for; absent on events written before sites were tagged.
+    site_id: Optional[str] = None
 
 
 class ExplanationFinding(BaseModel):
@@ -797,7 +802,13 @@ class DemoRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     driver: Literal["ai", "scripted"]
-    persona: Literal["compliant", "rogue", "assistant"]
+    persona: Literal["compliant", "rogue", "assistant", "goal"]
+    # Playground test agent (persona "goal"): what the owner tells the agent to do, and the
+    # website it is sent to (default: the active website).
+    goal: Optional[str] = Field(default=None, min_length=8, max_length=600)
+    site_id: Optional[str] = Field(default=None, max_length=64)
+    # How the test agent pays its deposit: the Sandbox test card, or a person approving at PayPal.
+    pay_with: Optional[Literal["test_card", "paypal"]] = None
     # Content access tier for the compliant crawler (validated against the site's tiers).
     tier: Optional[str] = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{1,31}$")
     # Personal agent (persona "assistant"): the person's request and spending mandate.
@@ -832,7 +843,7 @@ class DemoRunEvent(BaseModel):
 class DemoRunResponse(BaseModel):
     run_id: str
     driver: Literal["ai", "scripted"]
-    persona: Literal["compliant", "rogue", "assistant"]
+    persona: Literal["compliant", "rogue", "assistant", "goal"]
     status: Literal["running", "awaiting_approval", "awaiting_decision", "completed", "failed", "cancelled"]
     crawler_id: str
     model: Optional[str] = None
@@ -851,6 +862,9 @@ class DemoRunResponse(BaseModel):
     task: Optional[str] = None
     pending_decision: Optional[dict[str, Any]] = None
     mandate: Optional[dict[str, Any]] = None
+    # The website a playground test agent was sent to, and how it paid.
+    site_id: Optional[str] = None
+    pay_with: Optional[str] = None
     events: list[DemoRunEvent] = Field(default_factory=list)
     next_seq: int = 0
 

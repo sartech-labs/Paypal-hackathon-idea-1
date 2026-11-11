@@ -465,3 +465,13 @@ def test_deposit_and_crawl_stays_inside_a_small_session_budget(
     reads = [step for step in run["steps"] if (step["label"] or "").startswith("Read allowed page")]
     assert len(reads) == 2
     assert any("allows 2 request(s) per session" in (step["message"] or "") for step in run["steps"])
+
+
+def test_reusing_a_finished_session_is_refused(playground_client: TestClient) -> None:
+    run = _run(playground_client, "session_reuse")
+    assert run["outcome"] == "refused", run
+    labels = [step["label"] for step in run["steps"]]
+    assert "Complete the session and settle the deposit" in labels
+    assert "Reuse the finished session's token" in labels
+    assert run["violation"]["http_status"] in (401, 403, 409, 410)
+    assert run["deposit"]["deposit_state"] == "REFUNDED"

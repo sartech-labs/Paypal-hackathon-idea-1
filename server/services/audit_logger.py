@@ -12,6 +12,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import ValidationError
 
+from server.core.site_context import get_current_site
 from server.core.security import (
     PersistenceCorruptionError,
     sanitize_dict_for_logging,
@@ -82,6 +83,7 @@ class AuditLogger:
         policy_version: Optional[str] = None,
         payment_mode: Optional[str] = None,
         details: Optional[dict[str, Any]] = None,
+        site_id: Optional[str] = None,
     ) -> AuditEvent:
         """Append a sanitized security audit event to disk and memory."""
         safe_details = sanitize_dict_for_logging(details or {})
@@ -100,6 +102,7 @@ class AuditLogger:
             policy_version=policy_version,
             payment_mode=payment_mode,
             details=safe_details,
+            site_id=site_id or get_current_site(),
         )
 
         serialized = json.dumps(event.model_dump(mode="json"), sort_keys=True) + "\n"
