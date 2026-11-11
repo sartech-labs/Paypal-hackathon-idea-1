@@ -391,6 +391,10 @@ class AppContainer:
         )
         if not origin_url:
             raise ValueError("Origin URL is required.")
+        # Gateway traffic is routed by Host, so two sites for the same host would be ambiguous.
+        new_host = host_of(origin_url)
+        if new_host and any(host_of(site.config.origin_url) == new_host for site in self.registry.sites):
+            raise ValueError(f"{new_host} is already on the gateway.")
         deposit_amount = (
             validate_price(request.deposit_amount, field="deposit_amount")
             if request.deposit_amount is not None

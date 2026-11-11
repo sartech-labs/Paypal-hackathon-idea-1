@@ -1917,3 +1917,82 @@ body { background-image: none; }
 .pg-run-hint { margin: -4px 0 10px; text-align: right; font-size: 11.5px; }
 
 .pg-head-actions { margin-left: auto; }
+
+/* --- Websites list and per-site settings ------------------------------------------
+   The list is its own card; the selected row is marked and the settings card below
+   names the website it edits, so a newly added site never looks like it owns another
+   site's rules. */
+.site-settings-card { margin-top: 0; }
+#site-add-open { flex: none; align-self: flex-start; }
+
+.site-add {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.site-add[hidden] { display: none; }
+.site-add-label { color: var(--text-secondary); font-size: 12px; font-weight: 500; }
+.site-add-fields { display: flex; align-items: stretch; gap: 8px; }
+.site-add-fields .site-add-shell { flex: 1; min-width: 0; }
+.site-add-fields > button { flex: none; }
+.site-add .hint { margin: 0; font-size: 11.5px; }
+.site-add-error { margin: 0; color: var(--critical-text); font-size: 12px; }
+.site-add-error[hidden] { display: none; }
+
+.site-list { display: grid; gap: 6px; }
+.site-row {
+  position: relative;
+  padding: 0 4px 0 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+.site-row:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.site-row[data-selected="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.site-select { gap: 12px; padding: 10px 12px; }
+.site-radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.site-row:has(.site-radio:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.site-ident { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.site-url { font-family: var(--font); font-size: 13.5px; font-weight: 600; }
+.site-origin {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.site-editing {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+}
+.site-row[data-status="paused"] .site-url { color: var(--text-muted); }
+.site-menu-toggle { padding: 4px 8px; }
+
+.settings-site { color: var(--accent); }
+.site-settings-card[data-status="paused"] .settings-row,
+.site-settings-card[data-status="paused"] .section-block { opacity: 0.55; }
+
+@media (max-width: 640px) {
+  .site-add-fields { flex-wrap: wrap; }
+  .site-add-fields .site-add-shell { flex-basis: 100%; }
+  .site-editing { display: none; }
+}

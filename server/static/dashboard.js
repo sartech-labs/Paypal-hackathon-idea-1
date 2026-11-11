@@ -1113,6 +1113,11 @@
     try { url = new URL(raw); } catch (_) { return ""; }
     if (url.protocol !== "http:" && url.protocol !== "https:") return "";
     if (!url.hostname) return "";
+    // Catch typos before the gateway tries to resolve them: a host is a dotted name,
+    // an IP literal, or localhost, and never contains spaces.
+    const host = url.hostname;
+    if (/%|\s/.test(host)) return "";
+    if (host !== "localhost" && !host.includes(".") && !host.startsWith("[")) return "";
     return url.origin;
   }
 
@@ -1329,7 +1334,14 @@
           title: `Select ${site.host} to edit its rules`,
         }, [
           radio,
-          el("span", { className: "site-url", text: site.host }),
+          el("span", { className: "site-ident" }, [
+            el("span", { className: "site-url", text: site.host }),
+            el("span", {
+              className: "site-origin",
+              text: [site.origin, `${moneyForSite(site) || "—"} deposit`].filter(Boolean).join(" · "),
+            }),
+          ]),
+          selected ? el("span", { className: "site-editing", text: "Editing" }) : null,
           el("span", { className: "site-state" }, [
             el("span", { className: "site-dot", "aria-hidden": "true" }),
             el("span", { text: site.status === "live" ? "Live" : "Paused" }),
@@ -1409,8 +1421,34 @@
     await loadPlayground(true);
   }
 
+  function openSiteAddForm() {
+    const form = $("site-add-form");
+    if (!form) return;
+    form.hidden = false;
+    if ($("site-add-open")) $("site-add-open").setAttribute("aria-expanded", "true");
+    if ($("site-add-input")) $("site-add-input").focus();
+  }
+
+  function closeSiteAddForm() {
+    const form = $("site-add-form");
+    if (form) form.hidden = true;
+    if ($("site-add-open")) $("site-add-open").setAttribute("aria-expanded", "false");
+    if ($("site-add-input")) $("site-add-input").value = "";
+    syncSiteAddPrefix();
+    setAddError(null);
+  }
+
+  // Errors about the address being typed belong next to the field, not in the settings card.
+  function setAddError(message) {
+    const node = $("site-add-error");
+    if (!node) return;
+    node.textContent = message || "";
+    node.hidden = !message;
+  }
+
   async function addSite(event) {
     event.preventDefault();
+    setAddError(null);
     const input = $("site-add-input");
     if (state.configReadOnly) {
       showSetupMessage("Read-only. Enter the admin token in the top bar to add a website.");
@@ -1419,14 +1457,22 @@
     if (state.addingSite || state.applying || state.activating) return;
     const raw = input ? input.value.trim() : "";
     if (!raw) {
-      showSetupMessage("Enter the website address, for example example.com.");
+      setAddError("Enter the website address, for example example.com.");
       if (input) input.focus();
       return;
     }
     const origin = normalizeOrigin(raw);
     if (!origin) {
-      showSetupMessage("Enter a valid website address, for example https://example.com.");
+      setAddError("Enter a valid website address, for example https://example.com.");
       if (input) input.focus();
+      return;
+    }
+    const newHost = siteHost(origin).toLowerCase();
+    const existing = state.sites.find((item) => (siteHost(item.origin) || item.host).toLowerCase() === newHost);
+    if (existing) {
+      closeSiteAddForm();
+      await selectSite(existing.id);
+      toast("neutral", "i", `${existing.host} is already on the gateway`, "Showing its settings instead of adding it again.");
       return;
     }
 
@@ -1439,11 +1485,10 @@
         body: JSON.stringify({ origin_url: origin, set_active: true }),
       });
       if (!result.ok) {
-        showSetupMessage(apiErrorMessage(result.body, result.status, `Could not add ${origin} (HTTP ${result.status}).`));
+        setAddError(apiErrorMessage(result.body, result.status, `Could not add ${origin} (HTTP ${result.status}).`));
         return;
       }
-      if (input) input.value = "";
-      syncSiteAddPrefix();
+      closeSiteAddForm();
       state.setupMessage = null;
       hideBanner();
       if (state.pgRunning) stopPlaygroundRun(true);
@@ -1467,7 +1512,7 @@
       await loadPlayground(true);
       toast("good", "✓", "Website added", site ? site.host : origin);
     } catch (_) {
-      showSetupMessage("Could not reach the gateway to add the website.");
+      setAddError("Could not reach the gateway to add the website.");
     } finally {
       state.addingSite = false;
       refreshSetupControls();
@@ -1651,8 +1696,27 @@
     }
   }
 
+  // The settings and playground cards name the website they act on, so it is never
+  // ambiguous which site a deposit, rule, or test run belongs to.
+  function renderSiteContext(site) {
+    if ($("settings-site")) $("settings-site").textContent = site ? site.host : "—";
+    if ($("settings-sub")) {
+      let sub = "Add a website to configure it.";
+      if (site && site.status !== "live") sub = `${site.origin || site.host} is paused: agents are not gated and settings are locked.`;
+      else if (site) sub = `Agents visiting ${site.origin || site.host} must follow these rules. Changes apply immediately.`;
+      $("settings-sub").textContent = sub;
+    }
+    if ($("site-settings-card")) $("site-settings-card").dataset.status = site ? site.status : "none";
+    if ($("pg-sub")) {
+      $("pg-sub").textContent = site
+        ? `Send a test agent to ${site.host} through the gateway`
+        : "Send a test agent through the gateway";
+    }
+  }
+
   function renderSiteConfig() {
     const site = selectedSite();
+    renderSiteContext(site);
     if (!site) {
       refreshSetupControls();
       renderRules(null);
@@ -2868,6 +2932,14 @@
 
     state.pgSelected = defaultBehaviorSelection();
     if ($("site-add-form")) $("site-add-form").addEventListener("submit", addSite);
+    if ($("site-add-open")) $("site-add-open").addEventListener("click", () => {
+      if ($("site-add-form") && !$("site-add-form").hidden) closeSiteAddForm();
+      else openSiteAddForm();
+    });
+    if ($("site-add-cancel")) $("site-add-cancel").addEventListener("click", closeSiteAddForm);
+    if ($("site-add-input")) $("site-add-input").addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeSiteAddForm();
+    });
     if ($("site-add-input")) $("site-add-input").addEventListener("input", syncSiteAddPrefix);
     syncSiteAddPrefix();
     $("allowed-add-form").addEventListener("submit", (event) => addPath(event, "allowed"));

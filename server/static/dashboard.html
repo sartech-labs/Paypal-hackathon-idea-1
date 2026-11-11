@@ -10,7 +10,7 @@
     /* Apply the saved theme before first paint (dark by default). */
     try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
   </script>
-  <link rel="stylesheet" href="/_sara/static/dashboard.css?v=21">
+  <link rel="stylesheet" href="/_sara/static/dashboard.css?v=22">
   <link rel="stylesheet" href="/_sara/static/demo.css">
   <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
           integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
@@ -18,7 +18,7 @@
   <script src="/_sara/static/grid_kit.js" defer></script>
   <script src="/_sara/static/paypal_panel.js" defer></script>
   <script src="/_sara/static/analytics.js" defer></script>
-  <script src="/_sara/static/dashboard.js?v=29" defer></script>
+  <script src="/_sara/static/dashboard.js?v=32" defer></script>
 </head>
 <body>
 <header class="appbar">
@@ -56,21 +56,42 @@
     <section class="view" data-view="setup" aria-labelledby="page-title">
       <section class="card setup-card" id="sites-card">
         <div class="card-head">
-          <div class="card-title-line">
-            <h2>Gateway</h2>
-            <span class="card-meta" id="sites-count">0 sites</span>
+          <div>
+            <div class="card-title-line">
+              <h2>Websites</h2>
+              <span class="card-meta" id="sites-count">0 sites</span>
+            </div>
+            <p class="card-sub">Agents visiting these websites go through SARA. Select one to edit its rules.</p>
           </div>
+          <button type="button" class="btn-sm" id="site-add-open" aria-expanded="false" aria-controls="site-add-form">+ Add website</button>
         </div>
+        <form class="site-add" id="site-add-form" autocomplete="off" hidden>
+          <label class="site-add-label" for="site-add-input">Website address</label>
+          <div class="site-add-fields">
+            <div class="site-add-shell">
+              <span aria-hidden="true">https://</span>
+              <input id="site-add-input" placeholder="example.com" spellcheck="false">
+            </div>
+            <button type="submit" class="primary" id="site-add-button">Add website</button>
+            <button type="button" class="btn-sm" id="site-add-cancel">Cancel</button>
+          </div>
+          <p class="site-add-error" id="site-add-error" role="alert" hidden></p>
+          <p class="hint">New websites start with the default deposit and rate limit, and import the site's own robots.txt.</p>
+        </form>
         <div class="site-list" id="site-list" role="list" aria-label="Websites">
           <p class="empty">Loading websites...</p>
         </div>
-        <form class="site-add" id="site-add-form" autocomplete="off">
-          <div class="site-add-shell">
-            <span aria-hidden="true">https://</span>
-            <input id="site-add-input" placeholder="example.com" spellcheck="false" aria-label="New website URL">
+      </section>
+
+      <section class="card setup-card site-settings-card" id="site-settings-card" aria-labelledby="site-settings-title">
+        <div class="card-head">
+          <div>
+            <div class="card-title-line">
+              <h2 id="site-settings-title">Settings for <span class="settings-site" id="settings-site">—</span></h2>
+            </div>
+            <p class="card-sub" id="settings-sub">Changes apply to this website immediately.</p>
           </div>
-          <button type="submit" class="primary" id="site-add-button">Add website</button>
-        </form>
+        </div>
 
         <div class="settings-row">
           <div class="deposit-block">
@@ -148,7 +169,7 @@
             <div class="card-title-line">
               <h2>Playground</h2>
             </div>
-            <p class="card-sub">Test your deployed gateway</p>
+            <p class="card-sub" id="pg-sub">Send a test agent through the gateway</p>
           </div>
           <div class="pg-head-actions">
             <button type="button" class="btn-sm" id="pg-reset">Reset</button>

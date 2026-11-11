@@ -138,6 +138,24 @@ async def test_add_sites_list_and_switch_active(
 
 
 @pytest.mark.asyncio
+async def test_adding_a_host_twice_is_rejected(
+    test_settings: Settings, fake_clock: FakeClock, monkeypatch
+) -> None:
+    _patch_origins(monkeypatch)
+    async with _client(test_settings, fake_clock) as client:
+        await _create_site(client, "http://site-a.internal")
+        before = (await client.get("/admin/sites", headers=ADMIN)).json()["sites"]
+
+        duplicate = await client.post(
+            "/admin/sites", headers=ADMIN, json={"origin_url": "http://SITE-A.internal/blog"}
+        )
+        assert duplicate.status_code == 422, duplicate.text
+        assert "already on the gateway" in duplicate.json()["message"]
+        after = (await client.get("/admin/sites", headers=ADMIN)).json()["sites"]
+        assert len(after) == len(before)
+
+
+@pytest.mark.asyncio
 async def test_config_is_scoped_to_the_requested_site(
     test_settings: Settings, fake_clock: FakeClock, monkeypatch
 ) -> None:
