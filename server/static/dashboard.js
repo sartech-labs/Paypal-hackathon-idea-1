@@ -1555,6 +1555,9 @@
     } finally {
       state.applying = false;
       refreshSetupControls();
+      // The playground was last rendered while `applying` was still true, so re-render it
+      // now that the flag is cleared or the "Run test" button stays disabled.
+      renderPlayground();
     }
   }
 
