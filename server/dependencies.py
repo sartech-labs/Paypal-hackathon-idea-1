@@ -51,6 +51,7 @@ from server.services.runtime_config import (
     effective_origin_url,
     merge_runtime_config,
     origin_status,
+    validate_demo_rate_limit,
     validate_origin_url,
     validate_paths,
     validate_price,
@@ -254,6 +255,24 @@ class AppContainer:
 
         previous = self.runtime_config
         merged = merge_runtime_config(previous, update, actor=actor)
+
+        # Demo deployments are open to anonymous visitors, so cap live rate-limit edits.
+        # Validate the effective values (a request may set only one of the two fields).
+        if self.settings.sara_mode == "demo" and (
+            "rate_limit_requests" in update.model_fields_set
+            or "rate_limit_window_seconds" in update.model_fields_set
+        ):
+            requested_requests = (
+                update.rate_limit_requests
+                if update.rate_limit_requests is not None
+                else self.site_config.rate_limit_requests
+            )
+            requested_window = (
+                update.rate_limit_window_seconds
+                if update.rate_limit_window_seconds is not None
+                else self.site_config.rate_limit_window_seconds
+            )
+            validate_demo_rate_limit(requested_requests, requested_window)
 
         # Build the new policy. The origin's robots.txt is imported before the swap so a
         # bad target URL cannot leave the gateway half-configured.

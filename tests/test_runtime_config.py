@@ -49,7 +49,7 @@ async def test_live_update_changes_prices_rules_and_challenge(
                 "disallowed_paths": ["/admin", "/secret"],
                 "max_requests_per_session": 4,
                 "rate_limit_requests": 2,
-                "rate_limit_window_seconds": 5,
+                "rate_limit_window_seconds": 60,
             },
         )
         assert response.status_code == 200, response.text
@@ -176,7 +176,11 @@ async def test_public_config_round_trip_with_env_origin_still_allows_deposit(
 ) -> None:
     monkeypatch.setattr(OriginProxy, "import_robots", lambda self: self.rules)
     public_settings = test_settings.model_copy(
-        update={"demo_config_public": True, "origin_url": "https://origin.example"}
+        update={
+            "demo_config_public": True,
+            "origin_url": "https://origin.example",
+            "rate_limit_window_seconds": 60.0,
+        }
     )
     async with _client(public_settings, fake_clock) as client:
         current = (await client.get("/admin/config")).json()
@@ -200,4 +204,37 @@ async def test_public_config_round_trip_with_env_origin_still_allows_deposit(
         )
         assert response.status_code == 200, response.text
         assert response.json()["origin_url"] == "https://origin.example"
+
+
+async def test_demo_mode_caps_rate_limit_at_ten_per_minute(
+    test_settings: Settings, fake_clock: FakeClock
+) -> None:
+    assert test_settings.sara_mode == "demo"
+    async with _client(test_settings, fake_clock) as client:
+        # The console maximum is accepted; the cap applies to the admin token too.
+        accepted = await client.put(
+            "/admin/config",
+            headers={**ADMIN, "Content-Type": "application/json"},
+            json={"rate_limit_requests": 10, "rate_limit_window_seconds": 60},
+        )
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["rate_limit_requests"] == 10
+
+        # A direct API call cannot bypass the console cap.
+        too_many = await client.put(
+            "/admin/config",
+            headers={**ADMIN, "Content-Type": "application/json"},
+            json={"rate_limit_requests": 11, "rate_limit_window_seconds": 60},
+        )
+        assert too_many.status_code == 422
+        assert "10 requests per minute" in too_many.json()["message"]
+
+        # A short window can exceed 10/minute even with a small request count.
+        too_fast = await client.put(
+            "/admin/config",
+            headers={**ADMIN, "Content-Type": "application/json"},
+            json={"rate_limit_requests": 2, "rate_limit_window_seconds": 10},
+        )
+        assert too_fast.status_code == 422
+        assert "10 requests per minute" in too_fast.json()["message"]
 

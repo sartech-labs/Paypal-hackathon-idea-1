@@ -183,7 +183,11 @@ async def test_allowed_agent_post_forwards_method_body_and_headers(
         return httpx.Response(201, text="created")
 
     settings = test_settings.model_copy(
-        update={"origin_url": "https://origin.example", "rate_limit_requests": 10}
+        update={
+            "origin_url": "https://origin.example",
+            "rate_limit_requests": 10,
+            "rate_limit_window_seconds": 60.0,
+        }
     )
     proxy = OriginProxy(
         settings.origin_url,

@@ -990,6 +990,32 @@
   ];
 
   const RATE_UNIT_LABELS = { 1: "second", 60: "minute", 3600: "hour" };
+  // Demo deployments are open to anonymous visitors. The backend enforces the same cap,
+  // so the console warns instead of letting the API reject the save.
+  const DEMO_RATE_LIMIT_MAX_REQUESTS = 10;
+  const DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS = 60;
+  const DEMO_RATE_LIMIT_WARNING = "Capped at 10 req/min for demo";
+
+  function isDemoMode() {
+    return ((state.config && state.config.sara_mode) || (state.data && state.data.sara_mode) || "demo") === "demo";
+  }
+
+  function demoRateLimitExceeded(rate, unit) {
+    const requests = Math.round(Number(rate) || 0);
+    const windowSeconds = Number(unit) || DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS;
+    return requests > DEMO_RATE_LIMIT_MAX_REQUESTS || (requests * 60) / windowSeconds > DEMO_RATE_LIMIT_MAX_REQUESTS;
+  }
+
+  function showRateCapWarning() {
+    const note = $("cfg-rate-cap-note");
+    if (!note) return;
+    note.textContent = DEMO_RATE_LIMIT_WARNING;
+    note.hidden = false;
+  }
+
+  function hideRateCapWarning() {
+    if ($("cfg-rate-cap-note")) $("cfg-rate-cap-note").hidden = true;
+  }
 
   function rateUnitLabel(unit) {
     return RATE_UNIT_LABELS[Number(unit)] || "minute";
@@ -1034,7 +1060,7 @@
         currency: "USD",
         allowed: ["/pages", "/login"],
         disallowed: ["/lessons", "/faq"],
-        rate: 10,
+        rate: 5,
         unit: 60,
         dirty: false,
       },
@@ -1063,7 +1089,7 @@
         currency: "USD",
         allowed,
         disallowed,
-        rate: Number.isFinite(rate) && rate > 0 ? rate : 10,
+        rate: Number.isFinite(rate) && rate > 0 ? rate : 5,
         unit: units.includes(unit) ? unit : 60,
         dirty: Boolean(item.dirty),
       });
@@ -1325,6 +1351,19 @@
       if ($(id)) $(id).disabled = !canEdit || !site;
     }
 
+    // Demo mode pins the window to a minute; the backend still enforces the 10/min cap.
+    const demo = isDemoMode();
+    if ($("cfg-rate-unit")) {
+      const unitSelect = $("cfg-rate-unit");
+      for (const option of unitSelect.options) {
+        option.disabled = demo && Number(option.value) !== DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS;
+      }
+      if (demo && Number(unitSelect.value) !== DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS) {
+        unitSelect.value = String(DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS);
+        if (site) site.unit = DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS;
+      }
+    }
+
     let hint = "Changes apply live to the selected website.";
     if (!site) hint = "Add a website to configure the gateway.";
     else if (state.configReadOnly) hint = "Read-only. Enter the admin token in the top bar to apply changes.";
@@ -1348,6 +1387,9 @@
     }
     if ($("cfg-deposit")) $("cfg-deposit").value = site.deposit || "";
     site.currency = "USD";
+    if (isDemoMode()) {
+      site.unit = DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS;
+    }
     if ($("cfg-rate")) $("cfg-rate").value = site.rate || "";
     if ($("cfg-rate-unit")) $("cfg-rate-unit").value = String(site.unit || 60);
     renderRules(site);
@@ -1470,6 +1512,11 @@
     if (!deposit) { showSetupMessage("Enter a deposit amount for this website."); return false; }
     if (!Number.isFinite(rate) || rate < 1) { showSetupMessage("The rate limit must be at least 1 request."); return false; }
     if (![1, 60, 3600].includes(unit)) { showSetupMessage("Choose a rate-limit window."); return false; }
+    hideRateCapWarning();
+    if (isDemoMode() && demoRateLimitExceeded(rate, unit)) {
+      showRateCapWarning();
+      return false;
+    }
 
     state.applying = true;
     refreshSetupControls();
@@ -1749,9 +1796,14 @@
     const timeline = $("pg-timeline");
     if (timeline) {
       const refused = Boolean(result && result.state === "blocked");
+      const blockedHttp = result && result.http !== null && result.http !== undefined
+        ? Number(result.http)
+        : null;
+      const hasBlockedStatus = Number.isInteger(blockedHttp) && blockedHttp > 0;
       const signature = JSON.stringify({
         running: running ? 1 : 0,
         refused: refused ? 1 : 0,
+        blockedHttp: hasBlockedStatus ? blockedHttp : null,
         hasResult: result ? 1 : 0,
         emptyText: !steps.length ? (running ? "running" : result ? "result" : "idle") : "",
         steps: steps.map((step) => step
@@ -1773,12 +1825,18 @@
           ]));
         }
         // `allowed` is true only for HTTP 200, so a redirect or the expected 402 challenge is
-        // not a refusal. Only a refused overall run marks the offending non-2xx steps.
-        const anyBlockedStep = refused && steps.some((step) => step && Number(step.http_status) >= 400);
+        // not a refusal. Only the response that matches the run's violation status is marked
+        // blocked, so the initial payment challenge stays a completed step.
+        const isBlockedStep = (step) => Boolean(step) && (
+          hasBlockedStatus
+            ? Number(step.http_status) === blockedHttp
+            : Number(step.http_status) >= 400
+        );
+        const anyBlockedStep = refused && steps.some(isBlockedStep);
         steps.forEach((step, index) => {
           const isLast = index === steps.length - 1;
           let stepState = "done";
-          if (refused && step && Number(step.http_status) >= 400) stepState = "blocked";
+          if (refused && isBlockedStep(step)) stepState = "blocked";
           else if (refused && !anyBlockedStep && isLast) stepState = "blocked";
           if (running && isLast && stepState !== "blocked") stepState = "running";
           timeline.append(playgroundStepRow(index + 1, (step && step.label) || "Step", {
@@ -2553,6 +2611,7 @@
       $("cfg-rate-edit").addEventListener("click", () => {
         state.editingRate = true;
         state.editingDeposit = false;
+        hideRateCapWarning();
         refreshSetupControls();
         if ($("cfg-rate")) {
           $("cfg-rate").focus();
@@ -2573,6 +2632,7 @@
       if (event.key !== "Escape") return;
       state.editingDeposit = false;
       state.editingRate = false;
+      hideRateCapWarning();
       refreshSetupControls();
     };
     for (const id of ["cfg-deposit", "cfg-rate", "cfg-rate-unit"]) {
@@ -2590,6 +2650,7 @@
     $("cfg-rate").addEventListener("input", (event) => {
       const site = selectedSite();
       if (!site) return;
+      hideRateCapWarning();
       site.rate = Number(event.target.value) || 0;
       state.pgResults = {};
       state.pgSteps = [];
@@ -2598,7 +2659,12 @@
     $("cfg-rate-unit").addEventListener("change", (event) => {
       const site = selectedSite();
       if (!site) return;
-      site.unit = Number(event.target.value) || 60;
+      let unit = Number(event.target.value) || 60;
+      if (isDemoMode() && unit !== DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS) {
+        unit = DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS;
+        event.target.value = String(unit);
+      }
+      site.unit = unit;
       state.pgResults = {};
       state.pgSteps = [];
       markSiteDirty();
