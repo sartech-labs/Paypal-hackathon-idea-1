@@ -10,7 +10,7 @@
     /* Apply the saved theme before first paint (dark by default). */
     try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
   </script>
-  <link rel="stylesheet" href="/_sara/static/dashboard.css?v=7">
+  <link rel="stylesheet" href="/_sara/static/dashboard.css?v=17">
   <link rel="stylesheet" href="/_sara/static/demo.css">
   <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
           integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
@@ -18,7 +18,7 @@
   <script src="/_sara/static/grid_kit.js" defer></script>
   <script src="/_sara/static/paypal_panel.js" defer></script>
   <script src="/_sara/static/analytics.js" defer></script>
-  <script src="/_sara/static/dashboard.js?v=14" defer></script>
+  <script src="/_sara/static/dashboard.js?v=20" defer></script>
 </head>
 <body>
 <header class="appbar">
@@ -37,9 +37,8 @@
   <aside class="sidenav" aria-label="Console sections">
     <div class="sidenav-group">
       <button type="button" class="sidenav-link" data-view="setup" aria-current="page"><span class="nav-icon" aria-hidden="true">⚙</span>Console</button>
-      <button type="button" class="sidenav-link" data-view="commerce"><span class="nav-icon" aria-hidden="true">$</span>Commerce<span class="nav-count" id="count-orders" title="Paid orders and active subscriptions">0</span></button>
-      <button type="button" class="sidenav-link" data-view="operations"><span class="nav-icon" aria-hidden="true">≡</span>Operations<span class="nav-count" id="count-sessions" title="Crawler sessions">0</span></button>
-      <button type="button" class="sidenav-link" data-view="security"><span class="nav-icon" aria-hidden="true">⚠</span>Security<span class="nav-count" id="count-violations" data-tone="critical" title="Policy violations">0</span></button>
+      <button type="button" class="sidenav-link" data-view="operations"><span class="nav-icon" aria-hidden="true">≡</span>Audit log<span class="nav-count" id="count-sessions" title="Crawler sessions">0</span></button>
+      <button type="button" class="sidenav-link" data-view="security"><span class="nav-icon" aria-hidden="true">⚠</span>Policy violations<span class="nav-count" id="count-violations" data-tone="critical" title="Policy violations">0</span></button>
       <button type="button" class="sidenav-link" data-view="analytics"><span class="nav-icon" aria-hidden="true">◔</span>Analytics</button>
     </div>
   </aside>
@@ -53,119 +52,107 @@
 
     <section class="banner" id="banner" role="status" hidden></section>
 
-    <!-- Websites, access rules, and playground ------------------------------------- -->
+    <!-- Gateway configuration and playground ------------------------------------- -->
     <section class="view" data-view="setup" aria-labelledby="page-title">
       <section class="card setup-card" id="sites-card">
         <div class="card-head">
           <div class="card-title-line">
-            <h2>Websites &amp; deposit</h2>
+            <h2>Gateway</h2>
             <span class="card-meta" id="sites-count">0 sites</span>
           </div>
         </div>
         <div class="site-list" id="site-list" role="list" aria-label="Websites">
           <p class="empty">Loading websites...</p>
         </div>
-        <form class="site-add" id="site-add-form" autocomplete="off">
-          <div class="site-add-shell">
-            <span aria-hidden="true">https://</span>
-            <input id="site-add-input" placeholder="www.scrapethissite.com" spellcheck="false" aria-label="New website host">
-          </div>
-          <button type="submit" class="primary" id="site-add-button" disabled title="Disabled in demo">Add</button>
-        </form>
-        <p class="hint site-add-note"><span class="info-icon" aria-hidden="true"></span>Adding new website is disabled for demo</p>
-        <hr class="section-divider">
-        <div class="deposit-block">
-          <span class="field-kicker">Deposit per agent session</span>
-          <div class="inline-value-row" id="cfg-deposit-read">
-            <span class="inline-value" id="cfg-deposit-value">$5.00</span>
-            <button type="button" class="icon-btn" id="cfg-deposit-edit" aria-label="Edit deposit" title="Edit deposit">✎</button>
-          </div>
-          <div class="inline-edit" id="cfg-deposit-edit-row" hidden>
-            <div class="deposit-control">
-              <span class="currency-symbol" id="cfg-currency-symbol" aria-hidden="true">$</span>
-              <input id="cfg-deposit" inputmode="decimal" placeholder="5.00" aria-label="Deposit per agent session">
-            </div>
-            <button type="button" class="btn-xs primary" id="cfg-deposit-save">Save</button>
-          </div>
-        </div>
-        <div class="setup-actions">
-          <span class="hint" id="cfg-hint">Changes apply to the selected website.</span>
-        </div>
-      </section>
+        <p class="card-sub site-add-note"><span class="info-icon" aria-hidden="true"></span>Adding new website is disabled for demo</p>
 
-      <section class="card" id="rules-card">
-        <div class="card-head">
-          <div class="card-title-line">
-            <span class="card-num" aria-hidden="true">2</span>
-            <h2>Access rules</h2>
-          </div>
-        </div>
-        <div class="rules-grid">
-          <div class="rules-col" data-tone="good">
-            <div class="rules-col-head">
-              <span class="field-kicker">Allowed paths</span>
-              <span class="rules-count" id="allowed-count">0</span>
+        <div class="settings-row">
+          <div class="deposit-block">
+            <span class="field-kicker">Deposit per agent session</span>
+            <div class="inline-value-row" id="cfg-deposit-read">
+              <span class="inline-value" id="cfg-deposit-value">$5.00</span>
+              <button type="button" class="icon-btn" id="cfg-deposit-edit" aria-label="Edit deposit" title="Edit deposit">✎</button>
             </div>
-            <ul class="rule-paths" id="allowed-list"></ul>
-            <form class="rule-path-add" id="allowed-add-form" autocomplete="off">
-              <input id="allowed-add-input" placeholder="/path/*" spellcheck="false" aria-label="Add allowed path">
-              <button type="submit">+ Add path</button>
-            </form>
-          </div>
-          <div class="rules-col" data-tone="critical">
-            <div class="rules-col-head">
-              <span class="field-kicker">Disallowed paths</span>
-              <span class="rules-count" id="disallowed-count">0</span>
+            <div class="inline-edit" id="cfg-deposit-edit-row" hidden>
+              <div class="deposit-control">
+                <span class="currency-symbol" id="cfg-currency-symbol" aria-hidden="true">$</span>
+                <input id="cfg-deposit" inputmode="decimal" placeholder="5.00" aria-label="Deposit per agent session">
+              </div>
+              <button type="button" class="btn-xs primary" id="cfg-deposit-save">Save</button>
             </div>
-            <ul class="rule-paths" id="disallowed-list"></ul>
-            <form class="rule-path-add" id="disallowed-add-form" autocomplete="off">
-              <input id="disallowed-add-input" placeholder="/admin/*" spellcheck="false" aria-label="Add disallowed path">
-              <button type="submit">+ Add path</button>
-            </form>
           </div>
-        </div>
-        <hr class="section-divider">
-        <div class="rate-block">
-          <span class="field-kicker">Rate limit <span class="muted">(per agent)</span></span>
-          <div class="inline-value-row" id="cfg-rate-read">
-            <span class="inline-value" id="cfg-rate-value">10 requests / minute</span>
-            <button type="button" class="icon-btn" id="cfg-rate-edit" aria-label="Edit rate limit" title="Edit rate limit">✎</button>
-          </div>
-          <div class="inline-edit" id="cfg-rate-edit-row" hidden>
-            <div class="rate-control">
-              <input id="cfg-rate" type="number" min="1" max="1000" step="1" aria-label="Rate limit requests">
-              <span class="rate-unit-label">requests /</span>
-              <select id="cfg-rate-unit" aria-label="Rate limit window">
-                <option value="1">second</option>
-                <option value="60" selected>minute</option>
-                <option value="3600">hour</option>
-              </select>
+          <div class="rate-block">
+            <span class="field-kicker">Rate limit <span class="muted">(per agent)</span></span>
+            <div class="inline-value-row" id="cfg-rate-read">
+              <span class="inline-value" id="cfg-rate-value">10 requests / minute</span>
+              <button type="button" class="icon-btn" id="cfg-rate-edit" aria-label="Edit rate limit" title="Edit rate limit">✎</button>
             </div>
-            <button type="button" class="btn-xs primary" id="cfg-rate-save">Save</button>
+            <div class="inline-edit" id="cfg-rate-edit-row" hidden>
+              <div class="rate-control">
+                <input id="cfg-rate" type="number" min="1" max="1000" step="1" aria-label="Rate limit requests">
+                <span class="rate-unit-label">requests /</span>
+                <select id="cfg-rate-unit" aria-label="Rate limit window">
+                  <option value="1">second</option>
+                  <option value="60" selected>minute</option>
+                  <option value="3600">hour</option>
+                </select>
+              </div>
+              <button type="button" class="btn-xs primary" id="cfg-rate-save">Save</button>
+            </div>
           </div>
         </div>
         <div class="setup-actions">
-          <span class="hint" id="rules-hint">Wildcards apply as path prefixes on the gateway.</span>
+          <span class="hint" id="cfg-hint"></span>
+        </div>
+
+        <hr class="section-divider">
+        <div class="section-block">
+          <div class="section-head">
+            <h3>Access rules</h3>
+          </div>
+          <div class="rules-grid">
+            <div class="rules-col" data-tone="good">
+              <div class="rules-col-head">
+                <span class="field-kicker">Allowed paths</span>
+                <span class="rules-count" id="allowed-count">0</span>
+              </div>
+              <ul class="rule-paths" id="allowed-list"></ul>
+              <form class="rule-path-add" id="allowed-add-form" autocomplete="off">
+                <input id="allowed-add-input" placeholder="/path/*" spellcheck="false" aria-label="Add allowed path">
+                <button type="submit">+ Add path</button>
+              </form>
+            </div>
+            <div class="rules-col" data-tone="critical">
+              <div class="rules-col-head">
+                <span class="field-kicker">Disallowed paths</span>
+                <span class="rules-count" id="disallowed-count">0</span>
+              </div>
+              <ul class="rule-paths" id="disallowed-list"></ul>
+              <form class="rule-path-add" id="disallowed-add-form" autocomplete="off">
+                <input id="disallowed-add-input" placeholder="/admin/*" spellcheck="false" aria-label="Add disallowed path">
+                <button type="submit">+ Add path</button>
+              </form>
+            </div>
+          </div>
         </div>
       </section>
 
       <section class="card playground-card" id="playground-card">
         <div class="card-head">
-          <div class="card-title-line">
-            <span class="card-num" aria-hidden="true">3</span>
-            <h2>Playground</h2>
-            <span class="info-icon" role="img" aria-label="About the playground" title="About the playground">i</span>
+          <div>
+            <div class="card-title-line">
+              <h2>Playground</h2>
+            </div>
+            <p class="card-sub">Test your deployed gateway</p>
           </div>
-          <button type="button" class="btn-sm" id="pg-reset">Reset</button>
+          <div class="pg-head-actions">
+            <button type="button" class="btn-sm" id="pg-reset">Reset</button>
+            <button type="button" class="primary" id="pg-run-button" disabled>Run test</button>
+          </div>
         </div>
-        <p class="pg-sub">Test your deployed gateway</p>
-        <div class="pg-target">
-          <label for="pg-target">Target site</label>
-          <select id="pg-target" aria-label="Target site"></select>
-        </div>
+        <p class="hint pg-run-hint" id="pg-run-hint">Loading the playground...</p>
         <div class="pg-behaviors-head">
           <span class="pg-kicker">Select crawler behavior</span>
-          <span class="pg-selection" id="pg-selection">1 selected</span>
         </div>
         <div class="pg-choice-grid" id="pg-choices"></div>
         <hr class="section-divider">
@@ -174,17 +161,9 @@
             <span class="pg-plan-title">Output</span>
             <span class="pg-plan-count" id="pg-plan-count"></span>
           </div>
-          <p class="pg-plan-summary" id="pg-plan-summary">Select a crawler behavior, then run it.</p>
           <ol class="pg-timeline" id="pg-timeline" aria-live="polite" aria-label="Agent steps"></ol>
           <div class="pg-final" id="pg-final" role="region" aria-label="Final response" hidden></div>
         </div>
-        <div class="pg-footer">
-          <div class="pg-buttons">
-            <button type="button" id="pg-clear">Clear</button>
-            <button type="button" class="primary" id="pg-run-button" disabled>Run</button>
-          </div>
-        </div>
-        <p class="hint pg-run-hint" id="pg-run-hint">Loading the playground...</p>
       </section>
     </section>
 

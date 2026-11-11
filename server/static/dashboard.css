@@ -1487,9 +1487,6 @@ footer a { color: var(--text-secondary); }
 .pg-choice:hover { background: var(--surface-1); }
 .pg-choice input { flex: none; margin: 2px 0 0; accent-color: var(--accent); }
 .pg-choice span { min-width: 0; }
-.pg-choice-marker { flex: none; font-weight: 800; line-height: 1.35; }
-.pg-choice[data-tone="safe"] .pg-choice-marker { color: var(--status-good); }
-.pg-choice[data-tone="bad"] .pg-choice-marker { color: var(--status-critical); }
 
 .pg-plan { display: grid; gap: 6px; }
 .pg-plan-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
@@ -1602,3 +1599,334 @@ footer a { color: var(--text-secondary); }
   .rules-col + .rules-col { border-left: none; border-top: 1px solid var(--border); }
   .pg-response-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
+
+/* --- Minimal console pass ------------------------------------------------------------
+   Flatter surfaces, quieter navigation, one configuration card, and fewer boxed
+   containers. Functionality and status colours are unchanged. */
+:root {
+  --radius: 10px;
+  --radius-sm: 7px;
+  --shadow: none;
+}
+
+body { background-image: none; }
+
+.appbar-inner { padding: 8px 24px; }
+.brand-name { font-size: 15px; }
+#theme-toggle {
+  padding: 5px 9px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+#theme-toggle:hover:not(:disabled) { background: var(--surface-2); color: var(--text-primary); }
+
+.console { grid-template-columns: 196px minmax(0, 1fr); }
+.sidenav {
+  gap: 14px;
+  padding: 24px 10px;
+  background: transparent;
+}
+.sidenav-link {
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.sidenav-link[aria-current="page"] {
+  background: transparent;
+  box-shadow: inset 2px 0 0 var(--accent);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.sidenav-link .nav-icon { width: 16px; font-size: 13px; color: var(--text-muted); }
+.sidenav-link[aria-current="page"] .nav-icon { color: var(--accent); }
+.sidenav-link .nav-count {
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.sidenav-link .nav-count[data-tone="critical"] { background: transparent; color: var(--critical-text); }
+
+.console-main { padding: 26px 32px 48px; }
+.view { gap: 14px; }
+.view[data-view="setup"] { width: 100%; max-width: 880px; margin: 0 auto; }
+
+.card {
+  padding: 20px 22px;
+  border-radius: 12px;
+  background: var(--surface-1);
+  box-shadow: none;
+}
+.card-head { margin-bottom: 14px; }
+.card h2 { font-size: 16px; }
+.card-sub { font-size: 12.5px; }
+.card-title-line { gap: 8px; }
+.card-meta { color: var(--text-muted); font-size: 11.5px; font-weight: 500; }
+.section-divider { margin: 20px 0 18px; }
+.section-block { display: grid; gap: 12px; }
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+}
+.section-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.section-head .hint { margin: 0; font-size: 11.5px; }
+.hint[hidden] { display: none; }
+
+/* Gateway card: one website row, two settings, then the paths. */
+.site-add-note { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.site-list { gap: 0; }
+.site-row {
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+.site-row:hover { border-color: var(--border); }
+.site-row[data-selected="true"] { border-color: var(--border); background: transparent; }
+.site-select { padding: 8px 2px; }
+.site-select:hover:not(:disabled) { background: transparent; }
+.site-url { font-size: 12.5px; }
+.site-state { font-size: 11.5px; }
+.site-menu-toggle { padding: 2px 8px 8px; }
+
+.settings-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+  padding-top: 18px;
+}
+.deposit-block, .rate-block { gap: 6px; }
+.field-kicker {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.inline-value { font-size: 14px; font-weight: 600; }
+#cfg-rate-value { font-family: var(--font); font-size: 14px; font-weight: 600; }
+.icon-btn { width: 22px; height: 22px; font-size: 11px; }
+.deposit-control, .rate-control { width: 100%; max-width: 240px; }
+.setup-actions { padding-top: 8px; }
+.setup-actions .hint { font-size: 11.5px; }
+
+.rules-grid {
+  gap: 28px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+.rules-col { gap: 6px; padding: 0; }
+.rules-col + .rules-col {
+  border-left: 1px solid var(--border);
+  padding-left: 28px;
+}
+.rules-col[data-tone="good"], .rules-col[data-tone="critical"] { border-top: 0; }
+.rules-col[data-tone="good"] .field-kicker { color: var(--good-text); }
+.rules-col[data-tone="critical"] .field-kicker { color: var(--critical-text); }
+.rules-col-head { padding-bottom: 4px; }
+.rules-count {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 500;
+  line-height: inherit;
+}
+.rule-paths { min-height: 30px; }
+.rule-path { padding: 6px 0 6px 2px; border-bottom: 1px solid var(--border); }
+.rule-path-name { font-size: 12px; }
+.rule-path-add { gap: 4px; margin-top: 6px; }
+.rule-path-add input {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11.5px;
+}
+.rule-path-add button {
+  padding: 4px 7px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.rule-path-add button:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
+
+/* Playground: flat choices, compact controls, quiet output. */
+.playground-card .card-head { margin-bottom: 10px; }
+.pg-target { gap: 8px; margin-bottom: 18px; }
+.pg-target label { color: var(--text-muted); font-size: 12px; font-weight: 500; }
+.pg-target select {
+  min-width: 200px;
+  padding: 6px 9px;
+  border-color: var(--border);
+  background: transparent;
+  font-size: 12px;
+}
+.pg-behaviors-head { padding-bottom: 4px; }
+.pg-kicker {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.pg-selection { color: var(--text-muted); font-size: 11.5px; }
+.pg-choice-grid { gap: 0 28px; }
+.pg-choice-col {
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.pg-choice-col[data-tone="good"], .pg-choice-col[data-tone="critical"] { border-top: 0; }
+.pg-choice-head { padding: 0 2px 4px; }
+.pg-choice-title { font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.pg-choice { padding: 7px 4px; border-radius: 6px; font-size: 12.5px; }
+.pg-choice:hover { background: var(--surface-2); }
+.pg-plan-title, .pg-final-title {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.pg-plan-summary { font-size: 11.5px; }
+.pg-timeline { margin-top: 8px; }
+.pg-final { border-radius: 8px; background: transparent; }
+.pg-footer { margin-top: 16px; }
+#pg-reset, #pg-clear {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+}
+#pg-reset:hover:not(:disabled), #pg-clear:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+#pg-run-button { min-width: 80px; }
+
+@media (max-width: 900px) {
+  .view[data-view="setup"] { max-width: none; }
+}
+
+@media (max-width: 760px) {
+  .settings-row { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .rules-grid { gap: 20px; }
+  .rules-col + .rules-col {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    padding-top: 18px;
+    padding-left: 0;
+  }
+}
+
+/* Keep the navigation text-only; the labels already carry the meaning. */
+.sidenav-link { padding-left: 12px; }
+.sidenav-link .nav-icon { display: none; }
+
+/* The output heading already reports the run state; avoid duplicating it. */
+.pg-plan-summary { display: none; }
+
+/* Compact step metadata: request and status share one line. */
+.pg-step-meta-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 6px; }
+.pg-step-sep { color: var(--text-muted); }
+
+/* Restore the horizontal console shell on small screens after the minimal overrides. */
+@media (max-width: 900px) {
+  .console { grid-template-columns: minmax(0, 1fr); }
+  .sidenav {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 14px;
+  }
+  .sidenav-group { display: flex; flex-wrap: wrap; gap: 2px; }
+  .sidenav-link { width: auto; padding: 6px 10px; }
+  .view[data-view="setup"] { max-width: none; }
+  .console-main { padding: 20px 16px 40px; }
+}
+
+@media (max-width: 640px) {
+  .console-main { padding: 16px; }
+  .card { padding: 18px 16px; }
+}
+
+/* KPI tiles: keep the status colour on the glyph, not on a decorative top bar. */
+.tile { min-height: 96px; padding: 14px 16px; }
+.tile::before { display: none; }
+.tile-icon {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+  font-size: 14px;
+}
+
+/* --- Hierarchy pass ---------------------------------------------------------------
+   Secondary context is muted, support copy sits below its heading, and status colour
+   is reduced to small markers so the primary action stays obvious. */
+.site-add-note { margin: 8px 0 0; font-size: 11.5px; }
+.site-row[data-status="live"] .site-state { color: var(--text-muted); }
+
+.section-head > div { min-width: 0; }
+.section-head .hint { margin: 3px 0 0; font-size: 11.5px; }
+
+.rules-col .field-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rules-col[data-tone="good"] .field-kicker,
+.rules-col[data-tone="critical"] .field-kicker { color: var(--text-secondary); }
+.rules-col[data-tone="good"] .field-kicker::before,
+.rules-col[data-tone="critical"] .field-kicker::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.rules-col[data-tone="good"] .field-kicker::before { background: var(--status-good); }
+.rules-col[data-tone="critical"] .field-kicker::before { background: var(--status-critical); }
+
+.rule-path-add button { color: var(--text-secondary); }
+.rule-path-add button:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.pg-choice-col[data-tone="good"] .pg-choice-title,
+.pg-choice-col[data-tone="critical"] .pg-choice-title { color: var(--text-muted); }
+
+#pg-reset { color: var(--text-muted); font-size: 11.5px; }
+#pg-reset:hover:not(:disabled) { color: var(--text-primary); }
+.pg-plan-count { color: var(--text-muted); font-size: 11.5px; }
+.pg-run-hint { text-align: right; }
+
+/* Keep the primary playground action in the card header, always visible. */
+.pg-head-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+#pg-run-button { min-width: 96px; }
+.pg-run-hint { margin: -4px 0 10px; text-align: right; font-size: 11.5px; }
+
+.pg-head-actions { margin-left: auto; }
+
+.site-add-note .info-icon { width: 13px; height: 13px; font-size: 9px; }

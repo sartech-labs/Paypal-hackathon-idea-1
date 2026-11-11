@@ -12,8 +12,8 @@
     setup: "Console",
     overview: "Overview",
     commerce: "Commerce",
-    operations: "Operations",
-    security: "Security & audit",
+    operations: "Audit log",
+    security: "Policy violations",
     analytics: "Analytics",
     policy: "Policy",
   };
@@ -1337,11 +1337,6 @@
       $("cfg-hint").textContent = hint;
       $("cfg-hint").hidden = !hint;
     }
-    if ($("rules-hint")) {
-      $("rules-hint").textContent = live
-        ? "Wildcards apply as path prefixes on the gateway."
-        : "Resume this website to make these rules live.";
-    }
   }
 
   function renderSiteConfig() {
@@ -1525,7 +1520,7 @@
       const behaviors = PG_BEHAVIORS.filter((behavior) => behavior.tone === tone);
       const col = el("div", { className: "pg-choice-col", dataset: { tone: tone === "safe" ? "good" : "critical" } }, [
         el("div", { className: "pg-choice-head" }, [
-          el("span", { className: "pg-choice-title", text: tone === "safe" ? "✓ Safe" : "✕ Bad" }),
+          el("span", { className: "pg-choice-title", text: tone === "safe" ? "Safe" : "Bad" }),
         ]),
       ]);
       for (const behavior of behaviors) {
@@ -1555,9 +1550,8 @@
           },
         });
         input.checked = Boolean(state.pgSelected[behavior.id]);
-        col.append(el("label", { className: "pg-choice", dataset: { tone } }, [
+        col.append(el("label", { className: "pg-choice" }, [
           input,
-          el("span", { className: "pg-choice-marker", "aria-hidden": "true", text: tone === "safe" ? "✓" : "✕" }),
           el("span", { text: behavior.label }),
         ]));
       }
@@ -1724,9 +1718,13 @@
           el("span", { className: "sr-only", text: `${stateLabel}: ` }),
           document.createTextNode(title),
         ]),
-        opts.request ? el("span", { className: "pg-step-meta pg-step-request", text: opts.request }) : null,
-        opts.httpStatus ? el("span", { className: "pg-step-meta", text: httpStatusText(opts.httpStatus) }) : null,
-        opts.reason ? el("span", { className: "pg-step-meta", dataset: { tone: "critical" }, text: opts.reason }) : null,
+        opts.request || opts.httpStatus
+          ? el("span", { className: "pg-step-meta pg-step-meta-line" }, [
+              opts.request ? el("span", { className: "pg-step-request", text: opts.request }) : null,
+              opts.request && opts.httpStatus ? el("span", { className: "pg-step-sep", text: "·" }) : null,
+              opts.httpStatus ? el("span", { text: httpStatusText(opts.httpStatus) }) : null,
+            ])
+          : null,
         opts.message ? el("span", { className: "pg-step-meta", text: opts.message }) : null,
       ]),
     ]);
@@ -1734,25 +1732,12 @@
 
   function renderPlayground() {
     const site = selectedSite();
-    const target = $("pg-target");
-    if (!target) return;
-
     if (!state.pgSelected) state.pgSelected = defaultBehaviorSelection();
-
-    const currentTarget = site ? site.id : "";
-    clear(target);
-    for (const item of state.sites) {
-      target.append(el("option", { value: item.id, text: item.host }));
-    }
-    if (currentTarget) target.value = currentTarget;
-    target.onchange = (event) => selectSite(event.target.value);
 
     renderPlaygroundChoices();
 
     const plan = buildPlaygroundPlan();
     const selected = plan[0] || null;
-    const selectedCount = PG_BEHAVIORS.filter((behavior) => state.pgSelected[behavior.id]).length;
-    if ($("pg-selection")) $("pg-selection").textContent = `${selectedCount} selected`;
 
     const result = selected ? state.pgResults[selected.id] : null;
     const running = Boolean(state.pgRunning && selected && result && result.state === "running");
@@ -1776,45 +1761,30 @@
       if (timeline.dataset.signature !== signature) {
         timeline.dataset.signature = signature;
         clear(timeline);
-        if (!steps.length) {
-          timeline.append(el("li", { className: "pg-timeline-step pg-timeline-empty", dataset: { state: running ? "running" : "pending" } }, [
+        if (!steps.length && running) {
+          timeline.append(el("li", { className: "pg-timeline-step pg-timeline-empty", dataset: { state: "running" } }, [
             el("span", { className: "pg-step-marker-wrap" }, [
-              running
-                ? el("span", { className: "pg-step-spinner", "aria-hidden": "true" })
-                : el("span", { className: "pg-step-marker", "aria-hidden": "true" }),
+              el("span", { className: "pg-step-spinner", "aria-hidden": "true" }),
             ]),
             el("div", { className: "pg-step-body" }, [
-              el("span", {
-                className: "pg-step-title",
-                text: running ? "Starting the run…" : result ? "No steps were recorded." : "No output yet.",
-              }),
-              el("span", {
-                className: "pg-step-meta",
-                text: running
-                  ? "Waiting for the first step from the gateway."
-                  : result
-                    ? "See the final response below."
-                    : selected
-                      ? `Run “${selected.label}” to see the agent's steps.`
-                      : "Select a crawler behavior, then run it.",
-              }),
+              el("span", { className: "pg-step-title", text: "Starting the run…" }),
+              el("span", { className: "pg-step-meta", text: "Waiting for the first step from the gateway." }),
             ]),
           ]));
         }
-        // Only an explicit `allowed: false` marks a refused step. Expected 402 challenges and
-        // 4xx responses the gateway records with `allowed: null` are normal flow steps.
-        const anyRefusedStep = steps.some((step) => step && step.allowed === false);
+        // `allowed` is true only for HTTP 200, so a redirect or the expected 402 challenge is
+        // not a refusal. Only a refused overall run marks the offending non-2xx steps.
+        const anyBlockedStep = refused && steps.some((step) => step && Number(step.http_status) >= 400);
         steps.forEach((step, index) => {
           const isLast = index === steps.length - 1;
           let stepState = "done";
-          if (step && step.allowed === false) stepState = "blocked";
-          else if (refused && !anyRefusedStep && isLast) stepState = "blocked";
+          if (refused && step && Number(step.http_status) >= 400) stepState = "blocked";
+          else if (refused && !anyBlockedStep && isLast) stepState = "blocked";
           if (running && isLast && stepState !== "blocked") stepState = "running";
           timeline.append(playgroundStepRow(index + 1, (step && step.label) || "Step", {
             state: stepState,
             request: step && step.request,
             httpStatus: step && step.http_status,
-            reason: step && step.reason_code ? humanize(step.reason_code) : "",
             message: step && step.message,
           }));
         });
@@ -1871,7 +1841,7 @@
     else if (state.pgRunning) disabledReason = `Running “${plan[0].label}”...`;
     else if (state.applying) disabledReason = "Applying the website configuration...";
     button.disabled = Boolean(disabledReason) || state.pgRunning;
-    button.textContent = state.pgRunning ? "Running…" : "Run";
+    button.textContent = state.pgRunning ? "Running…" : "Run test";
     hint.textContent = disabledReason;
     hint.hidden = !disabledReason;
   }
@@ -2385,7 +2355,7 @@
   function renderCommerce(c) {
     const cur = c.currency;
     const d = c.deposits || {};
-    $("count-orders").textContent = String(c.paid_access_orders + c.paid_product_orders + c.active_subscriptions);
+    if ($("count-orders")) $("count-orders").textContent = String(c.paid_access_orders + c.paid_product_orders + c.active_subscriptions);
     const kpis = $("commerce-kpis");
     clear(kpis);
     kpis.append(
@@ -2554,7 +2524,7 @@
     initTheme();
 
     state.pgSelected = defaultBehaviorSelection();
-    $("site-add-form").addEventListener("submit", addSite);
+    if ($("site-add-form")) $("site-add-form").addEventListener("submit", addSite);
     $("allowed-add-form").addEventListener("submit", (event) => addPath(event, "allowed"));
     $("disallowed-add-form").addEventListener("submit", (event) => addPath(event, "disallowed"));
 
@@ -2634,7 +2604,7 @@
       markSiteDirty();
     });
     $("pg-reset").addEventListener("click", resetPlayground);
-    $("pg-clear").addEventListener("click", clearPlayground);
+    if ($("pg-clear")) $("pg-clear").addEventListener("click", clearPlayground);
     $("pg-run-button").addEventListener("click", runPlaygroundPlan);
     document.addEventListener("click", () => closeSiteMenus());
 
