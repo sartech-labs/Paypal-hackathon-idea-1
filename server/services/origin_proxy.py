@@ -23,6 +23,29 @@ import httpx
 
 logger = logging.getLogger("sara.origin")
 
+# The owner's signed console session cookie (server.core.owner_auth.COOKIE_NAME). Named here
+# rather than imported so the proxy does not depend on the sign-in module.
+CONSOLE_COOKIE = "sara_owner"
+
+
+def _strip_console_cookie(value: str) -> Optional[str]:
+    """Remove the console session cookie from a Cookie header value.
+
+    The proxied website must never receive the owner's console credential; it would
+    otherwise hold a working session for this console until the cookie expires.
+    """
+    pairs = [
+        pair.strip()
+        for pair in value.split(";")
+        if pair.strip() and pair.split("=", 1)[0].strip() != CONSOLE_COOKIE
+    ]
+    return "; ".join(pairs) if pairs else None
+
+
+def _sets_console_cookie(name: str, value: str) -> bool:
+    """True when an origin response tries to set or clear the console cookie."""
+    return name.lower() == "set-cookie" and value.split("=", 1)[0].strip() == CONSOLE_COOKIE
+
 # Response headers worth passing through to agents; cookies and hop-by-hop headers are dropped.
 PASS_HEADERS = ("cache-control", "etag", "last-modified", "content-language", "expires", "vary")
 # Human traffic is proxied as a normal browser request, so cookies and redirects pass through.
@@ -227,6 +250,13 @@ class OriginProxy:
             for key, value in (headers or {}).items()
             if key.lower() not in HOP_BY_HOP
         }
+        # The owner's console session cookie must never reach the proxied website.
+        for key in [k for k in safe_headers if k.lower() == "cookie"]:
+            filtered = _strip_console_cookie(safe_headers[key])
+            if filtered is None:
+                safe_headers.pop(key)
+            else:
+                safe_headers[key] = filtered
         try:
             async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport, follow_redirects=False) as client:
                 res = await client.request(
@@ -240,7 +270,7 @@ class OriginProxy:
         response_headers = OriginHeaders(
             (key, value)
             for key, value in res.headers.multi_items()
-            if key.lower() not in HOP_BY_HOP
+            if key.lower() not in HOP_BY_HOP and not _sets_console_cookie(key, value)
         )
         return OriginResponse(
             status_code=res.status_code,

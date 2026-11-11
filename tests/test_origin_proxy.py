@@ -236,3 +236,39 @@ async def test_allowed_agent_post_forwards_method_body_and_headers(
             b"payload=1",
             "application/x-www-form-urlencoded",
         )
+
+
+@pytest.mark.asyncio
+async def test_forward_never_leaks_the_owner_console_cookie() -> None:
+    from server.core.owner_auth import COOKIE_NAME
+    from server.services.origin_proxy import CONSOLE_COOKIE
+
+    # The proxy's name for the cookie must stay the sign-in module's name.
+    assert CONSOLE_COOKIE == COOKIE_NAME
+
+    received: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.append(request.headers.get("cookie"))
+        return httpx.Response(
+            200,
+            text="ok",
+            headers=[
+                ("set-cookie", f"{COOKIE_NAME}=forged; Path=/"),
+                ("set-cookie", "site_session=abc; Path=/"),
+                ("content-type", "text/plain"),
+            ],
+        )
+
+    proxy = OriginProxy("https://origin.example", transport=httpx.MockTransport(handler))
+
+    mixed = await proxy.forward("GET", "/news", headers={"Cookie": f"site_session=abc; {COOKIE_NAME}=secret; theme=dark"})
+    only_ours = await proxy.forward("GET", "/news", headers={"Cookie": f"{COOKIE_NAME}=secret"})
+
+    # The owner's site keeps its own cookies but never sees the console session.
+    assert received[0] == "site_session=abc; theme=dark"
+    assert received[1] is None
+    # And it cannot set or clear the console session through the proxy.
+    set_cookies = [value for key, value in mixed.headers.multi_items() if key.lower() == "set-cookie"]
+    assert set_cookies == ["site_session=abc; Path=/"]
+    assert only_ours.status_code == 200
