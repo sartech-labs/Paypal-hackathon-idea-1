@@ -39,6 +39,8 @@
     config: null,
     configReadOnly: false,
     applying: false,
+    editingDeposit: false,
+    editingRate: false,
     sites: [],
     selectedSiteId: null,
     appliedSiteId: null,
@@ -46,6 +48,7 @@
     pgCanStart: null,
     pgSelected: null,
     pgResults: {},
+    pgSteps: [],
     pgRunning: false,
     pgCurrentIndex: -1,
     pgRunToken: 0,
@@ -980,19 +983,22 @@
   const CURRENCY_SYMBOLS = { USD: "$" };
 
   const PG_BEHAVIORS = [
-    { id: "follow_allowed", label: "Follow allowed paths", tone: "safe", action: "allowed_page", selected: true },
-    { id: "respect_rate", label: "Respect rate limit", tone: "safe", action: "polite_pace", selected: true },
-    { id: "send_agent_id", label: "Send agent ID", tone: "safe", action: "valid_paid_token", selected: true },
-    { id: "honor_crawl_delay", label: "Honor crawl-delay", tone: "safe", action: "deposit_and_crawl", selected: false },
-    { id: "hit_blocked", label: "Hit blocked path", tone: "bad", action: "disallowed_path", selected: true },
-    { id: "exceed_rate", label: "Exceed rate limit", tone: "bad", action: "rate_limit_burst", selected: true },
-    { id: "spoof_identity", label: "Spoof identity", tone: "bad", action: "forged_signature", selected: false },
-    { id: "ignore_robots", label: "Ignore robots.txt", tone: "bad", action: "disallowed_path", selected: false },
+    { id: "crawl_allowed", label: "Crawl allowed paths", tone: "safe", action: "allowed_page" },
+    { id: "follow_rate_limit", label: "Follow website rate limit", tone: "safe", action: "polite_pace" },
+    { id: "crawl_disallowed", label: "Crawl disallowed paths", tone: "bad", action: "disallowed_path" },
+    { id: "violate_rate_limit", label: "Violate website rate limit", tone: "bad", action: "rate_limit_burst" },
   ];
 
+  const RATE_UNIT_LABELS = { 1: "second", 60: "minute", 3600: "hour" };
+
+  function rateUnitLabel(unit) {
+    return RATE_UNIT_LABELS[Number(unit)] || "minute";
+  }
+
+  // Radios allow exactly one behavior at a time; the first is selected by default.
   function defaultBehaviorSelection() {
     const result = {};
-    for (const behavior of PG_BEHAVIORS) result[behavior.id] = behavior.selected;
+    PG_BEHAVIORS.forEach((behavior, index) => { result[behavior.id] = index === 0; });
     return result;
   }
 
@@ -1098,7 +1104,10 @@
 
   function showSetupMessage(message) {
     const node = $("cfg-hint");
-    if (node) node.textContent = message;
+    if (node) {
+      node.textContent = message;
+      node.hidden = !message;
+    }
     showBanner(message);
   }
 
@@ -1187,14 +1196,17 @@
     if (siteId === state.selectedSiteId) return;
     if (state.pgRunning) stopPlaygroundRun(true);
     state.selectedSiteId = siteId;
+    state.editingDeposit = false;
+    state.editingRate = false;
     state.pgResults = {};
+    state.pgSteps = [];
     persistSites();
     renderSetupView();
   }
 
   function addSite(event) {
     event.preventDefault();
-    showSetupMessage("Adding websites is disabled in demo.");
+    showSetupMessage("Adding new website is disabled for demo");
   }
 
   function toggleSite(siteId) {
@@ -1203,6 +1215,10 @@
     if (state.pgRunning) stopPlaygroundRun(true);
     site.status = site.status === "live" ? "paused" : "live";
     site.dirty = true;
+    state.editingDeposit = false;
+    state.editingRate = false;
+    state.pgResults = {};
+    state.pgSteps = [];
     persistSites();
     renderSetupView();
     toast(site.status === "live" ? "good" : "neutral", site.status === "live" ? "✓" : "○", `${site.host} ${site.status === "live" ? "resumed" : "paused"}`, site.status === "live" ? "Apply the configuration to make it live." : "The saved configuration is kept.");
@@ -1219,7 +1235,10 @@
     const [removed] = state.sites.splice(index, 1);
     if (state.appliedSiteId === siteId) state.appliedSiteId = null;
     if (state.selectedSiteId === siteId) state.selectedSiteId = state.sites[Math.max(0, index - 1)].id;
+    state.editingDeposit = false;
+    state.editingRate = false;
     state.pgResults = {};
+    state.pgSteps = [];
     persistSites();
     renderSetupView();
     toast("neutral", "−", "Website removed", removed.host);
@@ -1247,7 +1266,7 @@
   }
 
   function renderRules(site) {
-    $("rules-site").textContent = site ? site.host : "";
+    if ($("rules-site")) $("rules-site").textContent = site ? site.host : "";
     $("allowed-count").textContent = String((site && site.allowed.length) || 0);
     $("disallowed-count").textContent = String((site && site.disallowed.length) || 0);
     renderPathList("allowed", (site && site.allowed) || []);
@@ -1258,18 +1277,39 @@
     const site = selectedSite();
     const live = Boolean(site && site.status === "live");
     const disabled = !site || state.configReadOnly || state.applying || !live;
-    const applyingText = state.applying ? "Applying..." : "Apply live";
-    for (const id of ["cfg-save", "rules-save"]) {
+    const canEdit = !state.configReadOnly;
+
+    for (const id of ["cfg-deposit-save", "cfg-rate-save"]) {
       const button = $(id);
       if (button) {
         button.disabled = disabled;
-        button.textContent = applyingText;
+        button.textContent = state.applying ? "Saving..." : "Save";
       }
     }
+    for (const id of ["cfg-deposit-edit", "cfg-rate-edit"]) {
+      const button = $(id);
+      if (button) button.disabled = disabled;
+    }
+    // Read-only and paused websites cannot be edited; leave edit mode if either happened.
+    if (!canEdit || !site || !live) {
+      state.editingDeposit = false;
+      state.editingRate = false;
+    }
+
+    if ($("cfg-deposit-read")) $("cfg-deposit-read").hidden = state.editingDeposit;
+    if ($("cfg-deposit-edit-row")) $("cfg-deposit-edit-row").hidden = !state.editingDeposit;
+    if ($("cfg-deposit-value")) $("cfg-deposit-value").textContent = site ? (moneyForSite(site) || "—") : "—";
+    if ($("cfg-rate-read")) $("cfg-rate-read").hidden = state.editingRate;
+    if ($("cfg-rate-edit-row")) $("cfg-rate-edit-row").hidden = !state.editingRate;
+    if ($("cfg-rate-value")) {
+      $("cfg-rate-value").textContent = site
+        ? `${site.rate} request${Number(site.rate) === 1 ? "" : "s"} / ${rateUnitLabel(site.unit)}`
+        : "—";
+    }
+
     const symbol = CURRENCY_SYMBOLS[(site && site.currency) || "USD"] || "$";
     if ($("cfg-currency-symbol")) $("cfg-currency-symbol").textContent = symbol;
 
-    const canEdit = !state.configReadOnly;
     if ($("cfg-deposit")) $("cfg-deposit").disabled = !canEdit || !site;
     if ($("site-add-input")) $("site-add-input").disabled = !canEdit;
     if ($("site-add-button")) {
@@ -1291,9 +1331,12 @@
     else if (site.status !== "live") hint = `${site.host} is paused. Resume it to apply changes.`;
     else if (state.applying) hint = `Applying the configuration for ${site.host}...`;
     else if (site.dirty) hint = `Unsaved changes for ${site.host}.`;
-    else if (site.id !== state.appliedSiteId) hint = `Preview for ${site.host}. Apply live to make it the gateway configuration.`;
-    else hint = `Live configuration for ${site.host}.`;
-    if ($("cfg-hint")) $("cfg-hint").textContent = hint;
+    else if (site.id !== state.appliedSiteId) hint = `Preview for ${site.host}. Saving applies it live.`;
+    else hint = "";
+    if ($("cfg-hint")) {
+      $("cfg-hint").textContent = hint;
+      $("cfg-hint").hidden = !hint;
+    }
     if ($("rules-hint")) {
       $("rules-hint").textContent = live
         ? "Wildcards apply as path prefixes on the gateway."
@@ -1308,10 +1351,10 @@
       renderRules(null);
       return;
     }
-    $("cfg-deposit").value = site.deposit || "";
+    if ($("cfg-deposit")) $("cfg-deposit").value = site.deposit || "";
     site.currency = "USD";
-    $("cfg-rate").value = site.rate || "";
-    $("cfg-rate-unit").value = String(site.unit || 60);
+    if ($("cfg-rate")) $("cfg-rate").value = site.rate || "";
+    if ($("cfg-rate-unit")) $("cfg-rate-unit").value = String(site.unit || 60);
     renderRules(site);
     refreshSetupControls();
   }
@@ -1336,6 +1379,7 @@
     const key = tone === "allowed" ? "allowed" : "disallowed";
     site[key] = site[key].filter((item) => item !== path);
     state.pgResults = {};
+    state.pgSteps = [];
     markSiteDirty();
     renderSiteConfig();
     renderPlayground();
@@ -1365,6 +1409,7 @@
     site[key].push(value);
     input.value = "";
     state.pgResults = {};
+    state.pgSteps = [];
     markSiteDirty();
     renderSiteConfig();
     renderPlayground();
@@ -1376,6 +1421,7 @@
       state.selectedSiteId = null;
       state.appliedSiteId = null;
       state.pgResults = {};
+      state.pgSteps = [];
       state.config = null;
     }
     let cfg = state.config;
@@ -1472,29 +1518,48 @@
 
   function renderPlaygroundChoices() {
     const box = $("pg-choices");
+    if (!box) return;
     clear(box);
+    if (!state.pgSelected) state.pgSelected = defaultBehaviorSelection();
     for (const tone of ["safe", "bad"]) {
       const behaviors = PG_BEHAVIORS.filter((behavior) => behavior.tone === tone);
       const col = el("div", { className: "pg-choice-col", dataset: { tone: tone === "safe" ? "good" : "critical" } }, [
         el("div", { className: "pg-choice-head" }, [
-          el("span", { className: "pg-choice-title", text: tone === "safe" ? "Safe" : "Bad" }),
+          el("span", { className: "pg-choice-title", text: tone === "safe" ? "✓ Safe" : "✕ Bad" }),
         ]),
       ]);
       for (const behavior of behaviors) {
         const input = el("input", {
-          type: "checkbox",
+          type: "radio",
+          name: "pg-behavior",
           value: behavior.id,
           "aria-label": behavior.label,
           onchange: (event) => {
-            state.pgSelected[behavior.id] = event.target.checked;
+            // A radio group keeps exactly one behavior selected.
+            if (!event.target.checked) return;
+            for (const item of PG_BEHAVIORS) state.pgSelected[item.id] = item.id === behavior.id;
             state.pgResults = {};
+            state.pgSteps = [];
             renderPlayground();
             const next = document.querySelector(`#pg-choices input[value="${behavior.id}"]`);
             if (next) next.focus();
           },
+          onclick: (event) => {
+            // Clicking the radio that is already selected fires no change event, so clear
+            // the previous output here as well.
+            if (!event.target.checked || !state.pgSelected[behavior.id]) return;
+            if (!state.pgResults[behavior.id] && !state.pgSteps.length) return;
+            state.pgResults = {};
+            state.pgSteps = [];
+            renderPlayground();
+          },
         });
         input.checked = Boolean(state.pgSelected[behavior.id]);
-        col.append(el("label", { className: "pg-choice" }, [input, el("span", { text: behavior.label })]));
+        col.append(el("label", { className: "pg-choice", dataset: { tone } }, [
+          input,
+          el("span", { className: "pg-choice-marker", "aria-hidden": "true", text: tone === "safe" ? "✓" : "✕" }),
+          el("span", { text: behavior.label }),
+        ]));
       }
       box.append(col);
     }
@@ -1504,21 +1569,6 @@
     const safe = PG_BEHAVIORS.filter((behavior) => behavior.tone === "safe" && state.pgSelected[behavior.id]);
     const bad = PG_BEHAVIORS.filter((behavior) => behavior.tone === "bad" && state.pgSelected[behavior.id]);
     return safe.concat(bad);
-  }
-
-  function planStatus(result, running, hasRun) {
-    if (result && result.state) {
-      if (result.state === "blocked") {
-        const http = result.http ? ` · HTTP ${result.http}` : "";
-        return { state: "blocked", label: `BLOCKS${http}`, tone: "critical", detail: result.detail };
-      }
-      if (result.state === "running") return { state: "running", label: "running...", tone: "neutral" };
-      if (result.state === "error") return { state: "blocked", label: "error", tone: "critical", detail: result.detail };
-      return { state: "completes", label: "completes", tone: "good", detail: result.detail };
-    }
-    if (running) return { state: "not-tested", label: "waiting", tone: "muted" };
-    if (!hasRun) return { state: "pending", label: "", tone: "muted" };
-    return { state: "not-tested", label: "not tested", tone: "muted" };
   }
 
   const HTTP_REASON = Object.freeze({
@@ -1659,18 +1709,25 @@
     ]);
   }
 
-  function playgroundResponseBlock(step, response) {
-    return el("div", {
-      className: "pg-response",
-      id: `pg-response-${step.id}`,
-      role: "region",
-      "aria-label": `Response for ${step.label}`,
-    }, [
-      el("div", { className: "pg-response-head", text: "Response" }),
-      el("dl", { className: "pg-response-body" }, [
-        responseRow("Status", response.status, response.statusTone),
-        responseRow("Message", response.message),
-        responseRow("Deposit", response.deposit, response.depositTone),
+  function playgroundStepRow(number, label, options) {
+    const opts = options || {};
+    const stepState = opts.state || "done";
+    const title = number ? `Step ${number} – ${label}` : label;
+    const marker = stepState === "running"
+      ? el("span", { className: "pg-step-spinner", "aria-hidden": "true" })
+      : el("span", { className: "pg-step-marker", "aria-hidden": "true" });
+    const stateLabel = stepState === "blocked" ? "Blocked" : stepState === "pending" ? "Pending" : stepState === "running" ? "Running" : "Completed";
+    return el("li", { className: "pg-timeline-step", dataset: { state: stepState } }, [
+      el("span", { className: "pg-step-marker-wrap" }, [marker]),
+      el("div", { className: "pg-step-body" }, [
+        el("span", { className: "pg-step-title" }, [
+          el("span", { className: "sr-only", text: `${stateLabel}: ` }),
+          document.createTextNode(title),
+        ]),
+        opts.request ? el("span", { className: "pg-step-meta pg-step-request", text: opts.request }) : null,
+        opts.httpStatus ? el("span", { className: "pg-step-meta", text: httpStatusText(opts.httpStatus) }) : null,
+        opts.reason ? el("span", { className: "pg-step-meta", dataset: { tone: "critical" }, text: opts.reason }) : null,
+        opts.message ? el("span", { className: "pg-step-meta", text: opts.message }) : null,
       ]),
     ]);
   }
@@ -1679,6 +1736,8 @@
     const site = selectedSite();
     const target = $("pg-target");
     if (!target) return;
+
+    if (!state.pgSelected) state.pgSelected = defaultBehaviorSelection();
 
     const currentTarget = site ? site.id : "";
     clear(target);
@@ -1690,71 +1749,116 @@
 
     renderPlaygroundChoices();
 
-    const selectedCount = PG_BEHAVIORS.filter((behavior) => state.pgSelected[behavior.id]).length;
-    $("pg-selection").textContent = `${selectedCount} selected`;
-
     const plan = buildPlaygroundPlan();
-    const hasRun = Boolean(state.pgRunning) || Object.keys(state.pgResults).length > 0;
-    const list = $("pg-plan-list");
-    clear(list);
+    const selected = plan[0] || null;
+    const selectedCount = PG_BEHAVIORS.filter((behavior) => state.pgSelected[behavior.id]).length;
+    if ($("pg-selection")) $("pg-selection").textContent = `${selectedCount} selected`;
 
-    if (!plan.length) {
-      list.append(el("li", { className: "empty", text: "Select at least one behavior to build the plan." }));
+    const result = selected ? state.pgResults[selected.id] : null;
+    const running = Boolean(state.pgRunning && selected && result && result.state === "running");
+    const resultSteps = result && Array.isArray(result.steps) ? result.steps : [];
+    const steps = running ? state.pgSteps : resultSteps;
+
+    // Timeline of the actual steps the agent took, with a live spinner on the newest one.
+    // Rebuild only when the steps or run state change, so polling does not churn the DOM.
+    const timeline = $("pg-timeline");
+    if (timeline) {
+      const refused = Boolean(result && result.state === "blocked");
+      const signature = JSON.stringify({
+        running: running ? 1 : 0,
+        refused: refused ? 1 : 0,
+        hasResult: result ? 1 : 0,
+        emptyText: !steps.length ? (running ? "running" : result ? "result" : "idle") : "",
+        steps: steps.map((step) => step
+          ? [step.seq, step.label, step.allowed, step.http_status, step.reason_code, step.message, step.request]
+          : null),
+      });
+      if (timeline.dataset.signature !== signature) {
+        timeline.dataset.signature = signature;
+        clear(timeline);
+        if (!steps.length) {
+          timeline.append(el("li", { className: "pg-timeline-step pg-timeline-empty", dataset: { state: running ? "running" : "pending" } }, [
+            el("span", { className: "pg-step-marker-wrap" }, [
+              running
+                ? el("span", { className: "pg-step-spinner", "aria-hidden": "true" })
+                : el("span", { className: "pg-step-marker", "aria-hidden": "true" }),
+            ]),
+            el("div", { className: "pg-step-body" }, [
+              el("span", {
+                className: "pg-step-title",
+                text: running ? "Starting the run…" : result ? "No steps were recorded." : "No output yet.",
+              }),
+              el("span", {
+                className: "pg-step-meta",
+                text: running
+                  ? "Waiting for the first step from the gateway."
+                  : result
+                    ? "See the final response below."
+                    : selected
+                      ? `Run “${selected.label}” to see the agent's steps.`
+                      : "Select a crawler behavior, then run it.",
+              }),
+            ]),
+          ]));
+        }
+        // Only an explicit `allowed: false` marks a refused step. Expected 402 challenges and
+        // 4xx responses the gateway records with `allowed: null` are normal flow steps.
+        const anyRefusedStep = steps.some((step) => step && step.allowed === false);
+        steps.forEach((step, index) => {
+          const isLast = index === steps.length - 1;
+          let stepState = "done";
+          if (step && step.allowed === false) stepState = "blocked";
+          else if (refused && !anyRefusedStep && isLast) stepState = "blocked";
+          if (running && isLast && stepState !== "blocked") stepState = "running";
+          timeline.append(playgroundStepRow(index + 1, (step && step.label) || "Step", {
+            state: stepState,
+            request: step && step.request,
+            httpStatus: step && step.http_status,
+            reason: step && step.reason_code ? humanize(step.reason_code) : "",
+            message: step && step.message,
+          }));
+        });
+        if (running) timeline.append(playgroundStepRow(null, "Final response", { state: "pending" }));
+      }
     }
 
-    const resultStates = state.pgResults;
-    const tested = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state && resultStates[step.id].state !== "running").length;
-    const completed = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state === "completes").length;
-    const blocked = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state === "blocked").length;
-    const errored = plan.filter((step) => resultStates[step.id] && resultStates[step.id].state === "error").length;
-    const countNode = $("pg-plan-count");
-    const summaryNode = $("pg-plan-summary");
-    if (!plan.length) {
-      countNode.textContent = "0 of 0 tested";
-      summaryNode.textContent = "Select behaviors to build the plan.";
-    } else if (!hasRun) {
-      countNode.textContent = `0 of ${plan.length} tested`;
-      summaryNode.textContent = "Select behaviors, then run the plan.";
-    } else {
-      countNode.textContent = `${tested} of ${plan.length} tested`;
-      summaryNode.textContent = `completes ${completed} · blocks ${blocked}${errored ? ` · errors ${errored}` : ""} · not tested ${Math.max(0, plan.length - tested)}`;
-    }
-
-    plan.forEach((step, index) => {
-      const result = state.pgResults[step.id];
-      const status = planStatus(result, state.pgRunning, hasRun);
+    // The final response is always shown after a run, with no expand/collapse step.
+    const finalBox = $("pg-final");
+    if (finalBox) {
+      clear(finalBox);
       const response = result && result.response ? result.response : null;
-      const expanded = Boolean(response) && Boolean(result.expanded);
-      const row = el("button", {
-        type: "button",
-        className: "pg-plan-row",
-        dataset: { state: status.state, stepId: step.id },
-        "aria-expanded": response ? (expanded ? "true" : "false") : null,
-        "aria-controls": response && expanded ? `pg-response-${step.id}` : null,
-        title: response ? (expanded ? "Collapse response" : "Show final response") : null,
-        disabled: response ? null : "disabled",
-        onclick: response
-          ? () => {
-              result.expanded = !result.expanded;
-              renderPlayground();
-              const next = document.querySelector(`#pg-plan-list .pg-plan-row[data-step-id="${step.id}"]`);
-              if (next) next.focus();
-            }
-          : null,
-      }, [
-        el("span", { className: "pg-plan-num", text: String(index + 1).padStart(2, "0") }),
-        el("span", { className: "pg-plan-tone", dataset: { tone: step.tone }, text: step.tone === "safe" ? "SAFE" : "BAD" }),
-        el("span", { className: "pg-plan-label" }, [
-          el("span", { className: "pg-plan-name", text: step.label }),
-          status.detail ? el("small", { text: status.detail }) : null,
-        ]),
-        el("span", { className: "pg-plan-status", dataset: { tone: status.tone }, text: status.label }),
-        el("span", { className: "pg-plan-caret", "aria-hidden": "true", text: response ? (expanded ? "▾" : "▸") : "" }),
-      ]);
-      const item = el("li", { className: "pg-plan-item" }, [row]);
-      if (response && expanded) item.append(playgroundResponseBlock(step, response));
-      list.append(item);
-    });
+      finalBox.hidden = !response;
+      if (response) {
+        finalBox.dataset.tone = response.statusTone || "muted";
+        appendAll(
+          finalBox,
+          el("div", { className: "pg-final-head" }, [
+            el("span", { className: "pg-final-title", text: "Final response" }),
+          ]),
+          el("dl", { className: "pg-response-body" }, [
+            responseRow("Status", response.status, response.statusTone),
+            responseRow("Message", response.message),
+            responseRow("Deposit", response.deposit, response.depositTone),
+          ])
+        );
+      }
+    }
+
+    const countNode = $("pg-plan-count");
+    if (countNode) {
+      if (running) countNode.textContent = "Running…";
+      else if (result && result.response) countNode.textContent = result.response.status;
+      else countNode.textContent = "";
+    }
+    const summaryNode = $("pg-plan-summary");
+    if (summaryNode) {
+      if (!selected) summaryNode.textContent = "Select a crawler behavior, then run it.";
+      else if (running) summaryNode.textContent = `Running “${selected.label}”…`;
+      else if (!result) summaryNode.textContent = `Ready to run “${selected.label}”.`;
+      else if (result.state === "blocked") summaryNode.textContent = "The gateway refused this behavior.";
+      else if (result.state === "error") summaryNode.textContent = result.detail || "The run did not finish.";
+      else summaryNode.textContent = "The gateway allowed this behavior.";
+    }
 
     const button = $("pg-run-button");
     const hint = $("pg-run-hint");
@@ -1763,13 +1867,11 @@
     else if (!state.pgCanStart) disabledReason = "Starting runs needs the admin token, or DEMO_PUBLIC=true on a demo deployment.";
     else if (!site) disabledReason = "Select a website first.";
     else if (site.status !== "live") disabledReason = `Resume ${site.host} to run the playground.`;
-    else if (!plan.length) disabledReason = "Select at least one behavior.";
-    else if (state.pgRunning) disabledReason = `Running ${Math.min(state.pgCurrentIndex + 1, plan.length)} of ${plan.length}...`;
+    else if (!plan.length) disabledReason = "Select a crawler behavior.";
+    else if (state.pgRunning) disabledReason = `Running “${plan[0].label}”...`;
     else if (state.applying) disabledReason = "Applying the website configuration...";
     button.disabled = Boolean(disabledReason) || state.pgRunning;
-    button.textContent = state.pgRunning
-      ? `Running ${Math.min(state.pgCurrentIndex + 1, plan.length)} of ${plan.length}`
-      : "Run plan";
+    button.textContent = state.pgRunning ? "Running…" : "Run";
     hint.textContent = disabledReason;
     hint.hidden = !disabledReason;
   }
@@ -1794,7 +1896,20 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async function pollPlaygroundRun(runId, token) {
+  function mergePlaygroundSteps(steps) {
+    if (!Array.isArray(steps) || !steps.length) return;
+    const seen = new Set(state.pgSteps.map((step) => step.seq));
+    for (const step of steps) {
+      if (!step || seen.has(step.seq)) continue;
+      seen.add(step.seq);
+      state.pgSteps.push(step);
+    }
+    state.pgSteps.sort((a, b) => Number(a.seq) - Number(b.seq));
+  }
+
+  // The gateway streams steps page by page (after=next_seq); onUpdate lets the timeline
+  // render each new step while the run is still in progress.
+  async function pollPlaygroundRun(runId, token, onUpdate) {
     const deadline = Date.now() + 120000;
     let after = 0;
     while (Date.now() < deadline) {
@@ -1804,6 +1919,7 @@
       if (!result.ok) throw new Error(`Could not read the playground run (HTTP ${result.status}).`);
       const body = result.body;
       after = body.next_seq || after;
+      if (typeof onUpdate === "function") onUpdate(body);
       if (["completed", "failed", "cancelled"].includes(body.status)) return body;
     }
     throw new Error("The playground run took too long to finish.");
@@ -1819,6 +1935,7 @@
 
     state.pgRunning = true;
     state.pgResults = {};
+    state.pgSteps = [];
     state.pgCurrentIndex = 0;
     state.pgRunToken = (state.pgRunToken || 0) + 1;
     const token = state.pgRunToken;
@@ -1833,7 +1950,8 @@
         if (token !== state.pgRunToken) return;
         const step = plan[index];
         state.pgCurrentIndex = index;
-        state.pgResults[step.id] = { state: "running" };
+        state.pgSteps = [];
+        state.pgResults[step.id] = { state: "running", steps: [] };
         renderPlayground();
 
         const started = await getJson("/playground/runs", {
@@ -1847,6 +1965,7 @@
           state.pgResults[step.id] = {
             state: "error",
             detail: detail || `HTTP ${started.status}`,
+            steps: state.pgSteps.slice(),
             response: {
               status: httpStatusText(started.status) || "Run failed",
               statusTone: responseTone(started.status),
@@ -1854,14 +1973,19 @@
               deposit: "No deposit taken",
               depositTone: "muted",
             },
-            expanded: true,
           };
           break;
         }
         state.pgActiveRunId = started.body.run_id;
-        const run = await pollPlaygroundRun(started.body.run_id, token);
+        const run = await pollPlaygroundRun(started.body.run_id, token, (progress) => {
+          if (token !== state.pgRunToken) return;
+          mergePlaygroundSteps(progress.steps);
+          renderPlayground();
+        });
         state.pgActiveRunId = null;
         if (!run) return;
+        mergePlaygroundSteps(run.steps);
+        const steps = state.pgSteps.slice();
         const action = (run.action_results && run.action_results[0]) || {};
         const violation = action.violation || run.violation || {};
         const refused = action.outcome === "refused" || run.outcome === "refused";
@@ -1869,11 +1993,11 @@
         const detail = violation.rule_matched || violation.reason_code || action.error || run.error || "";
         const response = describePlaygroundResponse(action, run);
         if (refused) {
-          state.pgResults[step.id] = { state: "blocked", http: violation.http_status, detail, response, expanded: true };
+          state.pgResults[step.id] = { state: "blocked", http: violation.http_status, detail, response, steps };
         } else if (failed) {
-          state.pgResults[step.id] = { state: "error", detail, response, expanded: true };
+          state.pgResults[step.id] = { state: "error", detail, response, steps };
         } else {
-          state.pgResults[step.id] = { state: "completes", detail: "", response, expanded: true };
+          state.pgResults[step.id] = { state: "completes", detail: "", response, steps };
         }
         renderPlayground();
       }
@@ -1884,6 +2008,7 @@
         state.pgResults[step.id] = {
           state: "error",
           detail: message,
+          steps: state.pgSteps.slice(),
           response: {
             status: "Run failed",
             statusTone: "critical",
@@ -1891,7 +2016,6 @@
             deposit: "Deposit state unknown",
             depositTone: "muted",
           },
-          expanded: true,
         };
       }
       const runId = state.pgActiveRunId;
@@ -1927,20 +2051,25 @@
     state.pgRunning = false;
     state.pgCurrentIndex = -1;
     state.pgQuietUntil = Date.now() + 10000;
-    if (clearResults) state.pgResults = {};
+    if (clearResults) {
+      state.pgResults = {};
+      state.pgSteps = [];
+    }
   }
 
   function resetPlayground() {
     if (state.pgRunning) stopPlaygroundRun(true);
     state.pgSelected = defaultBehaviorSelection();
     state.pgResults = {};
+    state.pgSteps = [];
     renderPlayground();
   }
 
   function clearPlayground() {
     if (state.pgRunning) stopPlaygroundRun(true);
-    for (const behavior of PG_BEHAVIORS) state.pgSelected[behavior.id] = false;
+    // A radio group always keeps one behavior; Clear only clears the output.
     state.pgResults = {};
+    state.pgSteps = [];
     renderPlayground();
   }
 
@@ -2425,16 +2554,67 @@
     initTheme();
 
     state.pgSelected = defaultBehaviorSelection();
-    $("cfg-save").addEventListener("click", () => applySelectedSite());
-    $("rules-save").addEventListener("click", () => applySelectedSite());
     $("site-add-form").addEventListener("submit", addSite);
     $("allowed-add-form").addEventListener("submit", (event) => addPath(event, "allowed"));
     $("disallowed-add-form").addEventListener("submit", (event) => addPath(event, "disallowed"));
+
+    // Deposit and rate limit use a pencil-to-edit pattern with a small Save button.
+    if ($("cfg-deposit-edit")) {
+      $("cfg-deposit-edit").addEventListener("click", () => {
+        state.editingDeposit = true;
+        state.editingRate = false;
+        refreshSetupControls();
+        if ($("cfg-deposit")) {
+          $("cfg-deposit").focus();
+          $("cfg-deposit").select();
+        }
+      });
+    }
+    if ($("cfg-deposit-save")) {
+      $("cfg-deposit-save").addEventListener("click", async () => {
+        const saved = await applySelectedSite();
+        if (saved) {
+          state.editingDeposit = false;
+          renderSiteConfig();
+        }
+      });
+    }
+    if ($("cfg-rate-edit")) {
+      $("cfg-rate-edit").addEventListener("click", () => {
+        state.editingRate = true;
+        state.editingDeposit = false;
+        refreshSetupControls();
+        if ($("cfg-rate")) {
+          $("cfg-rate").focus();
+          $("cfg-rate").select();
+        }
+      });
+    }
+    if ($("cfg-rate-save")) {
+      $("cfg-rate-save").addEventListener("click", async () => {
+        const saved = await applySelectedSite();
+        if (saved) {
+          state.editingRate = false;
+          renderSiteConfig();
+        }
+      });
+    }
+    const cancelEdit = (event) => {
+      if (event.key !== "Escape") return;
+      state.editingDeposit = false;
+      state.editingRate = false;
+      refreshSetupControls();
+    };
+    for (const id of ["cfg-deposit", "cfg-rate", "cfg-rate-unit"]) {
+      if ($(id)) $(id).addEventListener("keydown", cancelEdit);
+    }
+
     $("cfg-deposit").addEventListener("input", (event) => {
       const site = selectedSite();
       if (!site) return;
       site.deposit = event.target.value;
       state.pgResults = {};
+      state.pgSteps = [];
       markSiteDirty();
     });
     $("cfg-rate").addEventListener("input", (event) => {
@@ -2442,6 +2622,7 @@
       if (!site) return;
       site.rate = Number(event.target.value) || 0;
       state.pgResults = {};
+      state.pgSteps = [];
       markSiteDirty();
     });
     $("cfg-rate-unit").addEventListener("change", (event) => {
@@ -2449,6 +2630,7 @@
       if (!site) return;
       site.unit = Number(event.target.value) || 60;
       state.pgResults = {};
+      state.pgSteps = [];
       markSiteDirty();
     });
     $("pg-reset").addEventListener("click", resetPlayground);
