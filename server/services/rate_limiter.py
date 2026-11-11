@@ -16,6 +16,7 @@ class SlidingWindowRateLimiter:
     def __init__(self, clock: Callable[[], float] | None = None) -> None:
         self._clock: Callable[[], float] = clock or time.monotonic
         self._windows: dict[str, deque[float]] = {}
+        self._last_requests: dict[str, float] = {}
 
     def _prune(self, session_id: str, now: float, window_seconds: float) -> deque[float]:
         bucket = self._windows.setdefault(session_id, deque())
@@ -67,6 +68,27 @@ class SlidingWindowRateLimiter:
         """Clear rate-limit history for a session or all sessions."""
         if session_id is None:
             self._windows.clear()
+            self._last_requests.clear()
         else:
             self._windows.pop(session_id, None)
+            self._last_requests.pop(session_id, None)
+
+    def check_min_interval(
+        self,
+        session_id: str,
+        min_seconds: float,
+    ) -> tuple[bool, float]:
+        """Enforce a minimum gap between requests (robots Crawl-delay).
+
+        Returns (allowed, retry_after_seconds). A successful check records the request
+        time so the next request must wait at least `min_seconds`.
+        """
+        if min_seconds <= 0:
+            return True, 0.0
+        now = self._clock()
+        last = self._last_requests.get(session_id)
+        if last is not None and now - last < min_seconds:
+            return False, max(0.01, round(min_seconds - (now - last), 3))
+        self._last_requests[session_id] = now
+        return True, 0.0
 

@@ -6,12 +6,19 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse, Response
 
 from server.api.deposits import build_deposit_explanation
+from server.core.console_auth import console_auth_enabled
 from server.core.security import utc_now_iso
-from server.dependencies import AppContainer, get_container, is_valid_admin_token
+from server.dependencies import (
+    AppContainer,
+    console_gate_redirect,
+    get_container,
+    is_console_admin,
+    is_valid_admin_token,
+)
 from server.schemas import (
     DashboardDataResponse,
     DashboardDepositRow,
@@ -26,16 +33,27 @@ from server.schemas import (
 )
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+# The console shell is gated per request, so it must never come from the browser cache:
+# a cached copy would render after sign-out while the data calls 401 underneath it.
+NO_STORE = {"Cache-Control": "no-store"}
 MAX_EVENTS = 250
 
 router = APIRouter(tags=["Dashboard"])
 
 
-def _dashboard_access(container: AppContainer, x_admin_token: Optional[str]) -> str:
+def _dashboard_access(
+    container: AppContainer, x_admin_token: Optional[str], request: Request
+) -> str:
     """Return 'admin' or 'public', or raise 401 when neither applies."""
     if is_valid_admin_token(container, x_admin_token):
         return "admin"
-    if x_admin_token is None and container.settings.dashboard_public:
+    if is_console_admin(request, container):
+        return "admin"
+    if (
+        x_admin_token is None
+        and not console_auth_enabled(container.settings)
+        and (container.settings.dashboard_public or container.config_public)
+    ):
         return "public"
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -68,13 +86,33 @@ def _needs_attention(deposit: DepositRecord) -> bool:
 
 
 @router.get("/console", include_in_schema=False)
-async def dashboard_page() -> FileResponse:
-    return FileResponse(STATIC_DIR / "dashboard.html", media_type="text/html")
+async def dashboard_page(
+    request: Request,
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    redirect = console_gate_redirect(request, container, request.url.path)
+    if redirect is not None:
+        return redirect
+    return FileResponse(
+        STATIC_DIR / "dashboard.html",
+        media_type="text/html",
+        headers=NO_STORE,
+    )
 
 
 @router.get("/dashboard", include_in_schema=False)
-async def dashboard_alias() -> FileResponse:
-    return FileResponse(STATIC_DIR / "dashboard.html", media_type="text/html")
+async def dashboard_alias(
+    request: Request,
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    redirect = console_gate_redirect(request, container, request.url.path)
+    if redirect is not None:
+        return redirect
+    return FileResponse(
+        STATIC_DIR / "dashboard.html",
+        media_type="text/html",
+        headers=NO_STORE,
+    )
 
 
 @router.get(
@@ -83,10 +121,11 @@ async def dashboard_alias() -> FileResponse:
     summary="Dashboard data: KPIs, deposits, sessions, and recent audit events",
 )
 async def dashboard_data(
+    request: Request,
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> DashboardDataResponse:
-    access = _dashboard_access(container, x_admin_token)
+    access = _dashboard_access(container, x_admin_token, request)
     deposits = await container.deposit_manager.list_deposits()
     sessions = await container.session_manager.list_sessions()
     summary = await container.audit_logger.build_summary(
@@ -124,6 +163,10 @@ async def dashboard_data(
         site_id=container.site_config.site_id,
         site_name=container.site_config.site_name,
         policy_version=container.site_config.policy_version,
+        sara_mode=container.settings.sara_mode,
+        origin_url=container.runtime_config_response().origin_url,
+        origin_configured=container.origin_proxy is not None,
+        config_public=container.config_public,
         payment_mode=container.payment_provider.mode,
         settlement_mode=container.deposit_manager.settlement_mode,
         ai_available=container.ai_generator.is_available(),
@@ -197,11 +240,12 @@ async def dashboard_data(
 )
 async def dashboard_explanation(
     deposit_id: str,
+    request: Request,
     use_ai: bool = Query(default=True),
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> DepositExplanationResponse:
-    access = _dashboard_access(container, x_admin_token)
+    access = _dashboard_access(container, x_admin_token, request)
     deposit = await container.deposit_manager.get_deposit(deposit_id)
     if deposit is None:
         raise HTTPException(

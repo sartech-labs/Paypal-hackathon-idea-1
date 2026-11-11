@@ -39,30 +39,30 @@ async def test_dashboard_page_and_assets_are_served(async_client: httpx.AsyncCli
     page = await async_client.get("/console")
     assert page.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
-    assert "SARA publisher console" in page.text
+    assert "SARA console" in page.text
     assert "ag-grid-community@36.2.0" in page.text
     assert 'integrity="sha384-' in page.text
     assert (await async_client.get("/dashboard")).status_code == 200
-    for asset in ("/static/dashboard.js", "/static/dashboard.css", "/static/grid_kit.js", "/static/analytics.js"):
+    for asset in ("/_sara/static/dashboard.js", "/_sara/static/dashboard.css", "/_sara/static/grid_kit.js", "/_sara/static/analytics.js"):
         assert (await async_client.get(asset)).status_code == 200
 
 
 @pytest.mark.asyncio
 async def test_console_loads_shared_grid_kit_and_pinned_ag_studio(async_client: httpx.AsyncClient) -> None:
     page = (await async_client.get("/console")).text
-    for script in ("/static/grid_kit.js", "/static/analytics.js", "/static/dashboard.js"):
+    for script in ("/_sara/static/grid_kit.js", "/_sara/static/analytics.js", "/_sara/static/dashboard.js"):
         assert script in page
     for view in ("overview", "operations", "security", "analytics", "policy"):
         assert f'data-view="{view}"' in page
     # AG Studio is fetched on demand from a pinned version with a Subresource Integrity hash.
-    analytics = (await async_client.get("/static/analytics.js")).text
+    analytics = (await async_client.get("/_sara/static/analytics.js")).text
     assert "ag-studio@3.1.0/dist/umd/ag-studio.min.js" in analytics
     assert 'STUDIO_SRI = "sha384-' in analytics
     # The live demo uses the same grid kit for its request monitor.
     demo = (await async_client.get("/crawler")).text
-    assert "/static/grid_kit.js" in demo and 'id="grid-requests"' in demo
-    # Empty state, live toasts, and the admin-token popover (token form IDs are unchanged).
-    for marker in ('id="console-empty"', 'id="toasts"', 'id="admin-toggle"', 'id="token-form"', 'id="admin-token"'):
+    assert "/_sara/static/grid_kit.js" in demo and 'id="grid-requests"' in demo
+    # Empty state and live toasts remain; the admin popover is not part of the demo console.
+    for marker in ('id="console-empty"', 'id="toasts"'):
         assert marker in page
     for marker in ('id="admin-toggle"', 'id="token-form"', 'id="admin-token"', 'aria-keyshortcuts="S"'):
         assert marker in demo

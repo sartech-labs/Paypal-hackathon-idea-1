@@ -16,7 +16,7 @@ AI agents and crawlers now read the web at machine speed. Publishers express the
 
 ## What it does
 
-SARA is a gateway that sits in front of a website and makes it safe and profitable for AI agents to use. The website itself does not change. Every agent, whether a search crawler, a shopping assistant, or a rogue scraper, comes through the gateway, which:
+SARA is a gateway that sits in front of a website and makes it safe and profitable for AI agents to use. The website itself does not change. It ships as one container at the site root: point the site's DNS or edge proxy at it, set the target URL, and the owner console (the landing page in `SARA_MODE=demo`) configures the target, per-tier deposits, and rules live, with no redeploy. Every agent, whether a search crawler, a shopping assistant, or a rogue scraper, comes through the gateway, which:
 
 1. publishes the site's rules and prices (a crawling policy and `/.well-known/agent-commerce.json`),
 2. answers unpaid requests with `HTTP 402 Payment Required` and how to pay,
@@ -41,7 +41,7 @@ Unpaid requests get `HTTP 402` with the offers that unlock them. The site prices
 
 **For the person.** Aria, one AI agent with many tools: it reads the catalog, plans the cheapest way to do the task, and pays in whichever way fits. A spending mandate (budget, allowed payment types, merchant allow-list, per-purchase cap, approval threshold) is enforced in code. An independent AI purchase review, which never sees web content, checks each purchase against the person's own request and can block it or send it to the person. Anything above the threshold and every recurring charge comes to the person to approve, and a decline is final. Agent studio (`/agent`) runs it live in the browser.
 
-**In front of a real website.** With `ORIGIN_URL` set, SARA sits in front of an existing site: it imports that site's own robots.txt and enforces it (Disallow lines become `403`s before anything reaches the site; Crawl-delay slows the rate limit), and forwards allowed requests to the site unchanged.
+**In front of a real website.** In `SARA_MODE=gateway`, SARA sits at the site root in front of an existing site: it imports that site's own robots.txt and enforces it (Disallow lines become `403`s before anything reaches the site; Crawl-delay slows the rate limit), forwards human traffic to the origin unchanged at the same paths, and gates anything that is not a recognised browser (a Web Bot Auth signature counts as an agent, and so does every User-Agent that is not a real browser fingerprint). The target URL, tier deposits, and rules are editable live from `/console` (or `/` in demo mode) and persisted in `GATEWAY_CONFIG_PATH`, so no redeploy or env edit is needed. SARA's own surface (`/console`, `/admin`, `/health`, `/docs`, `/mcp`, `/_sara/static/*`, and its API prefixes) is reserved and never proxied.
 
 **Verified agents.** Agents can sign their requests (HTTP Message Signatures in the Web Bot Auth profile, Ed25519). A verified agent gets a stable identity, so its record sets its price: half the deposit with a clean record, three times after a deposit was kept, refused after three. Unsigned agents always pay the full deposit (or can be refused outright).
 
@@ -74,7 +74,7 @@ Unpaid requests get `HTTP 402` with the offers that unlock them. The site prices
 - **AI as the explainer:** every refund or forfeiture comes with a plain-English explanation in which each statement cites the audit event behind it.
 - **AI as the policy assistant:** publishers describe their terms in plain English and get a validated, machine-readable policy draft.
 - **AI with PayPal's MCP server:** the publisher's PayPal assistant reads PayPal's own records through PayPal's MCP server. "Verify with PayPal" checks each deposit field by field (order, amount, capture, hold, refund); the AI assistant answers questions such as "check the last three deposits against PayPal" and shows every MCP tool call it made. It is read-only and cannot move money.
-- **A live demo in the browser:** pick a compliant or rogue crawler, run it with an AI model or a scripted driver, and watch the 402 challenge, the PayPal deposit, every allowed and blocked request, the settlement, and the explanation as they happen.
+- **A live demo in the browser:** the owner console at `/` gates a target site, runs an agentic **crawler playground** (checkbox-selected good and bad actions against the real gateway, each with a fresh session, showing the matched rule, HTTP 402/403/429, and deposit consequence), and links to Agent studio at `/agent` for AI-driven crawler and personal-agent runs.
 - A publisher console shows live sessions, deposits, violations, explanations, and the PayPal assistant.
 
 ## How we built it
@@ -83,9 +83,9 @@ Unpaid requests get `HTTP 402` with the offers that unlock them. The site prices
 - **PayPal:** REST APIs for money movement: OAuth 2.0; Orders v2 to create, capture, authorize, and look up deposit orders, and itemized orders (line items, item total, shipping) for pay-per-access and products; Subscriptions v1 (catalog product, billing plan, subscription, status, cancel) for recurring plans; Webhooks with `verify-webhook-signature` (captures, refunds, subscriptions, renewals, disputes), each re-read from PayPal before acting; Orders v2 `track` for shipments; the JS SDK v6 buttons so people can buy the same items; Payments v2 for refunds, refund and capture lookups, and authorization void and capture. Two settlement modes: capture-then-refund, and an authorization hold that is voided for compliant crawlers so no money moves at all. Every call uses idempotent `PayPal-Request-Id`s, and ambiguous outcomes are reconciled against PayPal's records before any retry. In the Sandbox, deposits can be paid with PayPal's test card so agents pay without a buyer login.
 - **PayPal MCP server:** PayPal's `@paypal/mcp` server, run over stdio with only its read tools enabled (`get_order`, `get_refund`, `list_transactions`, `list_disputes`, `get_dispute`), through the official MCP Python SDK. The OAuth token goes to the MCP server process, never to the model, and results are redacted of email addresses.
 - **AI:** the OpenAI Python SDK (Responses API, GPT-5.5) and the Anthropic Python SDK (Claude), selectable with one setting. The agent is a manual tool-use loop over strict tool schemas; explanations and policy drafts use structured outputs and are validated in code. Refusals are handled, with the server-side refusal fallback enabled.
-- **Web UI:** a live demo page and a publisher console in static HTML and JavaScript (AG Grid Community for the console tables), served by the gateway. Demo runs execute server-side in a background thread against the gateway itself, with the same tools as the command-line agent.
+- **Web UI:** an owner console (live target/deposit/rule configuration and the crawler playground), Agent studio, and a publisher console in static HTML and JavaScript (AG Grid Community for the console tables), served by the gateway. Demo runs execute server-side in a background thread against the gateway itself, with the same tools as the command-line agent.
 - **Deployment:** Docker and a Render Blueprint.
-- **Tests:** 289 automated tests with mocked PayPal transports, a fake MCP server, and scripted model fakes.
+- **Tests:** 312 automated tests with mocked PayPal transports, a fake MCP server, and scripted model fakes.
 
 ## Challenges we ran into
 
@@ -136,7 +136,7 @@ python, fastapi, httpx, pydantic, paypal-rest-api, paypal-orders-v2, paypal-paym
 
 - [ ] Repository is public and the default branch contains this code and the MIT license
 - [ ] Demo video is public on YouTube and under 3 minutes ([`DEMO_SCRIPT.md`](DEMO_SCRIPT.md))
-- [ ] Testing instructions: point judges to the live URL (open `/`, click an example request in the chat, approve or decline its purchases; then the rule-breaking scraper scenario, and the console's **Verify with PayPal**) and to README "Quick start" (mock mode needs no credentials)
+- [ ] Testing instructions: point judges to the live URL (open `/` for the owner console, apply a live config change, check a good and a bad playground action and press **Run agent**; open `/agent`, click an example request in the chat, approve or decline its purchases; then the console's **Verify with PayPal**) and to README "Quick start" (mock mode needs no credentials)
 - [ ] Live demo deployed and warmed up before judging (free Render instances sleep when idle)
 - [ ] Prize categories selected: overall, Best Use of PayPal + AI, Best Use of Agentic Commerce, Best Demo Delivery, Most Impactful, plus the sponsor categories that apply (AG Grid; Render once deployed there). The rules allow at most one Grand Prize and one Sponsor Prize, or one Honorable Mention and one Sponsor Prize.
 - [ ] Deadline: Thursday 12 November 2026, 12:00 pm Pacific

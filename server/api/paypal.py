@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from server.dependencies import AppContainer, demo_access, get_container
 from server.schemas import (
@@ -21,8 +21,10 @@ from server.services.paypal_mcp import READ_ONLY_TOOLS, PayPalMCPError, PayPalMC
 router = APIRouter(prefix="/paypal", tags=["PayPal assistant (MCP)"])
 
 
-def _require_access(container: AppContainer, x_admin_token: Optional[str]) -> str:
-    access = demo_access(container, x_admin_token)
+def _require_access(
+    container: AppContainer, x_admin_token: Optional[str], request: Request
+) -> str:
+    access = demo_access(container, x_admin_token, request)
     if access == "none":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -63,10 +65,11 @@ def _mcp_error(exc: PayPalMCPError) -> HTTPException:
     summary="Whether the PayPal MCP server and an AI model are configured",
 )
 async def assistant_status(
+    request: Request,
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> PayPalAssistantStatus:
-    access = _require_access(container, x_admin_token)
+    access = _require_access(container, x_admin_token, request)
     mcp = container.paypal_mcp
     return PayPalAssistantStatus(
         mcp_configured=mcp.is_configured(),
@@ -90,10 +93,11 @@ async def assistant_status(
 )
 async def verify_order(
     order_id: str,
+    request: Request,
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> PayPalOrderVerificationResponse:
-    access = _require_access(container, x_admin_token)
+    access = _require_access(container, x_admin_token, request)
     orders = {o.order_id: o for o in await container.commerce.list_orders()}
     order = orders.get(order_id)
     if order is None:
@@ -114,10 +118,11 @@ async def verify_order(
 )
 async def verify_deposit(
     deposit_id: str,
+    request: Request,
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> PayPalVerificationResponse:
-    access = _require_access(container, x_admin_token)
+    access = _require_access(container, x_admin_token, request)
     deposit = await container.deposit_manager.get_deposit(deposit_id)
     if deposit is None:
         raise HTTPException(
@@ -143,10 +148,11 @@ async def verify_deposit(
 )
 async def ask_assistant(
     payload: PayPalAssistantRequest,
+    request: Request,
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> PayPalAssistantResponse:
-    access = _require_access(container, x_admin_token)
+    access = _require_access(container, x_admin_token, request)
     if not container.ai_generator.is_available():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

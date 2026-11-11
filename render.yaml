@@ -15,15 +15,36 @@ services:
         value: "10000"
       - key: APP_ENV
         value: production
+      # The demo landing page is the owner console. Set gateway when deploying in front
+      # of a real site (then "/" proxies the target and the console stays at /console).
+      - key: SARA_MODE
+        value: demo
       - key: ADMIN_API_TOKEN
         generateValue: true
       # Read-only console for judges; admin actions still need ADMIN_API_TOKEN.
       - key: DASHBOARD_PUBLIC
         value: "true"
-      # Live demo at /: visitors may start crawler runs and ask the read-only PayPal
-      # assistant, capped per hour (DEMO_MAX_RUNS_PER_HOUR, DEMO_MAX_QUESTIONS_PER_HOUR).
+      # Agent studio at /agent: visitors may start crawler runs and ask the read-only
+      # PayPal assistant, capped per hour (DEMO_MAX_RUNS_PER_HOUR,
+      # DEMO_MAX_QUESTIONS_PER_HOUR). The playground also needs this for public runs.
       - key: DEMO_PUBLIC
         value: "true"
+      # Demo visitors may change tier deposits, rules, and limits live. Changing the
+      # target URL without the admin token also requires its host in
+      # DEMO_ORIGIN_ALLOWLIST, so the demo host cannot be turned into an open proxy.
+      # Remove this for a production gateway.
+      # On the free plan storage is ephemeral, so the JSON config resets on redeploy.
+      # For a persistent demo, use a paid instance plan, add a disk mounted at
+      # /app/storage, and set GATEWAY_CONFIG_PATH=/app/storage/gateway_config.json.
+      - key: DEMO_CONFIG_PUBLIC
+        value: "true"
+      # Public visitors can only point the target URL at these hosts (comma-separated).
+      # Empty means the target URL needs the admin token. Add your own site's host to let
+      # demo visitors try it against a real website.
+      - key: DEMO_ORIGIN_ALLOWLIST
+        value: ""
+      - key: PLAYGROUND_MAX_RUNS_PER_HOUR
+        value: "20"
       # Public AI runs and questions spend the AI key; keep the caps low.
       - key: DEMO_MAX_RUNS_PER_HOUR
         value: "10"

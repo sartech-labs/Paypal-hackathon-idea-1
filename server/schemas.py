@@ -197,6 +197,9 @@ class SiteConfig(BaseModel):
     max_requests_per_session: int = 10
     rate_limit_requests: int = 3
     rate_limit_window_seconds: float = 10.0
+    # The origin's robots.txt Crawl-delay, enforced as a minimum gap between requests.
+    # Kept separate from the owner's rate limit so the console only offers sec/min/hour.
+    crawl_delay_seconds: Optional[float] = None
     session_ttl_seconds: int = 1800
     challenge_ttl_seconds: int = 600
     paypal_sandbox_enabled: bool = False
@@ -430,6 +433,8 @@ class SessionRecord(BaseModel):
     crawler_id: str
     challenge_id: str
     deposit_id: str
+    # Empty on sessions issued before multi-site support; they belong to the request's site.
+    site_id: str = ""
     policy_version: str
     policy_accepted_at: str
     payment_reference: str
@@ -592,8 +597,8 @@ class PolicyDraftResponse(BaseModel):
     assumptions: list[str]
     warnings: list[str]
     notice: str = (
-        "Draft only. Review it, then save it to data/site_config.json and restart the "
-        "gateway to apply. Bump policy_version when rules change."
+        "Draft only. Review it, then apply the reviewed values from the console's Setup "
+        "view; changes take effect live without a restart."
     )
 
 
@@ -669,6 +674,10 @@ class DashboardDataResponse(BaseModel):
     site_id: str
     site_name: str
     policy_version: str
+    sara_mode: Literal["demo", "gateway"] = "demo"
+    origin_url: str = ""
+    origin_configured: bool = False
+    config_public: bool = False
     payment_mode: PaymentMode
     settlement_mode: SettlementMode
     ai_available: bool
@@ -1129,3 +1138,241 @@ class SubscriptionResponse(BaseModel):
     payments_received: int = 0
     last_payment_at: Optional[str] = None
     access_token: Optional[str] = None
+
+
+# --- Runtime gateway configuration -------------------------------------------------------
+
+
+class RuntimeConfigUpdate(BaseModel):
+    """Editable gateway configuration. Omitted fields keep their current value."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    origin_url: Optional[str] = Field(default=None, max_length=500)
+    deposit_amount: Optional[str] = Field(default=None, max_length=16)
+    # tier_id -> price, for example {"premium": "20.00"}.
+    tier_prices: Optional[dict[str, str]] = None
+    # Full tier definitions for this site. [] means no tiers; None keeps the bundled tiers.
+    pricing_tiers: Optional[list[PricingTier]] = None
+    allowed_paths: Optional[list[str]] = None
+    disallowed_paths: Optional[list[str]] = None
+    max_requests_per_session: Optional[int] = Field(default=None, ge=1, le=10000)
+    rate_limit_requests: Optional[int] = Field(default=None, ge=1, le=1000)
+    rate_limit_window_seconds: Optional[float] = Field(default=None, gt=0.0, le=3600.0)
+    policy_version: Optional[str] = Field(default=None, min_length=1, max_length=32)
+
+
+class OriginStatus(BaseModel):
+    checked_at: Optional[str] = None
+    reachable: bool = False
+    robots_imported: bool = False
+    crawl_delay_seconds: Optional[float] = None
+    disallowed_paths: list[str] = Field(default_factory=list)
+    allowed_paths: list[str] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
+class RuntimeConfigResponse(BaseModel):
+    site_id: str = ""
+    site_name: str = ""
+    status: Literal["live", "paused"] = "live"
+    active_site_id: Optional[str] = None
+    host: str = ""
+    sara_mode: Literal["demo", "gateway"]
+    origin_url: str
+    origin_configured: bool
+    origin_status: OriginStatus
+    deposit_amount: str
+    currency: str
+    pricing_tiers: list[PricingTier] = Field(default_factory=list)
+    allowed_paths: list[str]
+    disallowed_paths: list[str]
+    max_requests_per_session: int
+    rate_limit_requests: int
+    rate_limit_window_seconds: float
+    policy_version: str
+    config_public: bool
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+    version: int = 0
+    warnings: list[str] = Field(default_factory=list)
+
+
+class OriginTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    origin_url: str = Field(..., min_length=1, max_length=500)
+
+
+class SiteSummary(BaseModel):
+    """One configured website as shown in the console's site list."""
+
+    site_id: str
+    name: str
+    host: str = ""
+    origin_url: str = ""
+    status: Literal["live", "paused"] = "live"
+    active: bool = False
+    origin_configured: bool = False
+    deposit_amount: str
+    currency: str
+    allowed_paths: list[str] = Field(default_factory=list)
+    disallowed_paths: list[str] = Field(default_factory=list)
+    rate_limit_requests: int
+    rate_limit_window_seconds: float
+    max_requests_per_session: int
+    policy_version: str
+    version: int = 0
+    updated_at: Optional[str] = None
+    origin_status: OriginStatus
+
+
+class SiteListResponse(BaseModel):
+    active_site_id: Optional[str] = None
+    config_public: bool = False
+    sites: list[SiteSummary] = Field(default_factory=list)
+
+
+class SiteCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    origin_url: str = Field(..., min_length=1, max_length=500)
+    name: Optional[str] = Field(default=None, max_length=128)
+    set_active: bool = True
+    deposit_amount: Optional[str] = Field(default=None, max_length=16)
+    allowed_paths: Optional[list[str]] = None
+    disallowed_paths: Optional[list[str]] = None
+    rate_limit_requests: Optional[int] = Field(default=None, ge=1, le=1000)
+    rate_limit_window_seconds: Optional[float] = Field(default=None, gt=0.0, le=3600.0)
+    max_requests_per_session: Optional[int] = Field(default=None, ge=1, le=10000)
+    pricing_tiers: Optional[list[PricingTier]] = None
+
+
+class SiteMetaUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    status: Optional[Literal["live", "paused"]] = None
+
+
+# --- Crawler playground ------------------------------------------------------------------
+
+
+class PlaygroundRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # One action is the legacy API. New clients send action_ids to run a checklist.
+    action_id: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    action_ids: list[str] = Field(default_factory=list, max_length=20)
+    driver: Optional[Literal["agent", "scripted"]] = None
+    # The console site whose policy and gateway the run exercises. Default: active site.
+    site_id: Optional[str] = Field(default=None, max_length=64)
+
+
+class PlaygroundActionInfo(BaseModel):
+    action_id: str
+    label: str
+    tone: Literal["good", "bad"]
+    description: str
+    expected: str
+    default_selected: bool = False
+
+
+class PlaygroundStep(BaseModel):
+    seq: int
+    at: str
+    label: str
+    action_id: Optional[str] = None
+    request: Optional[str] = None
+    http_status: Optional[int] = None
+    reason_code: Optional[str] = None
+    allowed: Optional[bool] = None
+    message: Optional[str] = None
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlaygroundViolation(BaseModel):
+    rule_matched: Optional[str] = None
+    http_status: Optional[int] = None
+    reason_code: Optional[str] = None
+    agent_reason: Optional[str] = None
+    deposit_consequence: Optional[str] = None
+    disqualifying: bool = False
+
+
+class PlaygroundActionResult(BaseModel):
+    action_id: str
+    label: str
+    tone: Literal["good", "bad"]
+    status: Literal["running", "completed", "failed", "cancelled"]
+    outcome: Optional[Literal["allowed", "refused", "error"]] = None
+    rendered_html: Optional[str] = None
+    content_type: Optional[str] = None
+    violation: Optional[PlaygroundViolation] = None
+    deposit: Optional[dict[str, Any]] = None
+    session_id: Optional[str] = None
+    error: Optional[str] = None
+    elapsed_ms: Optional[int] = None
+    steps: list[PlaygroundStep] = Field(default_factory=list)
+
+
+class PlaygroundAgentInfo(BaseModel):
+    available: bool = False
+    driver: str = "scripted"
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    status: str = "not_run"
+    steps: int = 0
+    tool_calls: int = 0
+    summary: Optional[str] = None
+    error: Optional[str] = None
+
+
+class PlaygroundRunResponse(BaseModel):
+    run_id: str
+    action_id: str
+    label: str
+    tone: Literal["good", "bad"]
+    status: Literal["running", "completed", "failed", "cancelled"]
+    started_at: str
+    finished_at: Optional[str] = None
+    outcome: Optional[Literal["allowed", "refused", "mixed", "error"]] = None
+    rendered_html: Optional[str] = None
+    content_type: Optional[str] = None
+    violation: Optional[PlaygroundViolation] = None
+    deposit: Optional[dict[str, Any]] = None
+    session_id: Optional[str] = None
+    selected_action_ids: list[str] = Field(default_factory=list)
+    driver: Literal["agent", "scripted"] = "scripted"
+    action_results: list[PlaygroundActionResult] = Field(default_factory=list)
+    agent: Optional[PlaygroundAgentInfo] = None
+    steps: list[PlaygroundStep] = Field(default_factory=list)
+    next_seq: int = 0
+    error: Optional[str] = None
+    audit_event_ids: list[str] = Field(default_factory=list)
+    elapsed_ms: Optional[int] = None
+
+
+class PlaygroundRecentRun(BaseModel):
+    run_id: str
+    action_id: str
+    label: str
+    tone: Literal["good", "bad"]
+    status: str
+    outcome: Optional[str] = None
+    started_at: str
+    deposit_state: Optional[str] = None
+    reason_code: Optional[str] = None
+    driver: str = "scripted"
+    action_count: int = 1
+
+
+class PlaygroundConfigResponse(BaseModel):
+    actions: list[PlaygroundActionInfo]
+    can_start: bool
+    runs_remaining_this_hour: int
+    recent_runs: list[PlaygroundRecentRun] = Field(default_factory=list)
+    limits: dict[str, Any] = Field(default_factory=dict)
+    ai: PlaygroundAgentInfo = Field(default_factory=PlaygroundAgentInfo)
+    max_actions: int = 6
+    default_action_ids: list[str] = Field(default_factory=list)

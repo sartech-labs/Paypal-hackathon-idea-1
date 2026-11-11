@@ -232,6 +232,9 @@ class PolicyAssistant:
         self._generator = generator
         self._site_config = site_config
 
+    def set_site_config(self, site_config: SiteConfig) -> None:
+        self._site_config = site_config
+
     async def draft(self, request: PolicyDraftRequest) -> PolicyDraftResponse:
         current = self._site_config.model_dump(mode="json")
         overrides = {

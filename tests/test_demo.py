@@ -73,11 +73,11 @@ def test_demo_page_console_and_assets_are_served(demo_client: TestClient) -> Non
     page = demo_client.get("/crawler")
     assert page.status_code == 200 and "SARA Live Demo" in page.text
     landing = demo_client.get("/")
-    assert landing.status_code == 200 and "SARA Agent Studio" in landing.text
-    assert demo_client.get("/agent").text == landing.text
+    assert landing.status_code == 200 and "SARA console" in landing.text
+    assert "SARA Agent Studio" in demo_client.get("/agent").text
     assert demo_client.get("/demo").status_code == 200
-    assert "SARA publisher console" in demo_client.get("/console").text
-    for asset in ("/static/demo.js", "/static/demo.css", "/static/paypal_panel.js"):
+    assert "SARA console" in demo_client.get("/console").text
+    for asset in ("/_sara/static/demo.js", "/_sara/static/demo.css", "/_sara/static/paypal_panel.js"):
         assert demo_client.get(asset).status_code == 200
 
 

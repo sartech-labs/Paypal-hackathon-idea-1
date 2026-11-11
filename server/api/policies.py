@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 
 from server.dependencies import AppContainer, get_container, is_valid_admin_token
@@ -14,15 +14,40 @@ from server.services.ai_client import AIRefusalError, AIServiceError, AIUnavaila
 router = APIRouter(tags=["Policy & Health"])
 
 
+def _site_runtime(request: Request, container: AppContainer):  # type: ignore[no-untyped-def]
+    """Resolve X-SARA-Site, then Host, then the active site."""
+    try:
+        return container.resolve_site(
+            site_id=request.headers.get("x-sara-site"),
+            host=request.headers.get("host"),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "site_not_found", "message": str(exc)},
+        ) from exc
+
+
 @router.get(
     "/policies",
     response_model=SiteConfig,
     summary="Return the current machine-readable website crawling and deposit policy",
 )
 async def get_policies(
+    request: Request,
     container: AppContainer = Depends(get_container),
+    x_sara_site: Optional[str] = Header(default=None, alias="X-SARA-Site"),
 ) -> SiteConfig:
-    return container.site_config
+    try:
+        runtime = container.resolve_site(
+            site_id=x_sara_site, host=request.headers.get("host")
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "site_not_found", "message": str(exc)},
+        ) from exc
+    return runtime.site_config
 
 
 @router.post(
@@ -68,16 +93,27 @@ async def draft_policy(
     summary="Publish the website's effective robots.txt rules as plain text",
 )
 async def get_robots_txt(
+    request: Request,
     container: AppContainer = Depends(get_container),
+    x_sara_site: Optional[str] = Header(default=None, alias="X-SARA-Site"),
 ) -> PlainTextResponse:
-    if container.origin_proxy is not None:
-        cfg = container.site_config
-        content = container.origin_proxy.render_robots_txt(
+    try:
+        runtime = container.resolve_site(
+            site_id=x_sara_site, host=request.headers.get("host")
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "site_not_found", "message": str(exc)},
+        ) from exc
+    if runtime.origin_proxy is not None:
+        cfg = runtime.site_config
+        content = runtime.origin_proxy.render_robots_txt(
             cfg.allowed_paths, cfg.disallowed_paths,
-            "AI agents must open a SARA deposit session and accept the policy at /policies before crawling via /gateway.",
+            "AI agents must open a SARA deposit session and accept the policy at /policies before crawling.",
         )
     else:
-        content = container.content_service.render_robots_txt()
+        content = runtime.content_service.render_robots_txt()
     return PlainTextResponse(content=content, media_type="text/plain; charset=utf-8")
 
 

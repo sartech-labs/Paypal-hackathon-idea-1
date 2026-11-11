@@ -8,6 +8,7 @@ import pytest
 from server.config import Settings
 from server.main import create_app
 from server.services.origin_proxy import OriginProxy, parse_robots_txt
+from server.services.runtime_config import origin_status
 from server.services.rate_limiter import SlidingWindowRateLimiter
 from tests.conftest import FakeClock, complete_onboarding_flow
 
@@ -33,8 +34,12 @@ def origin_handler(seen: list[str]):
             return httpx.Response(200, html="<h1>Origin news</h1>", headers={"Cache-Control": "max-age=60", "Set-Cookie": "sid=secret"})
         if request.url.path == "/blog/post-1":
             return httpx.Response(200, html="<h1>Post 1</h1>")
+        if request.url.path == "/trailing/":
+            return httpx.Response(200, html="<h1>Trailing slash</h1>")
         if request.url.path == "/broken":
             return httpx.Response(503, text="down")
+        if request.url.path == "/error500":
+            return httpx.Response(500, text="boom")
         return httpx.Response(404, text="not found")
 
     return handle
@@ -63,7 +68,7 @@ def proxied(test_settings: Settings, fake_clock: FakeClock):
     return app, seen
 
 
-async def test_proxy_forwards_allowed_paths_and_blocks_robots_disallows(proxied) -> None:
+async def test_proxy_forwards_allowed_paths_and_blocks_robots_disallows(proxied, fake_clock) -> None:
     app, seen = proxied
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
         robots = (await client.get("/robots.txt")).text
@@ -78,6 +83,8 @@ async def test_proxy_forwards_allowed_paths_and_blocks_robots_disallows(proxied)
         assert "/blog/post-1?page=2" in seen
         assert res.headers["X-SARA-Session-Id"] == session["session_id"]
 
+        # Respect the origin's 5 s Crawl-delay between allowed requests.
+        fake_clock.advance(5)
         res = await client.get("/gateway/news", headers=auth)
         assert res.status_code == 200 and "Origin news" in res.text
         assert res.headers["cache-control"] == "max-age=60"
@@ -90,20 +97,206 @@ async def test_proxy_forwards_allowed_paths_and_blocks_robots_disallows(proxied)
         assert len(seen) == before
 
 
-async def test_proxy_passes_origin_404_and_hides_origin_errors(proxied) -> None:
+async def test_proxy_preserves_trailing_slash_for_origin_canonicalization(proxied) -> None:
+    app, seen = proxied
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        _, _, session = await complete_onboarding_flow(client, "crawler-proxy-slash")
+        auth = {"Authorization": f"Bearer {session['access_token']}"}
+        res = await client.get("/gateway/trailing/", headers=auth)
+        assert res.status_code == 200 and "Trailing slash" in res.text
+        assert "/trailing/" in seen
+
+
+async def test_proxy_passes_origin_404_and_5xx_statuses(proxied, fake_clock) -> None:
     app, _ = proxied
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
         _, _, session = await complete_onboarding_flow(client, "crawler-proxy-2")
         auth = {"Authorization": f"Bearer {session['access_token']}"}
         assert (await client.get("/gateway/missing", headers=auth)).status_code == 404
-        res = await client.get("/gateway/broken", headers=auth)
-        assert res.status_code == 502 and res.json()["error"] == "origin_unavailable"
+        fake_clock.advance(5)
+        broken = await client.get("/gateway/broken", headers=auth)
+        assert broken.status_code == 503 and broken.text == "down"
+        fake_clock.advance(5)
+        error = await client.get("/gateway/error500", headers=auth)
+        assert error.status_code == 500 and error.text == "boom"
 
 
-async def test_crawl_delay_slows_the_rate_limit(proxied) -> None:
+async def test_crawl_delay_is_published_separately_from_the_rate_window(proxied) -> None:
     app, _ = proxied
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
         policy = (await client.get("/policies")).json()
-        text = str(policy)
-        # 5 requests per window with a 5 s crawl delay: the window grows to 25 s.
-        assert "25" in text
+        # The owner's rate window is untouched; Crawl-delay is its own constraint.
+        assert policy["crawl_delay_seconds"] == 5
+        assert policy["rate_limit_window_seconds"] == 10
+
+
+async def test_crawl_delay_rejects_requests_that_are_too_close(proxied, fake_clock) -> None:
+    app, _ = proxied
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        _, _, session = await complete_onboarding_flow(client, "crawler-crawl-delay")
+        auth = {"Authorization": f"Bearer {session['access_token']}"}
+
+        assert (await client.get("/gateway/news", headers=auth)).status_code == 200
+        fake_clock.advance(2)
+        too_soon = await client.get("/gateway/news", headers=auth)
+        assert too_soon.status_code == 429
+        body = too_soon.json()
+        assert body["reason_code"] == "RATE_LIMIT_EXCEEDED"
+        assert "Crawl-delay" in body["reason"]
+        assert body["retry_after_seconds"] >= 3
+
+        fake_clock.advance(3)
+        assert (await client.get("/gateway/news", headers=auth)).status_code == 200
+
+def test_robots_redirect_is_not_followed() -> None:
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.path)
+        if request.url.path == "/robots.txt":
+            return httpx.Response(302, headers={"Location": "http://169.254.169.254/latest/meta-data/"})
+        return httpx.Response(200, text="User-agent: *\nDisallow: /internal\n")
+
+    proxy = OriginProxy("https://origin.example", sync_transport=httpx.MockTransport(handler))
+    rules = proxy.import_robots()
+    assert requested == ["/robots.txt"]
+    assert rules.disallow == []
+    assert proxy.last_error is None
+    assert proxy.robots_imported is False
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 410])
+def test_missing_or_forbidden_robots_is_not_unreachable(status: int) -> None:
+    proxy = OriginProxy(
+        "https://origin.example",
+        sync_transport=httpx.MockTransport(lambda request: httpx.Response(status)),
+    )
+    proxy.import_robots()
+    assert proxy.last_error is None
+    assert proxy.robots_imported is False
+    assert origin_status(proxy).reachable is True
+
+
+def test_robots_5xx_is_still_unreachable() -> None:
+    proxy = OriginProxy(
+        "https://origin.example",
+        sync_transport=httpx.MockTransport(lambda request: httpx.Response(503)),
+    )
+    proxy.import_robots()
+    assert proxy.last_error is not None
+    assert origin_status(proxy).reachable is False
+
+
+async def test_allowed_agent_post_forwards_method_body_and_headers(
+    test_settings: Settings, fake_clock: FakeClock
+) -> None:
+    seen: list[tuple[str, str, bytes, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\n")
+        seen.append(
+            (
+                request.method,
+                request.url.path,
+                request.content,
+                request.headers.get("content-type", ""),
+            )
+        )
+        return httpx.Response(201, text="created")
+
+    settings = test_settings.model_copy(
+        update={
+            "origin_url": "https://origin.example",
+            "rate_limit_requests": 10,
+            "rate_limit_window_seconds": 60.0,
+        }
+    )
+    proxy = OriginProxy(
+        settings.origin_url,
+        transport=httpx.MockTransport(handler),
+        sync_transport=httpx.MockTransport(handler),
+    )
+    app = create_app(settings=settings, rate_limiter=SlidingWindowRateLimiter(clock=fake_clock), origin_proxy=proxy)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        _, _, session = await complete_onboarding_flow(client, "crawler-proxy-post")
+        auth = {"Authorization": f"Bearer {session['access_token']}"}
+        response = await client.post(
+            "/submit",
+            content="payload=1",
+            headers={
+                **auth,
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        assert response.status_code == 201
+        assert seen[-1] == (
+            "POST",
+            "/submit",
+            b"payload=1",
+            "application/x-www-form-urlencoded",
+        )
+
+
+async def test_forward_strips_the_console_cookie_from_the_origin_request() -> None:
+    """The proxied origin receives other cookies but never the signed console session cookie."""
+    received: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.append(request.headers.get("cookie"))
+        return httpx.Response(200, text="ok")
+
+    proxy = OriginProxy(
+        "https://origin.example", transport=httpx.MockTransport(handler)
+    )
+    await proxy.forward(
+        "GET",
+        "/page",
+        headers={"cookie": "sid=abc; sara_console=console-secret; theme=dark"},
+    )
+    await proxy.forward("GET", "/page", headers={"cookie": "sara_console=only-cookie"})
+
+    assert received == ["sid=abc; theme=dark", None]
+
+
+async def test_forward_drops_an_origin_console_set_cookie_but_keeps_others() -> None:
+    """An origin cannot set or clear sara_console, while its unrelated Set-Cookie values pass through."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text="ok",
+            headers=[
+                ("set-cookie", "sara_console=forged; Path=/; HttpOnly"),
+                ("set-cookie", "sid=known; Path=/"),
+                ("set-cookie", "theme=dark; Path=/"),
+            ],
+        )
+
+    proxy = OriginProxy(
+        "https://origin.example", transport=httpx.MockTransport(handler)
+    )
+    response = await proxy.forward("GET", "/page")
+
+    cookies = response.headers.get_list("set-cookie")
+    assert cookies == ["sid=known; Path=/", "theme=dark; Path=/"]
+    assert all("sara_console" not in cookie for cookie in cookies)
+
+
+async def test_forward_drops_an_origin_attempt_to_clear_the_console_cookie() -> None:
+    """An expiring sara_console Set-Cookie from the origin is dropped along with any other console cookie write."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text="ok",
+            headers=[
+                ("set-cookie", "sara_console=; Max-Age=0; Path=/"),
+                ("set-cookie", "visited=yes; Path=/"),
+            ],
+        )
+
+    proxy = OriginProxy(
+        "https://origin.example", transport=httpx.MockTransport(handler)
+    )
+    response = await proxy.forward("GET", "/page")
+
+    assert response.headers.get_list("set-cookie") == ["visited=yes; Path=/"]

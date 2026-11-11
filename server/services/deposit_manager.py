@@ -6,7 +6,7 @@ import asyncio
 import uuid
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from pydantic import ValidationError
 
@@ -65,6 +65,7 @@ class DepositManager:
     ) -> None:
         self._db_path = payments_db_path
         self._site_config = site_config
+        self._site_config_resolver: Optional[Callable[[str], SiteConfig]] = None
         self._payment_provider = payment_provider
         self._audit = audit_logger
         # Applies to new deposits; each record keeps the mode it was created with.
@@ -89,6 +90,19 @@ class DepositManager:
     def set_payment_provider(self, provider: PaymentProvider) -> None:
         """Override the payment provider (used in dependency injection and tests)."""
         self._payment_provider = provider
+
+    def set_site_config(self, site_config: SiteConfig) -> None:
+        """Apply an owner-console policy change to new challenges and settlements."""
+        self._site_config = site_config
+
+    def set_site_config_resolver(self, resolver: Callable[[str], SiteConfig]) -> None:
+        """Resolve a deposit/session site's config for policy and refund checks."""
+        self._site_config_resolver = resolver
+
+    def _site_config_for(self, site_id: Optional[str]) -> SiteConfig:
+        if site_id and self._site_config_resolver is not None:
+            return self._site_config_resolver(site_id)
+        return self._site_config
 
     def load_from_disk(self) -> None:
         """Load persisted challenges and deposits from disk and validate schemas."""
@@ -840,16 +854,17 @@ class DepositManager:
         if not agree_to_terms:
             raise ValueError("Crawler must explicitly set agree_to_terms=true to accept policy")
 
-        if policy_version != self._site_config.policy_version:
-            raise ValueError(
-                f"Policy version mismatch: expected '{self._site_config.policy_version}', "
-                f"received '{policy_version}'"
-            )
-
         async with self._lock:
             record = self._deposits.get(deposit_id)
             if record is None:
                 raise KeyError(f"Unknown deposit_id: {deposit_id}")
+
+            site_config = self._site_config_for(record.site_id)
+            if policy_version != site_config.policy_version:
+                raise ValueError(
+                    f"Policy version mismatch: expected '{site_config.policy_version}', "
+                    f"received '{policy_version}'"
+                )
 
             if record.crawler_id != crawler_id:
                 raise PermissionError("Deposit belongs to a different crawler_id")
@@ -903,6 +918,8 @@ class DepositManager:
             record = self._deposits.get(deposit_id)
             if record is None:
                 raise KeyError(f"Unknown deposit_id: {deposit_id}")
+
+            site_config = self._site_config_for(record.site_id)
 
             if record.crawler_id != crawler_id:
                 raise PermissionError("Deposit belongs to a different crawler_id")
@@ -989,7 +1006,7 @@ class DepositManager:
 
         # Require session completion before issuing a refund
         if (
-            self._site_config.refund_policy.require_explicit_session_completion
+            site_config.refund_policy.require_explicit_session_completion
             and session.status != SessionStatus.COMPLETED
         ):
             raise StateTransitionError(
@@ -1197,6 +1214,9 @@ class DepositManager:
             record = self._deposits.get(deposit_id)
             if record is None:
                 raise KeyError(f"Unknown deposit_id: {deposit_id}")
+
+            site_config = self._site_config_for(record.site_id)
+
             if record.crawler_id != crawler_id:
                 raise PermissionError("Deposit belongs to a different crawler_id")
 
@@ -1228,7 +1248,7 @@ class DepositManager:
             )
             if (
                 not forfeit
-                and self._site_config.refund_policy.require_explicit_session_completion
+                and site_config.refund_policy.require_explicit_session_completion
                 and session.status != SessionStatus.COMPLETED
             ):
                 raise StateTransitionError(

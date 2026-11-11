@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from fastapi.responses import FileResponse
 
 from server.api.dashboard import STATIC_DIR
+from server.core.console_auth import console_auth_enabled
 from server.core.security import utc_now_iso, validate_crawler_id
 from server.dependencies import AppContainer, demo_access, get_container, is_valid_admin_token
 from server.schemas import (
@@ -24,16 +25,27 @@ from server.services.demo_runner import DemoRunError
 router = APIRouter(tags=["Live demo"])
 
 
-def _view_access(container: AppContainer, x_admin_token: Optional[str]) -> str:
+def _view_access(
+    container: AppContainer, x_admin_token: Optional[str], request: Request
+) -> str:
     """Who may watch runs: admins, or anyone on a public demo or public dashboard."""
-    access = demo_access(container, x_admin_token)
-    if access == "none" and x_admin_token is None and container.settings.dashboard_public:
+    access = demo_access(container, x_admin_token, request)
+    # A configured console password outranks the public-demo flags, so enabling sign-in
+    # closes these endpoints instead of leaving them open behind the login page.
+    if (
+        access == "none"
+        and x_admin_token is None
+        and not console_auth_enabled(container.settings)
+        and container.settings.dashboard_public
+    ):
         return "public"
     return access
 
 
-def _require_view(container: AppContainer, x_admin_token: Optional[str]) -> str:
-    access = _view_access(container, x_admin_token)
+def _require_view(
+    container: AppContainer, x_admin_token: Optional[str], request: Request
+) -> str:
+    access = _view_access(container, x_admin_token, request)
     if access == "none":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -60,12 +72,6 @@ def _internal_base_url(request: Request) -> str:
     return f"http://{host}:{port}"
 
 
-@router.get("/", include_in_schema=False)
-async def agent_studio_page() -> FileResponse:
-    """The landing page: the personal agent paying a website four ways through PayPal."""
-    return FileResponse(STATIC_DIR / "agent.html", media_type="text/html")
-
-
 @router.get("/agent", include_in_schema=False)
 async def agent_studio_alias() -> FileResponse:
     return FileResponse(STATIC_DIR / "agent.html", media_type="text/html")
@@ -84,6 +90,7 @@ async def demo_alias() -> FileResponse:
 
 @router.get("/demo/config", response_model=DemoConfigResponse, summary="Live demo capabilities and recent runs")
 async def demo_config(
+    request: Request,
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> DemoConfigResponse:
@@ -92,8 +99,8 @@ async def demo_config(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "invalid_admin_token", "message": "The admin token was rejected."},
         )
-    access = _view_access(container, x_admin_token)
-    can_start = demo_access(container, x_admin_token) != "none"
+    access = _view_access(container, x_admin_token, request)
+    can_start = demo_access(container, x_admin_token, request) != "none"
     runner = container.demo_runner
     site = container.site_config
     return DemoConfigResponse(
@@ -140,6 +147,7 @@ MAX_HISTORY_ROWS = 200
     summary="Crawler request history: every gateway request with its pricing tier, deposit, and decision",
 )
 async def request_history(
+    request: Request,
     crawler_id: Optional[str] = Query(default=None, max_length=128),
     limit: int = Query(default=MAX_HISTORY_ROWS, ge=1, le=MAX_HISTORY_ROWS),
     container: AppContainer = Depends(get_container),
@@ -150,7 +158,7 @@ async def request_history(
     Nothing here is synthesized: a row exists only for a request the gateway answered,
     and payment fields reflect the deposit's current recorded state.
     """
-    _require_view(container, x_admin_token)
+    _require_view(container, x_admin_token, request)
     if crawler_id is not None:
         try:
             crawler_id = validate_crawler_id(crawler_id)
@@ -224,7 +232,7 @@ async def start_run(
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> DemoRunResponse:
-    if demo_access(container, x_admin_token) == "none":
+    if demo_access(container, x_admin_token, request) == "none":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -281,21 +289,23 @@ def _get_run(container: AppContainer, run_id: str):  # type: ignore[no-untyped-d
 @router.get("/demo/runs/{run_id}", response_model=DemoRunResponse, summary="Run status and events after a sequence number")
 async def get_run(
     run_id: str,
+    request: Request,
     after: int = Query(default=0, ge=0),
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> DemoRunResponse:
-    _require_view(container, x_admin_token)
+    _require_view(container, x_admin_token, request)
     return _get_run(container, run_id).snapshot(after=after)
 
 
 @router.post("/demo/runs/{run_id}/approval", response_model=DemoRunResponse, summary="Tell a waiting run that the PayPal checkout was approved")
 async def confirm_approval(
     run_id: str,
+    request: Request,
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> DemoRunResponse:
-    if demo_access(container, x_admin_token) == "none":
+    if demo_access(container, x_admin_token, request) == "none":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"error": "demo_authorization_required", "message": "Not allowed."})
     run = _get_run(container, run_id)
     container.demo_runner.confirm_approval(run_id)
@@ -310,10 +320,11 @@ async def confirm_approval(
 async def decide_purchase(
     run_id: str,
     payload: DemoDecisionRequest,
+    request: Request,
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> DemoRunResponse:
-    if demo_access(container, x_admin_token) == "none":
+    if demo_access(container, x_admin_token, request) == "none":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"error": "demo_authorization_required", "message": "Not allowed."})
     run = _get_run(container, run_id)
     if not container.demo_runner.decide(run_id, payload.approve):
@@ -327,10 +338,11 @@ async def decide_purchase(
 @router.post("/demo/runs/{run_id}/cancel", response_model=DemoRunResponse, summary="Stop a running demo crawler")
 async def cancel_run(
     run_id: str,
+    request: Request,
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> DemoRunResponse:
-    if demo_access(container, x_admin_token) == "none":
+    if demo_access(container, x_admin_token, request) == "none":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"error": "demo_authorization_required", "message": "Not allowed."})
     run = _get_run(container, run_id)
     container.demo_runner.cancel(run_id)

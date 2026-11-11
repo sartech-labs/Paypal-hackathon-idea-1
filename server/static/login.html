@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SARA sign in</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%234c8dff'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>
+    /* Apply the saved theme before first paint (dark by default). */
+    try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
+  </script>
+  <link rel="stylesheet" href="/_sara/static/dashboard.css">
+  <style>
+    :root {
+      --login-card-width: 340px;
+      --login-control-height: 42px;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+      min-height: 100dvh;
+      padding: 24px 16px;
+    }
+
+    .login-shell { width: 100%; max-width: var(--login-card-width); }
+
+    .login-card {
+      padding: 28px;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .login-brand { margin-bottom: 18px; }
+
+    .login-kicker {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    h1 { margin: 2px 0 20px; font-size: 20px; line-height: 1.3; }
+
+    .login-form { display: grid; gap: 14px; }
+    .login-field { display: grid; gap: 6px; }
+    .login-field label { color: var(--text-secondary); font-size: 13px; font-weight: 500; }
+    .login-field input { width: 100%; height: var(--login-control-height); }
+
+    .login-error {
+      margin: 0;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      background: var(--critical-soft);
+      color: var(--critical-text);
+      font-size: 13px;
+    }
+
+    .login-submit { width: 100%; height: var(--login-control-height); }
+  </style>
+</head>
+<body>
+<main class="login-shell">
+  <div class="login-card">
+    <div class="brand-mark login-brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="var(--accent)"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+      <span class="brand-name">SARA</span>
+    </div>
+    <p class="login-kicker">Owner console</p>
+    <h1>Sign in</h1>
+    <form class="login-form" method="post" action="/_sara/login">
+      <div class="login-field">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" autocomplete="username" autofocus required>
+      </div>
+      <div class="login-field">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+      </div>
+      <p id="login-error" class="login-error" role="alert" hidden>Incorrect username or password.</p>
+      <input type="hidden" name="next" id="next">
+      <button type="submit" class="primary login-submit">Sign in</button>
+    </form>
+  </div>
+</main>
+<script>
+  (() => {
+    const params = new URLSearchParams(location.search);
+    const next = params.get("next");
+    if (next && next.startsWith("/") && !next.startsWith("//")) document.getElementById("next").value = next;
+    if (params.get("error") === "1") {
+      document.getElementById("login-error").hidden = false;
+      document.getElementById("username").removeAttribute("autofocus");
+      addEventListener("load", () => document.getElementById("password").focus());
+    }
+  })();
+</script>
+</body>
+</html>

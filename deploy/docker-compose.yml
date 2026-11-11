@@ -1,0 +1,36 @@
+# One SARA container in front of an existing website.
+#
+# 1. Copy this file to deploy/docker-compose.yml.
+# 2. Create deploy/.env with ORIGIN_URL (the site reachable from this container) and
+#    ADMIN_API_TOKEN (a high-entropy secret). Compose reads that file for ${...}.
+#    The repository-root .env (copied from .env.example) supplies the rest of the
+#    settings, including PayPal and AI credentials, through env_file below.
+# 3. docker compose -f deploy/docker-compose.yml up -d --build
+#
+# SARA listens on port 8000. Point the site's DNS or edge proxy at this container:
+# the website itself is unchanged, and SARA forwards human traffic to ORIGIN_URL.
+# Terminate TLS at your edge proxy or load balancer (or add a TLS proxy here);
+# SARA speaks plain HTTP on the container network.
+#
+# The named volume keeps /app/storage across container replacements: the live owner
+# configuration (gateway_config.json), deposits, sessions, commerce, and audit log.
+services:
+  sara:
+    build:
+      context: ..
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      SARA_MODE: gateway
+      ORIGIN_URL: ${ORIGIN_URL:?set ORIGIN_URL in deploy/.env to the website address}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?set ADMIN_API_TOKEN in deploy/.env to a high-entropy secret}
+      # Matches the volume below, so console changes survive container replacement.
+      GATEWAY_CONFIG_PATH: /app/storage/gateway_config.json
+    volumes:
+      - sara-storage:/app/storage
+    restart: unless-stopped
+
+volumes:
+  sara-storage:

@@ -16,22 +16,32 @@ from server.services.origin_proxy import OriginError
 router = APIRouter(tags=["Gateway"])
 
 
+def _raw_request_path(request: Request) -> str:
+    """The un-normalized URI path from the ASGI scope, without the query string."""
+    raw_bytes = request.scope.get("raw_path")
+    if isinstance(raw_bytes, (bytes, bytearray)) and raw_bytes:
+        raw_str = raw_bytes.decode("latin-1", errors="replace")
+        return raw_str.split("?", 1)[0] or "/"
+    return request.url.path or "/"
+
+
 def _extract_raw_gateway_subpath(request: Request, fallback_path: str) -> str:
     """
     Extract the un-normalized raw URI path after `/gateway` from the ASGI scope
     so encoded path traversal attempts (e.g. `%2e%2e`, `%2f`, `%5c`) are caught.
     """
-    raw_bytes = request.scope.get("raw_path")
-    if isinstance(raw_bytes, (bytes, bytearray)) and raw_bytes:
-        raw_str = raw_bytes.decode("latin-1", errors="replace")
-        # Strip query string if present in raw_path
-        raw_str = raw_str.split("?", 1)[0]
-        if raw_str == "/gateway" or raw_str == "/gateway/":
-            return "/"
-        if raw_str.startswith("/gateway/"):
-            return "/" + raw_str[len("/gateway/") :]
-        return raw_str
-    return "/" + fallback_path.lstrip("/") if fallback_path else "/"
+    raw_str = _raw_request_path(request)
+    if raw_str == "/gateway" or raw_str == "/gateway/":
+        return "/"
+    if raw_str.startswith("/gateway/"):
+        return "/" + raw_str[len("/gateway/") :]
+    return raw_str or ("/" + fallback_path.lstrip("/") if fallback_path else "/")
+
+
+def _request_details(request: Request) -> dict[str, str]:
+    """Audit fields shared by every gateway event for a request."""
+    run_id = request.headers.get("x-sara-playground-run")
+    return {"playground_run_id": run_id} if run_id else {}
 
 
 async def _handle_gateway_request(
@@ -41,8 +51,31 @@ async def _handle_gateway_request(
     authorization: Optional[str],
     x_crawler_id: Optional[str],
     crawler_id_query: Optional[str],
+    raw_subpath: Optional[str] = None,
+    site_id: Optional[str] = None,
 ) -> Response:
-    raw_subpath = _extract_raw_gateway_subpath(request, path)
+    if raw_subpath is None:
+        raw_subpath = _extract_raw_gateway_subpath(request, path)
+
+    # Resolve the target site per request: explicit id/header first, then Host, then active.
+    try:
+        runtime = container.resolve_site(
+            site_id=site_id or request.headers.get("x-sara-site"),
+            host=request.headers.get("host"),
+        )
+    except KeyError as exc:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "site_not_found", "message": str(exc)},
+        )
+    if runtime.site.status == "paused":
+        return JSONResponse(status_code=503, content={"error": "site_paused"})
+    site_config = runtime.site_config
+    identity_service = runtime.identity_service
+    policy_engine = runtime.policy_engine
+    pricing = runtime.pricing
+    origin_proxy = runtime.origin_proxy
+    content_service = runtime.content_service
 
     # 1. No Authorization header -> Issue HTTP 402 Payment Required challenge
     if authorization is None:
@@ -59,8 +92,8 @@ async def _handle_gateway_request(
             await container.audit_logger.log_event(
                 event_type="AGENT_IDENTITY_REJECTED", crawler_id=x_crawler_id or crawler_id_query, path=raw_subpath,
                 method=request.method, allowed=False, reason_code=identity_error[0],
-                policy_version=container.site_config.policy_version, payment_mode=container.payment_provider.mode.value,
-                details={"keyid": identity.keyid, "http_status": 401},
+                policy_version=site_config.policy_version, payment_mode=container.payment_provider.mode.value,
+                details={**_request_details(request), "keyid": identity.keyid, "http_status": 401},
             )
             return JSONResponse(status_code=401, content={"error": "invalid_agent_identity", "reason_code": identity_error[0], "message": identity_error[1]})
 
@@ -74,8 +107,9 @@ async def _handle_gateway_request(
             if record["forfeited"] >= settings.refuse_after_forfeits:
                 await container.audit_logger.log_event(
                     event_type="AGENT_REFUSED", crawler_id=identity.crawler_id, path=raw_subpath, method=request.method,
-                    allowed=False, reason_code="AGENT_REFUSED", policy_version=container.site_config.policy_version,
-                    payment_mode=container.payment_provider.mode.value, details={**record, "http_status": 403},
+                    allowed=False, reason_code="AGENT_REFUSED", policy_version=site_config.policy_version,
+                    payment_mode=container.payment_provider.mode.value,
+                    details={**_request_details(request), **record, "http_status": 403},
                 )
                 return JSONResponse(status_code=403, content={
                     "error": "agent_refused", "reason_code": "AGENT_REFUSED",
@@ -88,7 +122,7 @@ async def _handle_gateway_request(
             else:
                 identity_info["standing"] = "verified"
         try:
-            resolved_crawler_id = container.identity_service.resolve_or_generate_crawler_id(
+            resolved_crawler_id = identity_service.resolve_or_generate_crawler_id(
                 candidate_crawler_id
             )
         except ValueError as exc:
@@ -100,10 +134,10 @@ async def _handle_gateway_request(
                 },
             )
 
-        challenge_record, challenge_response = container.identity_service.build_challenge(
+        challenge_record, challenge_response = identity_service.build_challenge(
             crawler_id=resolved_crawler_id,
             requested_path=raw_subpath,
-            challenge_ttl_seconds=container.site_config.challenge_ttl_seconds,
+            challenge_ttl_seconds=site_config.challenge_ttl_seconds,
             multiplier=multiplier,
             identity=identity_info,
         )
@@ -116,9 +150,10 @@ async def _handle_gateway_request(
             method=request.method,
             allowed=False,
             reason_code="PAYMENT_REQUIRED",
-            policy_version=container.site_config.policy_version,
+            policy_version=site_config.policy_version,
             payment_mode=container.payment_provider.mode.value,
             details={
+                **_request_details(request),
                 "required_amount": challenge_record.required_amount,
                 "currency": challenge_record.currency,
                 "pricing_tier": challenge_record.pricing_tier,
@@ -141,7 +176,7 @@ async def _handle_gateway_request(
             method=request.method,
             allowed=False,
             reason_code="MALFORMED_AUTH_HEADER",
-            policy_version=container.site_config.policy_version,
+            policy_version=site_config.policy_version,
             payment_mode=container.payment_provider.mode.value,
         )
         return JSONResponse(
@@ -162,7 +197,7 @@ async def _handle_gateway_request(
             method=request.method,
             allowed=False,
             reason_code="INVALID_SESSION",
-            policy_version=container.site_config.policy_version,
+            policy_version=site_config.policy_version,
             payment_mode=container.payment_provider.mode.value,
         )
         return JSONResponse(
@@ -174,10 +209,33 @@ async def _handle_gateway_request(
             },
         )
 
+    if session.site_id and session.site_id != runtime.site.site_id:
+        await container.audit_logger.log_event(
+            event_type="GATEWAY_AUTH_FAILED",
+            crawler_id=session.crawler_id,
+            challenge_id=session.challenge_id,
+            session_id=session.session_id,
+            deposit_id=session.deposit_id,
+            path=raw_subpath,
+            method=request.method,
+            allowed=False,
+            reason_code="SITE_MISMATCH",
+            policy_version=site_config.policy_version,
+            payment_mode=container.payment_provider.mode.value,
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "site_mismatch",
+                "reason_code": "SITE_MISMATCH",
+                "message": "This session was issued for a different website.",
+            },
+        )
+
     deposit = await container.deposit_manager.get_deposit(session.deposit_id)
 
     # 3. Evaluate crawling policy
-    decision = container.policy_engine.evaluate_request(
+    decision = policy_engine.evaluate_request(
         path_param=path,
         raw_request_path=raw_subpath,
         session=session,
@@ -188,7 +246,7 @@ async def _handle_gateway_request(
     # crawler's original request when the normalized form cannot represent it.
     display_path = decision.requested_path or decision.normalized_path or raw_subpath
     resource_tier = (
-        container.pricing.tier_for_normalized_path(decision.normalized_path)
+        pricing.tier_for_normalized_path(decision.normalized_path)
         if decision.requested_path is None
         else None
     )
@@ -205,7 +263,7 @@ async def _handle_gateway_request(
             reason=decision.reason,
             violation=decision.violation,
             disqualifying_immediate=decision.disqualifying,
-            refund_policy=container.site_config.refund_policy,
+            refund_policy=site_config.refund_policy,
         )
 
     # 5. Record durable append-only audit event
@@ -229,6 +287,7 @@ async def _handle_gateway_request(
         policy_version=decision.policy_version,
         payment_mode=session.payment_mode.value,
         details={
+            **_request_details(request),
             "http_status": decision.http_status,
             "violation": decision.violation,
             "disqualifying": decision.disqualifying,
@@ -273,25 +332,75 @@ async def _handle_gateway_request(
     }
 
     # 7a. Reverse-proxy mode: forward the allowed request to the origin website.
-    if container.origin_proxy is not None:
+    if origin_proxy is not None:
+        body = b""
+        if request.method not in ("GET", "HEAD"):
+            body = await request.body()
+        forward_headers = {
+            key: value
+            for key, value in request.headers.items()
+            if key.lower()
+            in (
+                "accept",
+                "accept-language",
+                "content-type",
+                "if-match",
+                "if-modified-since",
+                "if-none-match",
+                "range",
+            )
+        }
         try:
-            origin = await container.origin_proxy.fetch(decision.normalized_path, request.url.query)
+            # Policy matching uses the slash-normalized path, but the origin may treat
+            # `/pages` and `/pages/` differently (many sites redirect one to the other).
+            # Keep the client's trailing slash on the forwarded request so canonical
+            # redirects do not loop back through the gateway.
+            origin_path = decision.normalized_path
+            if origin_path != "/" and raw_subpath.endswith("/"):
+                origin_path += "/"
+            origin = await origin_proxy.fetch(
+                origin_path,
+                request.url.query,
+                method=request.method,
+                body=body,
+                headers=forward_headers,
+            )
         except OriginError as exc:
             return JSONResponse(status_code=502, content={"error": "origin_unavailable", "message": str(exc)})
         return Response(
             content=origin.body,
             status_code=origin.status_code,
             media_type=origin.content_type,
-            headers={**origin.headers, **sara_headers},
+            headers=origin.headers.with_extra(sara_headers),
         )
 
     # 7b. Serve authorized content from ContentService
-    page = container.content_service.get_authorized_content(decision)
+    page = content_service.get_authorized_content(decision)
     return Response(
         content=page.body,
         status_code=200,
         media_type=page.content_type,
         headers=sara_headers,
+    )
+
+
+async def handle_agent_request(
+    request: Request,
+    path: str,
+    container: AppContainer,
+    raw_subpath: Optional[str] = None,
+    site_id: Optional[str] = None,
+) -> Response:
+    """Gate one transparent-edge agent request (the site root, not the legacy prefix)."""
+    return await _handle_gateway_request(
+        request=request,
+        path=path,
+        container=container,
+        authorization=request.headers.get("authorization"),
+        x_crawler_id=request.headers.get("x-crawler-id"),
+        crawler_id_query=request.query_params.get("crawler_id"),
+        raw_subpath=raw_subpath,
+        site_id=site_id,
     )
 
 

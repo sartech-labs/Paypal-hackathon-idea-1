@@ -21,6 +21,9 @@ class Settings(BaseModel):
     app_host: str = Field(default="127.0.0.1")
     app_port: int = Field(default=8000, ge=1, le=65535)
     app_public_url: str = Field(default="http://127.0.0.1:8000")
+    # demo: the console is the landing page. gateway: "/" is proxied to the owner site and
+    # the console stays at /console.
+    sara_mode: Literal["demo", "gateway"] = Field(default="demo")
 
     payment_mode: Literal["mock", "paypal_sandbox"] = Field(default="mock")
 
@@ -88,8 +91,39 @@ class Settings(BaseModel):
     commerce_db_path: Path = Field(default=Path("storage/commerce_db.json"))
 
     admin_api_token: str = Field(default="")
+    # Console sign-in is always required. Credentials come from CONSOLE_PASSWORD when it is
+    # set; otherwise a password is generated on first start and stored in this file.
+    console_username: str = Field(default="admin")
+    console_password: str = Field(default="")
+    # Always ask for credentials by default. "off" is an explicit opt-out for a public demo
+    # deployment: it disables the sign-in gate and lets DASHBOARD_PUBLIC / DEMO_PUBLIC /
+    # DEMO_CONFIG_PUBLIC govern access again.
+    console_auth: Literal["on", "off"] = Field(default="on")
+    # HMAC key for the signed console cookie. When empty, a key is generated and stored next
+    # to the credentials so sessions survive a restart and multiple workers.
+    console_session_secret: str = Field(default="")
+    # Console session lifetime in seconds (default 12 hours).
+    console_session_ttl_seconds: int = Field(default=43200, ge=60, le=604800)
+    # Generated console credentials (0600) when CONSOLE_PASSWORD is not configured.
+    console_credentials_path: Path = Field(
+        default=Path("storage/console_credentials.json")
+    )
     # Read-only publisher dashboard without the admin token (for demo deployments only).
     dashboard_public: bool = Field(default=False)
+    # Owner-editable runtime configuration (target URL, deposits, rules), persisted here.
+    gateway_config_path: Path = Field(default=Path("storage/gateway_config.json"))
+    # Demo deployments only: let visitors apply target URL / deposit / rule changes without
+    # the admin token. Public writes get SSRF checks, an origin allowlist, and a quota.
+    demo_config_public: bool = Field(default=False)
+    demo_origin_allowlist: str = Field(default="")
+    config_max_writes_per_hour: int = Field(default=30, ge=1, le=1000)
+    # Transparent edge: classify unsigned clients by User-Agent (a signature always counts).
+    # A recognised browser User-Agent is human, everything else is an agent.
+    detect_agent_user_agents: bool = Field(default=True)
+    playground_max_runs_per_hour: int = Field(default=20, ge=1, le=1000)
+    playground_max_actions: int = Field(default=6, ge=1, le=20)
+    playground_agent_timeout_seconds: float = Field(default=180.0, gt=0.0, le=600.0)
+    playground_agent_max_turns: int = Field(default=12, ge=1, le=40)
     # Live demo page: when true, anyone may start crawler runs and ask the PayPal
     # assistant (read-only), within the hourly caps below. Admin token otherwise.
     demo_public: bool = Field(default=False)
@@ -233,6 +267,7 @@ def load_settings_from_env() -> Settings:
             or os.getenv("RENDER_EXTERNAL_URL")
             or "http://127.0.0.1:8000"
         ),
+        sara_mode=os.getenv("SARA_MODE", "demo").strip().lower() or "demo",  # type: ignore[arg-type]
         payment_mode=os.getenv("PAYMENT_MODE", "mock"),  # type: ignore[arg-type]
         paypal_base_url=os.getenv("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com"),
         paypal_client_id=os.getenv("PAYPAL_CLIENT_ID", ""),
@@ -275,7 +310,24 @@ def load_settings_from_env() -> Settings:
         commerce_catalog_path=Path(os.getenv("COMMERCE_CATALOG_PATH", "data/commerce_catalog.json")),
         commerce_db_path=Path(os.getenv("COMMERCE_DB_PATH", "storage/commerce_db.json")),
         admin_api_token=os.getenv("ADMIN_API_TOKEN", ""),
+        console_username=os.getenv("CONSOLE_USERNAME", "admin"),
+        console_password=os.getenv("CONSOLE_PASSWORD", ""),
+        console_auth=os.getenv("CONSOLE_AUTH", "on").strip().lower() or "on",  # type: ignore[arg-type]
+        console_session_secret=os.getenv("CONSOLE_SESSION_SECRET", ""),
+        console_session_ttl_seconds=int(os.getenv("CONSOLE_SESSION_TTL_SECONDS", "43200")),
+        console_credentials_path=Path(
+            os.getenv("CONSOLE_CREDENTIALS_PATH", "storage/console_credentials.json")
+        ),
         dashboard_public=_env_bool("DASHBOARD_PUBLIC", False),
+        gateway_config_path=Path(os.getenv("GATEWAY_CONFIG_PATH", "storage/gateway_config.json")),
+        demo_config_public=_env_bool("DEMO_CONFIG_PUBLIC", False),
+        demo_origin_allowlist=os.getenv("DEMO_ORIGIN_ALLOWLIST", ""),
+        config_max_writes_per_hour=int(os.getenv("CONFIG_MAX_WRITES_PER_HOUR", "30")),
+        detect_agent_user_agents=_env_bool("DETECT_AGENT_USER_AGENTS", True),
+        playground_max_runs_per_hour=int(os.getenv("PLAYGROUND_MAX_RUNS_PER_HOUR", "20")),
+        playground_max_actions=int(os.getenv("PLAYGROUND_MAX_ACTIONS", "6")),
+        playground_agent_timeout_seconds=float(os.getenv("PLAYGROUND_AGENT_TIMEOUT_SECONDS", "180")),
+        playground_agent_max_turns=int(os.getenv("PLAYGROUND_AGENT_MAX_TURNS", "12")),
         demo_public=_env_bool("DEMO_PUBLIC", False),
         demo_max_runs_per_hour=int(os.getenv("DEMO_MAX_RUNS_PER_HOUR", "20")),
         demo_max_questions_per_hour=int(os.getenv("DEMO_MAX_QUESTIONS_PER_HOUR", "30")),

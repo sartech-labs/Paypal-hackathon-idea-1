@@ -3,46 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SARA publisher console</title>
-  <meta name="description" content="Publisher console for SARA: AI crawler sessions, refundable PayPal deposits, policy violations, analytics, and AI explanations.">
+  <title>SARA console</title>
+  <meta name="description" content="SARA console: AI crawler sessions, refundable PayPal deposits, policy violations, analytics, and AI explanations.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z' fill='%234c8dff'/%3E%3Cpath d='m10 16 4 4 8-8' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <script>
     /* Apply the saved theme before first paint (dark by default). */
     try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
   </script>
-  <link rel="stylesheet" href="/static/dashboard.css">
-  <link rel="stylesheet" href="/static/demo.css">
+  <link rel="stylesheet" href="/_sara/static/dashboard.css?v=22">
+  <link rel="stylesheet" href="/_sara/static/demo.css">
   <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
           integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
           crossorigin="anonymous" defer></script>
-  <script src="/static/grid_kit.js" defer></script>
-  <script src="/static/paypal_panel.js" defer></script>
-  <script src="/static/analytics.js" defer></script>
-  <script src="/static/dashboard.js" defer></script>
+  <script src="/_sara/static/grid_kit.js" defer></script>
+  <script src="/_sara/static/paypal_panel.js" defer></script>
+  <script src="/_sara/static/analytics.js" defer></script>
+  <script src="/_sara/static/dashboard.js?v=30" defer></script>
 </head>
 <body>
 <header class="appbar">
   <div class="appbar-inner">
-    <a class="brand-mark" href="/console" aria-label="SARA publisher console">
+    <a class="brand-mark" href="/console" aria-label="SARA console">
       <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="var(--accent)"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
       <span class="brand-name">SARA</span>
-      <span class="brand-tag">Publisher</span>
     </a>
-    <nav class="nav" aria-label="Pages">
-      <a href="/">Agent studio</a>
-      <a href="/console" aria-current="page">Publisher console</a>
-    </nav>
     <div class="controls">
-      <div class="admin-menu">
-        <button type="button" id="admin-toggle" aria-expanded="false" aria-controls="admin-pop" data-active="false"><span aria-hidden="true">🔒</span> <span id="admin-toggle-text">Admin</span></button>
-        <div class="admin-pop" id="admin-pop" hidden>
-          <p class="hint">The admin token unlocks private deployments, the AI policy assistant, and full explanations. Public demos work without it.</p>
-          <form class="token-form" id="token-form" autocomplete="off">
-            <input type="password" id="admin-token" placeholder="Admin token" aria-label="Admin token">
-            <button type="submit" class="primary">Use token</button>
-          </form>
-        </div>
-      </div>
+      <form method="post" action="/_sara/logout" class="signout-form" id="signout-form" hidden><button type="submit" id="signout-btn">Sign out</button></form>
       <button type="button" id="theme-toggle" aria-label="Switch color theme">Theme: dark</button>
     </div>
   </div>
@@ -51,40 +37,141 @@
 <div class="console">
   <aside class="sidenav" aria-label="Console sections">
     <div class="sidenav-group">
-      <p class="sidenav-label">Monitor</p>
-      <button type="button" class="sidenav-link" data-view="overview" aria-current="page"><span class="nav-icon" aria-hidden="true">◧</span>Overview</button>
-      <button type="button" class="sidenav-link" data-view="commerce"><span class="nav-icon" aria-hidden="true">$</span>Commerce<span class="nav-count" id="count-orders" title="Paid orders and active subscriptions">0</span></button>
-      <button type="button" class="sidenav-link" data-view="operations"><span class="nav-icon" aria-hidden="true">≡</span>Operations<span class="nav-count" id="count-sessions" title="Crawler sessions">0</span></button>
-      <button type="button" class="sidenav-link" data-view="security"><span class="nav-icon" aria-hidden="true">⚠</span>Security<span class="nav-count" id="count-violations" data-tone="critical" title="Policy violations">0</span></button>
-    </div>
-    <div class="sidenav-group">
-      <p class="sidenav-label">Insights</p>
+      <button type="button" class="sidenav-link" data-view="setup" aria-current="page"><span class="nav-icon" aria-hidden="true">⚙</span>Console</button>
+      <button type="button" class="sidenav-link" data-view="operations"><span class="nav-icon" aria-hidden="true">≡</span>Audit log<span class="nav-count" id="count-sessions" title="Crawler sessions">0</span></button>
+      <button type="button" class="sidenav-link" data-view="security"><span class="nav-icon" aria-hidden="true">⚠</span>Policy violations<span class="nav-count" id="count-violations" data-tone="critical" title="Policy violations">0</span></button>
       <button type="button" class="sidenav-link" data-view="analytics"><span class="nav-icon" aria-hidden="true">◔</span>Analytics</button>
-    </div>
-    <div class="sidenav-group">
-      <p class="sidenav-label">Configure</p>
-      <button type="button" class="sidenav-link" data-view="policy"><span class="nav-icon" aria-hidden="true">§</span>Policy</button>
-    </div>
-    <div class="sidenav-foot">
-      <label class="toggle"><input type="checkbox" id="auto-refresh" checked> Live refresh</label>
-      <span class="updated"><span class="live-dot" aria-hidden="true"></span><span id="updated">Waiting for data...</span></span>
     </div>
   </aside>
 
   <main class="console-main">
-    <div class="page-head">
+    <div class="page-head" id="page-head">
       <div>
-        <p class="eyebrow">Publisher console</p>
-        <h1 id="page-title">Overview</h1>
-        <p id="site-line">Refundable PayPal deposits that keep AI crawlers accountable</p>
-        <div class="badges" id="badges" aria-label="Gateway configuration"></div>
-      </div>
-      <div class="filter-row">
-        <input type="search" id="quick-filter" placeholder="Filter all tables..." aria-label="Filter all tables">
+        <h1 id="page-title">Console</h1>
       </div>
     </div>
 
     <section class="banner" id="banner" role="status" hidden></section>
+
+    <!-- Gateway configuration and playground ------------------------------------- -->
+    <section class="view" data-view="setup" aria-labelledby="page-title">
+      <section class="card setup-card" id="sites-card">
+        <div class="card-head">
+          <div class="card-title-line">
+            <h2>Gateway</h2>
+            <span class="card-meta" id="sites-count">0 sites</span>
+          </div>
+        </div>
+        <div class="site-list" id="site-list" role="list" aria-label="Websites">
+          <p class="empty">Loading websites...</p>
+        </div>
+        <form class="site-add" id="site-add-form" autocomplete="off">
+          <div class="site-add-shell">
+            <span aria-hidden="true">https://</span>
+            <input id="site-add-input" placeholder="example.com" spellcheck="false" aria-label="New website URL">
+          </div>
+          <button type="submit" class="primary" id="site-add-button">Add website</button>
+        </form>
+
+        <div class="settings-row">
+          <div class="deposit-block">
+            <span class="field-kicker">Deposit per agent session</span>
+            <div class="inline-value-row" id="cfg-deposit-read">
+              <span class="inline-value" id="cfg-deposit-value">$5.00</span>
+              <button type="button" class="icon-btn" id="cfg-deposit-edit" aria-label="Edit deposit" title="Edit deposit">✎</button>
+            </div>
+            <div class="inline-edit" id="cfg-deposit-edit-row" hidden>
+              <div class="deposit-control">
+                <span class="currency-symbol" id="cfg-currency-symbol" aria-hidden="true">$</span>
+                <input id="cfg-deposit" inputmode="decimal" placeholder="5.00" aria-label="Deposit per agent session">
+              </div>
+              <button type="button" class="btn-xs primary" id="cfg-deposit-save">Save</button>
+            </div>
+          </div>
+          <div class="rate-block">
+            <span class="field-kicker">Rate limit <span class="muted">(per agent)</span></span>
+            <div class="inline-value-row" id="cfg-rate-read">
+              <span class="inline-value" id="cfg-rate-value">10 requests / minute</span>
+              <button type="button" class="icon-btn" id="cfg-rate-edit" aria-label="Edit rate limit" title="Edit rate limit">✎</button>
+            </div>
+            <div class="inline-edit" id="cfg-rate-edit-row" hidden>
+              <div class="rate-control">
+                <input id="cfg-rate" type="number" min="1" max="1000" step="1" aria-label="Rate limit requests">
+                <select id="cfg-rate-unit" aria-label="Rate limit window">
+                  <option value="1">requests/sec</option>
+                  <option value="60" selected>requests/min</option>
+                  <option value="3600">requests/hour</option>
+                </select>
+              </div>
+              <button type="button" class="btn-xs primary" id="cfg-rate-save">Save</button>
+            </div>
+          </div>
+        </div>
+        <div class="setup-actions">
+          <span class="hint" id="cfg-hint"></span>
+        </div>
+
+        <hr class="section-divider">
+        <div class="section-block">
+          <div class="section-head">
+            <h3>Access rules</h3>
+          </div>
+          <div class="rules-grid">
+            <div class="rules-col" data-tone="good">
+              <div class="rules-col-head">
+                <span class="field-kicker">Allowed paths</span>
+                <span class="rules-count" id="allowed-count">0</span>
+              </div>
+              <ul class="rule-paths" id="allowed-list"></ul>
+              <form class="rule-path-add" id="allowed-add-form" autocomplete="off">
+                <input id="allowed-add-input" placeholder="/path/*" spellcheck="false" aria-label="Add allowed path">
+                <button type="submit">+ Add path</button>
+              </form>
+            </div>
+            <div class="rules-col" data-tone="critical">
+              <div class="rules-col-head">
+                <span class="field-kicker">Disallowed paths</span>
+                <span class="rules-count" id="disallowed-count">0</span>
+              </div>
+              <ul class="rule-paths" id="disallowed-list"></ul>
+              <form class="rule-path-add" id="disallowed-add-form" autocomplete="off">
+                <input id="disallowed-add-input" placeholder="/admin/*" spellcheck="false" aria-label="Add disallowed path">
+                <button type="submit">+ Add path</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card playground-card" id="playground-card">
+        <div class="card-head">
+          <div>
+            <div class="card-title-line">
+              <h2>Playground</h2>
+            </div>
+            <p class="card-sub">Test your deployed gateway</p>
+          </div>
+          <div class="pg-head-actions">
+            <button type="button" class="btn-sm" id="pg-reset">Reset</button>
+            <button type="button" class="primary" id="pg-run-button" disabled>Run test</button>
+          </div>
+        </div>
+        <p class="hint pg-run-hint" id="pg-run-hint">Loading the playground...</p>
+        <div class="pg-behaviors-head">
+          <span class="pg-kicker">Select crawler behavior</span>
+        </div>
+        <div class="pg-choice-grid" id="pg-choices"></div>
+        <hr class="section-divider">
+        <div class="pg-plan pg-output">
+          <div class="pg-plan-head">
+            <span class="pg-plan-title">Output</span>
+            <span class="pg-plan-count" id="pg-plan-count"></span>
+          </div>
+          <ol class="pg-timeline" id="pg-timeline" aria-live="polite" aria-label="Agent steps"></ol>
+          <div class="pg-final" id="pg-final" role="region" aria-label="Final response" hidden></div>
+        </div>
+      </section>
+    </section>
 
     <!-- Overview ------------------------------------------------------------------ -->
     <section class="view" data-view="overview" aria-labelledby="page-title">
@@ -92,9 +179,9 @@
         <span class="section-icon" aria-hidden="true">▶</span>
         <div>
           <h2>No crawler activity yet</h2>
-          <p class="card-sub">Ask the assistant in Agent studio to read the news, or watch the rule-breaking scraper there. Its deposit, requests, and violations appear here within a few seconds.</p>
+          <p class="card-sub">Run an action in the crawler playground above, or ask the assistant in Agent studio to read the news. Its deposit, requests, and violations appear here within a few seconds.</p>
         </div>
-        <a class="button-link primary" href="/">Open the agent studio</a>
+        <a class="button-link primary" href="#setup">Open the playground</a>
       </section>
       <section class="kpis" id="kpis" aria-label="Key metrics"></section>
 
@@ -162,7 +249,7 @@
         <div>
           <p>Everything AI agents paid this site through PayPal: refundable crawl deposits, pay-per-access items, subscriptions, and product orders.</p>
         </div>
-        <a class="button-link" href="/">Open the agent studio</a>
+        <a class="button-link" href="/agent">Open the agent studio</a>
       </div>
       <section class="kpis" id="commerce-kpis" aria-label="Commerce metrics"></section>
       <section class="card" aria-labelledby="mix-title">
@@ -300,21 +387,12 @@
           <textarea id="terms">AI crawlers may read our home page and the news sections. The admin area, member profiles, and internal reports are off limits. Allow at most 5 requests every 10 seconds and 20 requests per visit. Ask for a 25 cent refundable deposit.</textarea>
           <div class="assistant-actions">
             <button type="button" class="primary" id="draft-button">Draft policy with AI</button>
-            <span class="hint" id="draft-hint">Enter the admin token in the top bar to draft a policy with AI.</span>
+            <span class="hint" id="draft-hint">Policy drafting needs an admin token on the gateway.</span>
           </div>
           <div class="assistant-result" id="draft-result"></div>
         </section>
       </div>
     </section>
-
-    <footer>
-      SARA gateway ·
-      <a href="/">Agent studio</a> ·
-      <a href="/docs">API docs</a> ·
-      <a href="/policies">Policy JSON</a> ·
-      <a href="/robots.txt">robots.txt</a> ·
-      <a href="/health">Health</a>
-    </footer>
   </main>
 </div>
 <div class="tooltip" id="tooltip" role="tooltip" hidden></div>

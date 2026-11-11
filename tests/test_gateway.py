@@ -19,7 +19,7 @@ async def test_public_endpoints_and_402_challenge(async_client: httpx.AsyncClien
 
     policies = await async_client.get("/policies")
     assert policies.status_code == 200
-    assert policies.json()["site_id"] == "demo-news-site"
+    assert policies.json()["site_id"] == "default"
 
     robots = await async_client.get("/robots.txt")
     assert robots.status_code == 200
