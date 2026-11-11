@@ -302,11 +302,11 @@ docker build -t sara .
 docker run --rm -p 8000:8000 --env-file .env -v sara-storage:/app/storage sara
 ```
 
-The named volume keeps `storage/` (audit log, deposits, sessions, and live gateway configuration) across container replacements. In front of a real site, run with `SARA_MODE=gateway`, `ORIGIN_URL=https://www.example.com`, and a strong `ADMIN_API_TOKEN`; see `deploy/docker-compose.example.yml`.
+The named volume keeps `storage/` (audit log, deposits, sessions, and the live website registry) across container replacements. In front of a real site, run with `SARA_MODE=gateway`, `ORIGIN_URL=https://www.example.com`, and a strong `ADMIN_API_TOKEN`; see `deploy/docker-compose.yml`.
 
 The image runs as a non-root user, binds to `$PORT` (default 8000), exposes a health check on `/health`, and always runs **one** uvicorn worker, because deposits, sessions, rate limits, and demo runs live in one process. It also contains Node.js 22 and PayPal's MCP server (`@paypal/mcp`, installed from the lockfile in `deploy/paypal-mcp/`) for the PayPal assistant.
 
-**Render:** `render.yaml` is a Blueprint for a Docker web service. In the Render dashboard choose **New > Blueprint**, select this repository, and enter the prompted secrets: `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` (the Blueprint runs real Sandbox payments with test-card autopay; set `PAYMENT_MODE=mock` if you have no PayPal app), `OPENAI_API_KEY` (the Blueprint's AI provider), and optionally `ANTHROPIC_API_KEY`. Render generates `ADMIN_API_TOKEN`; copy it from the service's environment settings for admin features. The Blueprint sets `SARA_MODE=demo`, `DEMO_PUBLIC=true`, `DEMO_CONFIG_PUBLIC=true`, and `DASHBOARD_PUBLIC=true` so judges land on the owner console, can change tier deposits and rules, and can run the playground, with hourly caps. Changing the target URL publicly needs its host in `DEMO_ORIGIN_ALLOWLIST` (or the admin token), so the demo host cannot be used as an open proxy. Storage on the free plan is ephemeral and the service sleeps when idle, so open the URL a minute before a demo.
+**Render:** `render.yaml` is a Blueprint for a Docker web service. In the Render dashboard choose **New > Blueprint**, select this repository, and enter the prompted secrets: `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` (the Blueprint runs real Sandbox payments with test-card autopay; set `PAYMENT_MODE=mock` if you have no PayPal app), `OPENAI_API_KEY` (the Blueprint's AI provider), and optionally `ANTHROPIC_API_KEY`. Render generates `ADMIN_API_TOKEN`; copy it from the service's environment settings for admin features. The Blueprint sets `SARA_MODE=demo`, `DEMO_PUBLIC=true`, `DEMO_CONFIG_PUBLIC=true`, and `DASHBOARD_PUBLIC=true` so judges land on the owner console, can add websites, change deposits and rules, and run the playground, with hourly run caps. Public origin URLs are SSRF-checked (private, loopback, and reserved addresses are rejected). Storage on the free plan is ephemeral and the service sleeps when idle, so open the URL a minute before a demo.
 
 ### Deploy the gateway (transparent edge)
 
@@ -320,10 +320,12 @@ SARA_MODE=gateway ORIGIN_URL=https://www.example.com ADMIN_API_TOKEN=... python 
 
 - `SARA_MODE=gateway` makes `/` the proxied website and keeps the console at `/console`. `SARA_MODE=demo` instead makes `/` the owner console (the public demo) and leaves `/agent` as the agent studio.
 - **Reserved surface.** SARA's own routes win before the edge, so the origin is never asked for them: `/console`, `/dashboard`, `/_sara/static/*`, `/admin`, `/health`, `/docs`, `/redoc`, `/mcp`, `/agent`, `/demo`, plus the gateway API prefixes (`/policies`, `/robots.txt`, `/deposits`, `/sessions`, `/audit`, `/commerce`, `/paid`, `/paypal`, `/playground`, `/webhooks`, `/.well-known`). An origin page that uses one of those paths is not proxied.
-- At startup, and whenever the target changes, SARA fetches the origin's own `robots.txt` and enforces its `User-agent: *` rules: every `Disallow` line becomes a blocked path (`403`, counted as a violation), and `Crawl-delay` slows the rate limit. The owner's rules from the console still apply on top.
+- At startup, and whenever the target changes, SARA fetches the origin's own `robots.txt` and enforces its `User-agent: *` rules: every `Disallow` line becomes a blocked path (`403`, counted as a violation), and `Crawl-delay` is enforced as a minimum gap between requests (separate from the owner's sec/min/hour rate limit). The owner's rules from the console still apply on top.
 - Anything the rules do not disallow is allowed (robots.txt semantics). A paid, compliant request is forwarded to the origin at the same path; the origin's status, body, and caching headers come back, cookies do not. Disallowed paths never reach the origin.
 - Agent recognition at the edge fails closed and reads a single header. A Web Bot Auth signature always counts. Otherwise the User-Agent decides: a recognised real browser fingerprint (Chrome, Safari, Firefox, Edge, Opera, Samsung Internet, and their mobile variants) is served the page as a person, while every other User-Agent — crawlers, scripts, `curl`, an empty User-Agent, anything unrecognised — is treated as an agent and must post the deposit. Operational consequence: uptime checks and scripts that read the site must use a browser User-Agent or hit `/health`, which is never gated.
-- For a demo deployment, `SARA_MODE=demo` keeps `/` as the owner console and `DEMO_CONFIG_PUBLIC=true` lets visitors edit tier deposits, rules, and limits. The console and the API cap the rate limit at **10 requests per minute** in demo mode, so a visitor cannot raise it high enough to use the demo as a traffic amplifier. Changing the target URL without the admin token also requires its host in `DEMO_ORIGIN_ALLOWLIST`, and public origin URLs are SSRF-checked (private, loopback, and reserved addresses are rejected), so a demo host cannot be turned into an open proxy; writes are rate-limited. Production gateways should require the admin token.
+- For a demo deployment, `SARA_MODE=demo` keeps `/` as the owner console and `DEMO_CONFIG_PUBLIC=true` lets visitors add websites and edit deposits, rules, and limits without the admin token. Public origin URLs are SSRF-checked (private, loopback, and reserved addresses are rejected), so a demo host cannot be pointed at internal services. Production gateways should require the admin token.
+
+**Multiple websites.** The console's **Gateway** card lists every configured website and lets the owner add, remove, pause, and select one. There is no limit on how many websites the gateway proxies. The selected website is the one whose deposit, rate limit, access rules, policy, and playground are shown in the console at that moment; selecting another website makes it the console's context and the default for gateway traffic. Requests are routed to a website by `Host` (in gateway mode), by the `X-SARA-Site` header (agents and the playground), or by the `/_site/{site_id}/...` path (a same-host route that works in demo mode too). A website's own `robots.txt` is imported when it is added and merged with the owner's rules.
 
 ### Configure live from the console
 
@@ -331,12 +333,13 @@ Open `/console` (or `/` in demo mode). The owner can change, without leaving the
 
 | Setting | What the console edits |
 | :--- | :--- |
-| Target website | `ORIGIN_URL` for the running gateway; **Test target** checks it and reads its `robots.txt` |
+| Websites | Add, remove, pause, and select the website the console is configuring; every configured website is proxied |
+| Target website | `ORIGIN_URL` for the selected website; **Test target** checks it and reads its `robots.txt` |
 | Tier deposits | The per-tier price (Premium, Standard, Public) and the base deposit for untiered paths |
-| Site rules | Allowed and disallowed paths, the per-session request budget, and the rate limit and window (demo mode caps the rate limit at 10 requests per minute) |
+| Site rules | Allowed and disallowed paths, the per-session request budget, and the rate limit and window |
 | robots.txt | **Sync robots.txt** re-imports the origin's rules and applies them immediately |
 
-Every save is validated, written to `GATEWAY_CONFIG_PATH` (default `storage/gateway_config.json`), and swapped into the running process: no redeploy, no env-file edit, no restart. A rules change bumps the policy version, so agents must accept the new policy. Mount `storage/` on a volume so the file survives container replacement. In gateway mode these writes require `X-Admin-Token` (an admin token); `DEMO_CONFIG_PUBLIC=true` only has an effect in demo mode.
+Every save is validated, written to `GATEWAY_CONFIG_PATH` (default `storage/gateway_config.json`, now a multi-site registry), and swapped into the running process: no redeploy, no env-file edit, no restart. A rules change bumps the policy version, so agents must accept the new policy. Mount `storage/` on a volume so the file survives container replacement. In gateway mode these writes require `X-Admin-Token` (an admin token); `DEMO_CONFIG_PUBLIC=true` only has an effect in demo mode.
 
 ### Verified agents
 
@@ -374,12 +377,12 @@ Copy `.env.example` to `.env`. Settings are validated at startup (`server/config
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` | empty | Sandbox app credentials |
 | `ORIGIN_URL` | empty | Target website for the transparent edge; can also be set live from the console |
 | `ORIGIN_TIMEOUT_SECONDS` | `10` | Timeout for requests forwarded to the target website |
-| `GATEWAY_CONFIG_PATH` | `storage/gateway_config.json` | Persisted owner-console configuration (mount a volume in production) |
-| `DEMO_CONFIG_PUBLIC` | `false` | Demo mode only: allow live config edits without the admin token, with SSRF checks and a write quota; a target-URL change also needs `DEMO_ORIGIN_ALLOWLIST` |
-| `DEMO_ORIGIN_ALLOWLIST` | empty | Comma-separated hosts tokenless demo visitors may point the gateway at; empty means the target URL needs the admin token |
-| `CONFIG_MAX_WRITES_PER_HOUR` | `30` | Hourly quota for public config writes |
+| `GATEWAY_CONFIG_PATH` | `storage/gateway_config.json` | Persisted multi-site registry (mount a volume in production) |
+| `DEMO_CONFIG_PUBLIC` | `false` | Demo mode only: allow live config edits (including adding websites) without the admin token, with SSRF checks |
+| `DEMO_ORIGIN_ALLOWLIST` | empty | Deprecated and unused: public origin changes are SSRF-checked instead of allowlisted |
+| `CONFIG_MAX_WRITES_PER_HOUR` | `30` | Deprecated and unused: public config writes are no longer rate-limited |
 | `DETECT_AGENT_USER_AGENTS` | `true` | Fail-closed User-Agent classification at the transparent edge: a recognised browser fingerprint passes as human, every other User-Agent counts as an agent |
-| `PLAYGROUND_MAX_RUNS_PER_HOUR` | `20` | Hourly cap for agentic playground runs (starting also needs the admin token or `DEMO_PUBLIC=true`) |
+| `PLAYGROUND_MAX_RUNS_PER_HOUR` | `20` | Hourly cap for agentic playground runs (starting also needs the admin token, `DEMO_PUBLIC=true`, or `DEMO_CONFIG_PUBLIC=true`) |
 | `PLAYGROUND_MAX_ACTIONS` | `6` | Maximum actions in one playground checklist |
 | `PLAYGROUND_AGENT_TIMEOUT_SECONDS` | `180` | Hard deadline for an agentic playground run |
 | `PLAYGROUND_AGENT_MAX_TURNS` | `12` | Maximum model/tool turns in one playground run |
@@ -447,9 +450,12 @@ Interactive docs: **`/docs`** (Swagger UI) and **`/redoc`**.
 | GET | `/` | none | Owner console in demo mode; proxied owner site in gateway mode |
 | GET | `/agent` | none | Agent studio (personal agent and crawler scenarios) |
 | GET | `/crawler`, `/demo` | none | Older crawler deposit page (kept for the video recorder; not linked) |
-| GET | `/admin/config` | admin, or public when `DEMO_CONFIG_PUBLIC=true` in demo mode | Live target URL, tier deposits, rules, and origin status |
-| PUT | `/admin/config` | admin, or public when `DEMO_CONFIG_PUBLIC=true` in demo mode (target-URL change also needs `DEMO_ORIGIN_ALLOWLIST`) | Apply target URL, tier deposit, and rule changes live |
+| GET | `/admin/config` | admin, or public when `DEMO_CONFIG_PUBLIC=true` in demo mode | Selected website's target URL, tier deposits, rules, and origin status |
+| PUT | `/admin/config` | admin, or public when `DEMO_CONFIG_PUBLIC=true` in demo mode | Apply the selected website's target URL, tier deposit, and rule changes live |
 | POST | `/admin/config/test-origin` | admin, or public when `DEMO_CONFIG_PUBLIC=true` in demo mode | Check that a target website is reachable and read its `robots.txt` |
+| GET/POST | `/admin/sites` | same as `/admin/config` | List websites, or add one |
+| PUT/DELETE | `/admin/sites/{site_id}` | same as `/admin/config` | Rename, pause/resume, or remove a website |
+| POST | `/admin/sites/{site_id}/activate` | same as `/admin/config` | Select the website the console edits and plays |
 | POST | `/admin/config/sync-robots` | admin | Re-import the target's `robots.txt` and apply it |
 | GET | `/playground/actions`, `/playground/runs`, `/playground/runs/{run_id}` | admin; public when `DEMO_PUBLIC=true` or `DASHBOARD_PUBLIC=true` | Action checklist, agent availability, recent runs, and one run's live steps and per-action results |
 | POST | `/playground/runs`, `/playground/runs/{run_id}/cancel` | admin, or public when `DEMO_PUBLIC=true` | Run the selected action checklist with the agent, or stop it; every run is audited |

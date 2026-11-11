@@ -48,6 +48,10 @@ class SessionManager:
         """Apply an owner-console policy change to newly issued sessions."""
         self._site_config = site_config
 
+    @property
+    def site_config(self) -> SiteConfig:
+        return self._site_config
+
     def load_from_disk(self) -> None:
         """Load persisted sessions on startup and expire any stale ACTIVE sessions."""
         raw = safe_load_json(self._db_path, expected_top_keys=("sessions",))
@@ -111,8 +115,11 @@ class SessionManager:
         payment_reference: str,
         payment_mode: PaymentMode,
         session_ttl_seconds: int,
+        site_config: Optional[SiteConfig] = None,
+        site_id: Optional[str] = None,
     ) -> tuple[SessionRecord, SessionIssueResponse]:
         """Issue a new session bound to a verified deposit and accepted policy."""
+        effective_config = site_config or self._site_config
         async with self._lock:
             if deposit_id in self._deposit_to_session:
                 raise StateTransitionError(
@@ -130,6 +137,7 @@ class SessionManager:
                 crawler_id=crawler_id,
                 challenge_id=challenge_id,
                 deposit_id=deposit_id,
+                site_id=site_id or "",
                 policy_version=policy_version,
                 policy_accepted_at=policy_accepted_at,
                 payment_reference=payment_reference,
@@ -156,9 +164,9 @@ class SessionManager:
                 status=record.status,
                 created_at=now_iso,
                 expires_at=expires_iso,
-                max_requests_per_session=self._site_config.max_requests_per_session,
-                rate_limit_requests=self._site_config.rate_limit_requests,
-                rate_limit_window_seconds=self._site_config.rate_limit_window_seconds,
+                max_requests_per_session=effective_config.max_requests_per_session,
+                rate_limit_requests=effective_config.rate_limit_requests,
+                rate_limit_window_seconds=effective_config.rate_limit_window_seconds,
             )
             return record, issue_response
 

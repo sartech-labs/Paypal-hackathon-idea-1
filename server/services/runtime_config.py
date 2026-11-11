@@ -37,43 +37,6 @@ class OriginNotAllowedError(ValueError):
     """A public write tried to point the proxy at a host outside DEMO_ORIGIN_ALLOWLIST."""
 
 
-# Demo deployments expose the console to anonymous visitors, so the owner-editable rate
-# limit is capped there. Keeping the cap here (not only in the UI) means a direct API call
-# cannot raise it. The rule allows at most 10 requests in any 60-second span: both the
-# request count and the per-minute rate are checked.
-DEMO_RATE_LIMIT_MAX_REQUESTS = 10
-DEMO_RATE_LIMIT_MAX_PER_MINUTE = 10
-
-
-def demo_rate_limit_exceeded(requests: int, window_seconds: float) -> bool:
-    """True when a limit would permit more than 10 requests per minute in demo mode."""
-    if requests > DEMO_RATE_LIMIT_MAX_REQUESTS:
-        return True
-    if window_seconds <= 0:
-        return True
-    return (requests * 60.0) / window_seconds > DEMO_RATE_LIMIT_MAX_PER_MINUTE + 1e-9
-
-
-def validate_demo_rate_limit(requests: int, window_seconds: float) -> None:
-    """Reject rate limits above the demo deployment cap."""
-    if not demo_rate_limit_exceeded(requests, window_seconds):
-        return
-    if requests > DEMO_RATE_LIMIT_MAX_REQUESTS:
-        message = (
-            "Demo mode caps the rate limit at 10 requests per minute. "
-            "Lower the request count to 10 or fewer."
-        )
-    else:
-        minimum_window = int(
-            -(-requests * 60 // DEMO_RATE_LIMIT_MAX_PER_MINUTE)  # ceil division
-        )
-        message = (
-            "Demo mode caps the rate limit at 10 requests per minute. "
-            f"Widen the window to at least {minimum_window} seconds or lower the request count."
-        )
-    raise ValueError(message)
-
-
 class RuntimeConfigStore:
     """Atomic JSON storage for the owner-editable gateway configuration."""
 
@@ -179,8 +142,6 @@ def validate_origin_url(
     if not host:
         raise ValueError("Origin URL must include a host.")
     if allow_private:
-        return cleaned
-    if origin_is_allowlisted(cleaned, allowlist):
         return cleaned
     if require_allowlist:
         raise OriginNotAllowedError(

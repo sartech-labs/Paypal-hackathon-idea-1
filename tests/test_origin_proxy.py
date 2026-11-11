@@ -68,7 +68,7 @@ def proxied(test_settings: Settings, fake_clock: FakeClock):
     return app, seen
 
 
-async def test_proxy_forwards_allowed_paths_and_blocks_robots_disallows(proxied) -> None:
+async def test_proxy_forwards_allowed_paths_and_blocks_robots_disallows(proxied, fake_clock) -> None:
     app, seen = proxied
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
         robots = (await client.get("/robots.txt")).text
@@ -83,6 +83,8 @@ async def test_proxy_forwards_allowed_paths_and_blocks_robots_disallows(proxied)
         assert "/blog/post-1?page=2" in seen
         assert res.headers["X-SARA-Session-Id"] == session["session_id"]
 
+        # Respect the origin's 5 s Crawl-delay between allowed requests.
+        fake_clock.advance(5)
         res = await client.get("/gateway/news", headers=auth)
         assert res.status_code == 200 and "Origin news" in res.text
         assert res.headers["cache-control"] == "max-age=60"
@@ -105,25 +107,46 @@ async def test_proxy_preserves_trailing_slash_for_origin_canonicalization(proxie
         assert "/trailing/" in seen
 
 
-async def test_proxy_passes_origin_404_and_5xx_statuses(proxied) -> None:
+async def test_proxy_passes_origin_404_and_5xx_statuses(proxied, fake_clock) -> None:
     app, _ = proxied
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
         _, _, session = await complete_onboarding_flow(client, "crawler-proxy-2")
         auth = {"Authorization": f"Bearer {session['access_token']}"}
         assert (await client.get("/gateway/missing", headers=auth)).status_code == 404
+        fake_clock.advance(5)
         broken = await client.get("/gateway/broken", headers=auth)
         assert broken.status_code == 503 and broken.text == "down"
+        fake_clock.advance(5)
         error = await client.get("/gateway/error500", headers=auth)
         assert error.status_code == 500 and error.text == "boom"
 
 
-async def test_crawl_delay_slows_the_rate_limit(proxied) -> None:
+async def test_crawl_delay_is_published_separately_from_the_rate_window(proxied) -> None:
     app, _ = proxied
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
         policy = (await client.get("/policies")).json()
-        text = str(policy)
-        # 5 requests per window with a 5 s crawl delay: the window grows to 25 s.
-        assert "25" in text
+        # The owner's rate window is untouched; Crawl-delay is its own constraint.
+        assert policy["crawl_delay_seconds"] == 5
+        assert policy["rate_limit_window_seconds"] == 10
+
+
+async def test_crawl_delay_rejects_requests_that_are_too_close(proxied, fake_clock) -> None:
+    app, _ = proxied
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        _, _, session = await complete_onboarding_flow(client, "crawler-crawl-delay")
+        auth = {"Authorization": f"Bearer {session['access_token']}"}
+
+        assert (await client.get("/gateway/news", headers=auth)).status_code == 200
+        fake_clock.advance(2)
+        too_soon = await client.get("/gateway/news", headers=auth)
+        assert too_soon.status_code == 429
+        body = too_soon.json()
+        assert body["reason_code"] == "RATE_LIMIT_EXCEEDED"
+        assert "Crawl-delay" in body["reason"]
+        assert body["retry_after_seconds"] >= 3
+
+        fake_clock.advance(3)
+        assert (await client.get("/gateway/news", headers=auth)).status_code == 200
 
 def test_robots_redirect_is_not_followed() -> None:
     requested: list[str] = []

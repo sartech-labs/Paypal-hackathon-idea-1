@@ -407,6 +407,7 @@ class PlaygroundRunner:
         audit: Optional[Callable[[str, str, dict[str, Any]], Optional[str]]] = None,
         policy_version: Optional[str] = None,
         payment_mode: Optional[str] = None,
+        site_id: Optional[str] = None,
     ) -> PlaygroundRun:
         requested = [str(value).strip() for value in (action_ids or [])]
         if action_id is not None:
@@ -468,7 +469,7 @@ class PlaygroundRunner:
 
         thread = threading.Thread(
             target=self._execute,
-            args=(run, base_url, policy, audit, policy_version, payment_mode, requested, run_driver),
+            args=(run, base_url, policy, audit, policy_version, payment_mode, requested, run_driver, site_id),
             name=f"playground-{run.run_id}",
             daemon=True,
         )
@@ -487,6 +488,7 @@ class PlaygroundRunner:
         payment_mode: Optional[str],
         action_ids: list[str],
         driver: str,
+        site_id: Optional[str] = None,
     ) -> None:
         def log(event_type: str, reason_code: str, details: dict[str, Any]) -> None:
             if audit is None:
@@ -515,6 +517,9 @@ class PlaygroundRunner:
             "User-Agent": "SARA-Playground/1.0",
             "X-SARA-Playground-Run": run.run_id,
         }
+        if site_id:
+            # Exercise the console's selected site, not whichever site is globally active.
+            headers["X-SARA-Site"] = site_id
         try:
             with self._http_factory(base_url) as raw_http:
                 http = _DeadlineHttp(raw_http, lambda: self._check_deadline(run))
@@ -871,6 +876,7 @@ class PlaygroundRunner:
         deposit = http.post(
             "/deposits/create",
             json={"challenge_id": challenge_id, "crawler_id": crawler_id},
+            headers=headers,
         )
         if deposit.status_code != 201:
             raise PlaygroundActionError(
@@ -879,7 +885,7 @@ class PlaygroundRunner:
         deposit_body = deposit.json()
         deposit_id = deposit_body["deposit_id"]
         ids = {"crawler_id": crawler_id, "challenge_id": challenge_id}
-        capture = http.post(f"/deposits/{deposit_id}/capture", json=ids)
+        capture = http.post(f"/deposits/{deposit_id}/capture", json=ids, headers=headers)
         run.emit(
             "Pay the refundable deposit",
             request=f"POST /deposits/{deposit_id}/capture",
@@ -894,7 +900,7 @@ class PlaygroundRunner:
                 f"Deposit payment did not complete (HTTP {capture.status_code}). "
                 "In PayPal Sandbox mode, enable PAYPAL_SANDBOX_AUTOPAY or use mock payments."
             )
-        verify = http.post(f"/deposits/{deposit_id}/verify", json=ids)
+        verify = http.post(f"/deposits/{deposit_id}/verify", json=ids, headers=headers)
         if verify.status_code != 200:
             raise PlaygroundActionError(
                 f"Deposit verification failed with HTTP {verify.status_code}: {_message(verify)}"
@@ -907,6 +913,7 @@ class PlaygroundRunner:
                 "policy_version": policy_version or challenge.get("policy_version"),
                 "agree_to_terms": True,
             },
+            headers=headers,
         )
         if accepted.status_code != 201:
             raise PlaygroundActionError(
@@ -1608,7 +1615,12 @@ def _page_plan(policy: dict[str, Any]) -> _PagePlan:
         ordered.append("/")
 
     if not ordered:
-        return _PagePlan(DEFAULT_PAGE_PATH, (DEFAULT_PAGE_PATH,), fallback=True)
+        # A site with no advertised paths (a freshly added origin site) is best exercised at
+        # its root; the bundled demo policy falls back to /news. Prefer an unblocked
+        # candidate, but when the site forbids every candidate there is no usable path.
+        candidates = ["/", DEFAULT_PAGE_PATH] if not allowed and not tiers else [DEFAULT_PAGE_PATH]
+        fallback = next((path for path in candidates if not blocked(path)), candidates[0])
+        return _PagePlan(fallback, (fallback,), fallback=True)
 
     challenge = ordered[0]
     covered_rank = tier_rank(challenge)

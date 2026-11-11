@@ -52,9 +52,30 @@ async def _handle_gateway_request(
     x_crawler_id: Optional[str],
     crawler_id_query: Optional[str],
     raw_subpath: Optional[str] = None,
+    site_id: Optional[str] = None,
 ) -> Response:
     if raw_subpath is None:
         raw_subpath = _extract_raw_gateway_subpath(request, path)
+
+    # Resolve the target site per request: explicit id/header first, then Host, then active.
+    try:
+        runtime = container.resolve_site(
+            site_id=site_id or request.headers.get("x-sara-site"),
+            host=request.headers.get("host"),
+        )
+    except KeyError as exc:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "site_not_found", "message": str(exc)},
+        )
+    if runtime.site.status == "paused":
+        return JSONResponse(status_code=503, content={"error": "site_paused"})
+    site_config = runtime.site_config
+    identity_service = runtime.identity_service
+    policy_engine = runtime.policy_engine
+    pricing = runtime.pricing
+    origin_proxy = runtime.origin_proxy
+    content_service = runtime.content_service
 
     # 1. No Authorization header -> Issue HTTP 402 Payment Required challenge
     if authorization is None:
@@ -71,7 +92,7 @@ async def _handle_gateway_request(
             await container.audit_logger.log_event(
                 event_type="AGENT_IDENTITY_REJECTED", crawler_id=x_crawler_id or crawler_id_query, path=raw_subpath,
                 method=request.method, allowed=False, reason_code=identity_error[0],
-                policy_version=container.site_config.policy_version, payment_mode=container.payment_provider.mode.value,
+                policy_version=site_config.policy_version, payment_mode=container.payment_provider.mode.value,
                 details={**_request_details(request), "keyid": identity.keyid, "http_status": 401},
             )
             return JSONResponse(status_code=401, content={"error": "invalid_agent_identity", "reason_code": identity_error[0], "message": identity_error[1]})
@@ -86,7 +107,7 @@ async def _handle_gateway_request(
             if record["forfeited"] >= settings.refuse_after_forfeits:
                 await container.audit_logger.log_event(
                     event_type="AGENT_REFUSED", crawler_id=identity.crawler_id, path=raw_subpath, method=request.method,
-                    allowed=False, reason_code="AGENT_REFUSED", policy_version=container.site_config.policy_version,
+                    allowed=False, reason_code="AGENT_REFUSED", policy_version=site_config.policy_version,
                     payment_mode=container.payment_provider.mode.value,
                     details={**_request_details(request), **record, "http_status": 403},
                 )
@@ -101,7 +122,7 @@ async def _handle_gateway_request(
             else:
                 identity_info["standing"] = "verified"
         try:
-            resolved_crawler_id = container.identity_service.resolve_or_generate_crawler_id(
+            resolved_crawler_id = identity_service.resolve_or_generate_crawler_id(
                 candidate_crawler_id
             )
         except ValueError as exc:
@@ -113,10 +134,10 @@ async def _handle_gateway_request(
                 },
             )
 
-        challenge_record, challenge_response = container.identity_service.build_challenge(
+        challenge_record, challenge_response = identity_service.build_challenge(
             crawler_id=resolved_crawler_id,
             requested_path=raw_subpath,
-            challenge_ttl_seconds=container.site_config.challenge_ttl_seconds,
+            challenge_ttl_seconds=site_config.challenge_ttl_seconds,
             multiplier=multiplier,
             identity=identity_info,
         )
@@ -129,7 +150,7 @@ async def _handle_gateway_request(
             method=request.method,
             allowed=False,
             reason_code="PAYMENT_REQUIRED",
-            policy_version=container.site_config.policy_version,
+            policy_version=site_config.policy_version,
             payment_mode=container.payment_provider.mode.value,
             details={
                 **_request_details(request),
@@ -155,7 +176,7 @@ async def _handle_gateway_request(
             method=request.method,
             allowed=False,
             reason_code="MALFORMED_AUTH_HEADER",
-            policy_version=container.site_config.policy_version,
+            policy_version=site_config.policy_version,
             payment_mode=container.payment_provider.mode.value,
         )
         return JSONResponse(
@@ -176,7 +197,7 @@ async def _handle_gateway_request(
             method=request.method,
             allowed=False,
             reason_code="INVALID_SESSION",
-            policy_version=container.site_config.policy_version,
+            policy_version=site_config.policy_version,
             payment_mode=container.payment_provider.mode.value,
         )
         return JSONResponse(
@@ -188,10 +209,33 @@ async def _handle_gateway_request(
             },
         )
 
+    if session.site_id and session.site_id != runtime.site.site_id:
+        await container.audit_logger.log_event(
+            event_type="GATEWAY_AUTH_FAILED",
+            crawler_id=session.crawler_id,
+            challenge_id=session.challenge_id,
+            session_id=session.session_id,
+            deposit_id=session.deposit_id,
+            path=raw_subpath,
+            method=request.method,
+            allowed=False,
+            reason_code="SITE_MISMATCH",
+            policy_version=site_config.policy_version,
+            payment_mode=container.payment_provider.mode.value,
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "site_mismatch",
+                "reason_code": "SITE_MISMATCH",
+                "message": "This session was issued for a different website.",
+            },
+        )
+
     deposit = await container.deposit_manager.get_deposit(session.deposit_id)
 
     # 3. Evaluate crawling policy
-    decision = container.policy_engine.evaluate_request(
+    decision = policy_engine.evaluate_request(
         path_param=path,
         raw_request_path=raw_subpath,
         session=session,
@@ -202,7 +246,7 @@ async def _handle_gateway_request(
     # crawler's original request when the normalized form cannot represent it.
     display_path = decision.requested_path or decision.normalized_path or raw_subpath
     resource_tier = (
-        container.pricing.tier_for_normalized_path(decision.normalized_path)
+        pricing.tier_for_normalized_path(decision.normalized_path)
         if decision.requested_path is None
         else None
     )
@@ -219,7 +263,7 @@ async def _handle_gateway_request(
             reason=decision.reason,
             violation=decision.violation,
             disqualifying_immediate=decision.disqualifying,
-            refund_policy=container.site_config.refund_policy,
+            refund_policy=site_config.refund_policy,
         )
 
     # 5. Record durable append-only audit event
@@ -288,7 +332,7 @@ async def _handle_gateway_request(
     }
 
     # 7a. Reverse-proxy mode: forward the allowed request to the origin website.
-    if container.origin_proxy is not None:
+    if origin_proxy is not None:
         body = b""
         if request.method not in ("GET", "HEAD"):
             body = await request.body()
@@ -314,7 +358,7 @@ async def _handle_gateway_request(
             origin_path = decision.normalized_path
             if origin_path != "/" and raw_subpath.endswith("/"):
                 origin_path += "/"
-            origin = await container.origin_proxy.fetch(
+            origin = await origin_proxy.fetch(
                 origin_path,
                 request.url.query,
                 method=request.method,
@@ -331,7 +375,7 @@ async def _handle_gateway_request(
         )
 
     # 7b. Serve authorized content from ContentService
-    page = container.content_service.get_authorized_content(decision)
+    page = content_service.get_authorized_content(decision)
     return Response(
         content=page.body,
         status_code=200,
@@ -345,6 +389,7 @@ async def handle_agent_request(
     path: str,
     container: AppContainer,
     raw_subpath: Optional[str] = None,
+    site_id: Optional[str] = None,
 ) -> Response:
     """Gate one transparent-edge agent request (the site root, not the legacy prefix)."""
     return await _handle_gateway_request(
@@ -355,6 +400,7 @@ async def handle_agent_request(
         x_crawler_id=request.headers.get("x-crawler-id"),
         crawler_id_query=request.query_params.get("crawler_id"),
         raw_subpath=raw_subpath,
+        site_id=site_id,
     )
 
 

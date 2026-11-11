@@ -82,9 +82,9 @@ async def test_public_config_rejects_private_origin(
             headers={"Content-Type": "application/json"},
             json={"origin_url": "http://127.0.0.1:9000"},
         )
-        # With no allowlist, every public origin change is rejected before DNS resolution.
-        assert response.status_code == 403
-        assert "DEMO_ORIGIN_ALLOWLIST" in response.json()["message"]
+        # Public writes still reject private/loopback SSRF targets.
+        assert response.status_code == 422
+        assert "private" in response.json()["message"].lower()
 
     async with _client(test_settings, fake_clock) as client:
         # The admin token may point at an internal origin (the normal Docker/compose setup).
@@ -96,20 +96,29 @@ async def test_public_config_rejects_private_origin(
         assert response.status_code == 200, response.text
 
 
-async def test_public_origin_change_requires_allowlist(
+async def test_public_origin_change_no_longer_needs_allowlist(
     test_settings: Settings, fake_clock: FakeClock, monkeypatch
 ) -> None:
+    import socket
+
     monkeypatch.setattr(OriginProxy, "import_robots", lambda self: self.rules)
+    real_getaddrinfo = socket.getaddrinfo
+
+    def public_dns(host: str, *args, **kwargs):
+        if host == "origin.example":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    monkeypatch.setattr("server.services.runtime_config.socket.getaddrinfo", public_dns)
     public_settings = test_settings.model_copy(update={"demo_config_public": True})
     async with _client(public_settings, fake_clock) as client:
-        denied = await client.put(
+        allowed = await client.put(
             "/admin/config",
             headers={"Content-Type": "application/json"},
             json={"origin_url": "https://origin.example"},
         )
-        assert denied.status_code == 403
-        message = denied.json()["message"]
-        assert "DEMO_ORIGIN_ALLOWLIST" in message and "admin token" in message.lower()
+        assert allowed.status_code == 200, allowed.text
+        assert allowed.json()["origin_url"] == "https://origin.example"
 
         # Deposit-only edits do not need an allowlist or a token.
         deposit = await client.put(
@@ -119,17 +128,13 @@ async def test_public_origin_change_requires_allowlist(
         )
         assert deposit.status_code == 200
 
-    allowlisted = test_settings.model_copy(
-        update={"demo_config_public": True, "demo_origin_allowlist": "origin.example"}
-    )
-    async with _client(allowlisted, fake_clock) as client:
-        allowed = await client.put(
+        private = await client.put(
             "/admin/config",
             headers={"Content-Type": "application/json"},
-            json={"origin_url": "https://origin.example"},
+            json={"origin_url": "http://169.254.169.254"},
         )
-        assert allowed.status_code == 200, allowed.text
-        assert allowed.json()["origin_url"] == "https://origin.example"
+        assert private.status_code == 422
+        assert "private" in private.json()["message"].lower()
 
 
 async def test_env_origin_survives_noop_and_deposit_updates(
@@ -206,35 +211,25 @@ async def test_public_config_round_trip_with_env_origin_still_allows_deposit(
         assert response.json()["origin_url"] == "https://origin.example"
 
 
-async def test_demo_mode_caps_rate_limit_at_ten_per_minute(
+async def test_demo_mode_accepts_rate_limit_above_ten_per_minute(
     test_settings: Settings, fake_clock: FakeClock
 ) -> None:
     assert test_settings.sara_mode == "demo"
     async with _client(test_settings, fake_clock) as client:
-        # The console maximum is accepted; the cap applies to the admin token too.
         accepted = await client.put(
             "/admin/config",
             headers={**ADMIN, "Content-Type": "application/json"},
-            json={"rate_limit_requests": 10, "rate_limit_window_seconds": 60},
+            json={"rate_limit_requests": 120, "rate_limit_window_seconds": 60},
         )
         assert accepted.status_code == 200, accepted.text
-        assert accepted.json()["rate_limit_requests"] == 10
+        assert accepted.json()["rate_limit_requests"] == 120
 
-        # A direct API call cannot bypass the console cap.
-        too_many = await client.put(
-            "/admin/config",
-            headers={**ADMIN, "Content-Type": "application/json"},
-            json={"rate_limit_requests": 11, "rate_limit_window_seconds": 60},
-        )
-        assert too_many.status_code == 422
-        assert "10 requests per minute" in too_many.json()["message"]
-
-        # A short window can exceed 10/minute even with a small request count.
-        too_fast = await client.put(
+        # A short window with a small request count is accepted too (no 10/min cap).
+        fast = await client.put(
             "/admin/config",
             headers={**ADMIN, "Content-Type": "application/json"},
             json={"rate_limit_requests": 2, "rate_limit_window_seconds": 10},
         )
-        assert too_fast.status_code == 422
-        assert "10 requests per minute" in too_fast.json()["message"]
+        assert fast.status_code == 200, fast.text
+        assert fast.json()["rate_limit_requests"] == 2
 

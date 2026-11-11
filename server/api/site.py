@@ -15,6 +15,8 @@ other non-root paths) are forwarded.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
@@ -53,6 +55,7 @@ BROWSER_USER_AGENT_TOKENS = (
 # through to the origin website: an unimplemented path under them is a SARA 404, not the
 # owner's page (otherwise /admin, /sessions, and friends would leak to the origin).
 RESERVED_PREFIXES = (
+    "_site",
     "admin",
     "agent",
     "audit",
@@ -99,8 +102,35 @@ def is_reserved_path(path: str) -> bool:
     return head in RESERVED_PREFIXES
 
 
-async def _proxy_to_origin(request: Request, path: str, container: AppContainer) -> Response:
-    if container.origin_proxy is None:
+def _runtime_for_request(
+    request: Request, container: AppContainer, site_id: Optional[str] = None
+):  # type: ignore[no-untyped-def]
+    # Gateway mode routes by Host; demo mode always uses the console's active site.
+    host = (
+        request.headers.get("host")
+        if container.settings.sara_mode != "demo"
+        else None
+    )
+    return container.resolve_site(
+        site_id=site_id or request.headers.get("x-sara-site"),
+        host=host,
+    )
+
+
+def _site_raw_subpath(request: Request, path: str) -> str:
+    """The un-normalized path after /_site/{site_id}, for traversal checks."""
+    raw = _raw_request_path(request)
+    parts = raw.split("/", 3)
+    if len(parts) >= 3 and parts[1] == "_site":
+        rest = parts[3] if len(parts) > 3 else ""
+        return "/" + rest if rest else "/"
+    return "/" + path.lstrip("/") if path else "/"
+
+
+async def _proxy_to_origin(
+    request: Request, path: str, container: AppContainer, runtime
+) -> Response:  # type: ignore[no-untyped-def]
+    if runtime.origin_proxy is None:
         return JSONResponse(
             status_code=404,
             content={
@@ -113,7 +143,7 @@ async def _proxy_to_origin(request: Request, path: str, container: AppContainer)
         )
     try:
         body = await request.body() if request.method not in ("GET", "HEAD") else b""
-        origin = await container.origin_proxy.forward(
+        origin = await runtime.origin_proxy.forward(
             request.method,
             "/" + path.lstrip("/"),
             request.url.query,
@@ -135,14 +165,78 @@ async def site_root(
     request: Request,
     container: AppContainer = Depends(get_container),
 ) -> Response:
-    if container.settings.sara_mode == "demo":
+    agent = is_agent_request(request, container)
+    explicit_site = request.headers.get("x-sara-site")
+    # The demo landing page is the console for people and for tools that do not name a
+    # website. A request that explicitly names a site (the playground always does) still
+    # goes through the normal gate/proxy path, so "/" works for every configured site.
+    if container.settings.sara_mode == "demo" and not explicit_site:
         return FileResponse(STATIC_DIR / "dashboard.html", media_type="text/html")
+    try:
+        runtime = _runtime_for_request(request, container)
+    except KeyError as exc:
+        return JSONResponse(status_code=404, content={"error": "site_not_found", "message": str(exc)})
+    if runtime.site.status == "paused":
+        return JSONResponse(status_code=503, content={"error": "site_paused"})
+    if agent:
+        return await handle_agent_request(
+            request,
+            "",
+            container,
+            raw_subpath=_raw_request_path(request),
+            site_id=runtime.site.site_id,
+        )
+    return await _proxy_to_origin(request, "", container, runtime)
+
+
+async def _handle_site_scoped(
+    request: Request,
+    site_id: str,
+    path: str,
+    container: AppContainer,
+) -> Response:
+    try:
+        runtime = container.resolve_site(site_id=site_id)
+    except KeyError as exc:
+        return JSONResponse(status_code=404, content={"error": "site_not_found", "message": str(exc)})
+    if runtime.site.status == "paused":
+        return JSONResponse(status_code=503, content={"error": "site_paused"})
     if is_agent_request(request, container):
         return await handle_agent_request(
-            request, "", container, raw_subpath=_raw_request_path(request)
+            request,
+            path,
+            container,
+            raw_subpath=_site_raw_subpath(request, path),
+            site_id=runtime.site.site_id,
         )
-    return await _proxy_to_origin(request, "", container)
+    return await _proxy_to_origin(request, path, container, runtime)
 
+
+@router.api_route(
+    "/_site/{site_id}",
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    include_in_schema=False,
+)
+async def site_scoped_root(
+    site_id: str,
+    request: Request,
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    return await _handle_site_scoped(request, site_id, "", container)
+
+
+@router.api_route(
+    "/_site/{site_id}/{path:path}",
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    include_in_schema=False,
+)
+async def site_scoped_edge(
+    site_id: str,
+    path: str,
+    request: Request,
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    return await _handle_site_scoped(request, site_id, path, container)
 
 @router.api_route(
     "/{path:path}",
@@ -154,13 +248,25 @@ async def site_edge(
     request: Request,
     container: AppContainer = Depends(get_container),
 ) -> Response:
-    if is_agent_request(request, container):
-        return await handle_agent_request(
-            request, path, container, raw_subpath=_raw_request_path(request)
-        )
-    if is_reserved_path(path):
+    agent = is_agent_request(request, container)
+    # SARA's own reserved surface is a hard 404, even when the active site is paused.
+    if not agent and is_reserved_path(path):
         return JSONResponse(
             status_code=404,
             content={"error": "not_found", "message": f"No route for /{path}."},
         )
-    return await _proxy_to_origin(request, path, container)
+    try:
+        runtime = _runtime_for_request(request, container)
+    except KeyError as exc:
+        return JSONResponse(status_code=404, content={"error": "site_not_found", "message": str(exc)})
+    if runtime.site.status == "paused":
+        return JSONResponse(status_code=503, content={"error": "site_paused"})
+    if agent:
+        return await handle_agent_request(
+            request,
+            path,
+            container,
+            raw_subpath=_raw_request_path(request),
+            site_id=runtime.site.site_id,
+        )
+    return await _proxy_to_origin(request, path, container, runtime)

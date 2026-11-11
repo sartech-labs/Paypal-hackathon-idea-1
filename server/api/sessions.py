@@ -45,23 +45,30 @@ async def accept_policy(
             },
         )
 
-    if payload.policy_version != container.site_config.policy_version:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "policy_version_mismatch",
-                "message": (
-                    f"Expected policy_version '{container.site_config.policy_version}', "
-                    f"received '{payload.policy_version}'."
-                ),
-            },
-        )
-
     deposit = await container.deposit_manager.get_deposit(payload.deposit_id)
     if deposit is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": "deposit_not_found", "message": "Unknown deposit_id."},
+        )
+
+    try:
+        runtime = container.resolve_site(site_id=deposit.site_id or None)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "site_not_found", "message": str(exc)},
+        ) from exc
+    if payload.policy_version != runtime.site_config.policy_version:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "policy_version_mismatch",
+                "message": (
+                    f"Expected policy_version '{runtime.site_config.policy_version}', "
+                    f"received '{payload.policy_version}'."
+                ),
+            },
         )
 
     if deposit.crawler_id != payload.crawler_id:
@@ -113,7 +120,9 @@ async def accept_policy(
             policy_accepted_at=accepted_at,
             payment_reference=deposit.payment_reference,
             payment_mode=deposit.payment_mode,
-            session_ttl_seconds=container.site_config.session_ttl_seconds,
+            session_ttl_seconds=runtime.site_config.session_ttl_seconds,
+            site_config=runtime.site_config,
+            site_id=deposit.site_id or runtime.site.site_id,
         )
 
         await container.deposit_manager.record_policy_acceptance_and_bind_session(

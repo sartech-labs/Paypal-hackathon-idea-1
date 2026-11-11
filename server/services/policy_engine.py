@@ -288,6 +288,35 @@ class PolicyEngine:
                 retry_after_seconds=retry_sec,
             )
 
+        # 9b. Origin Crawl-delay: a minimum gap between requests, independent of the
+        # owner's rate window (which stays one of sec/min/hour in the console).
+        crawl_delay = self._site_config.crawl_delay_seconds
+        if crawl_delay:
+            delay_ok, delay_retry = self._rate_limiter.check_min_interval(
+                session.session_id, crawl_delay
+            )
+            if not delay_ok:
+                will_disqualify = (
+                    session.rate_limit_violations + 1
+                    >= self._site_config.refund_policy.max_rate_limit_violations_before_disqualification
+                )
+                return PolicyDecision(
+                    allowed=False,
+                    http_status=429,
+                    reason_code="RATE_LIMIT_EXCEEDED",
+                    reason=(
+                        "Origin robots.txt Crawl-delay requires at least "
+                        f"{crawl_delay:g}s between requests."
+                    ),
+                    violation=True,
+                    disqualifying=will_disqualify,
+                    policy_version=policy_ver,
+                    normalized_path=normalized_path,
+                    remaining_session_budget=remaining_budget,
+                    remaining_window_requests=rem_window_after,
+                    retry_after_seconds=delay_retry,
+                )
+
         # 10. Session maximum request budget check
         if session.allowed_requests >= max_budget:
             will_disqualify = (

@@ -197,6 +197,9 @@ class SiteConfig(BaseModel):
     max_requests_per_session: int = 10
     rate_limit_requests: int = 3
     rate_limit_window_seconds: float = 10.0
+    # The origin's robots.txt Crawl-delay, enforced as a minimum gap between requests.
+    # Kept separate from the owner's rate limit so the console only offers sec/min/hour.
+    crawl_delay_seconds: Optional[float] = None
     session_ttl_seconds: int = 1800
     challenge_ttl_seconds: int = 600
     paypal_sandbox_enabled: bool = False
@@ -430,6 +433,8 @@ class SessionRecord(BaseModel):
     crawler_id: str
     challenge_id: str
     deposit_id: str
+    # Empty on sessions issued before multi-site support; they belong to the request's site.
+    site_id: str = ""
     policy_version: str
     policy_accepted_at: str
     payment_reference: str
@@ -1147,6 +1152,8 @@ class RuntimeConfigUpdate(BaseModel):
     deposit_amount: Optional[str] = Field(default=None, max_length=16)
     # tier_id -> price, for example {"premium": "20.00"}.
     tier_prices: Optional[dict[str, str]] = None
+    # Full tier definitions for this site. [] means no tiers; None keeps the bundled tiers.
+    pricing_tiers: Optional[list[PricingTier]] = None
     allowed_paths: Optional[list[str]] = None
     disallowed_paths: Optional[list[str]] = None
     max_requests_per_session: Optional[int] = Field(default=None, ge=1, le=10000)
@@ -1166,6 +1173,11 @@ class OriginStatus(BaseModel):
 
 
 class RuntimeConfigResponse(BaseModel):
+    site_id: str = ""
+    site_name: str = ""
+    status: Literal["live", "paused"] = "live"
+    active_site_id: Optional[str] = None
+    host: str = ""
     sara_mode: Literal["demo", "gateway"]
     origin_url: str
     origin_configured: bool
@@ -1192,6 +1204,57 @@ class OriginTestRequest(BaseModel):
     origin_url: str = Field(..., min_length=1, max_length=500)
 
 
+class SiteSummary(BaseModel):
+    """One configured website as shown in the console's site list."""
+
+    site_id: str
+    name: str
+    host: str = ""
+    origin_url: str = ""
+    status: Literal["live", "paused"] = "live"
+    active: bool = False
+    origin_configured: bool = False
+    deposit_amount: str
+    currency: str
+    allowed_paths: list[str] = Field(default_factory=list)
+    disallowed_paths: list[str] = Field(default_factory=list)
+    rate_limit_requests: int
+    rate_limit_window_seconds: float
+    max_requests_per_session: int
+    policy_version: str
+    version: int = 0
+    updated_at: Optional[str] = None
+    origin_status: OriginStatus
+
+
+class SiteListResponse(BaseModel):
+    active_site_id: Optional[str] = None
+    config_public: bool = False
+    sites: list[SiteSummary] = Field(default_factory=list)
+
+
+class SiteCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    origin_url: str = Field(..., min_length=1, max_length=500)
+    name: Optional[str] = Field(default=None, max_length=128)
+    set_active: bool = True
+    deposit_amount: Optional[str] = Field(default=None, max_length=16)
+    allowed_paths: Optional[list[str]] = None
+    disallowed_paths: Optional[list[str]] = None
+    rate_limit_requests: Optional[int] = Field(default=None, ge=1, le=1000)
+    rate_limit_window_seconds: Optional[float] = Field(default=None, gt=0.0, le=3600.0)
+    max_requests_per_session: Optional[int] = Field(default=None, ge=1, le=10000)
+    pricing_tiers: Optional[list[PricingTier]] = None
+
+
+class SiteMetaUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    status: Optional[Literal["live", "paused"]] = None
+
+
 # --- Crawler playground ------------------------------------------------------------------
 
 
@@ -1202,6 +1265,8 @@ class PlaygroundRunRequest(BaseModel):
     action_id: Optional[str] = Field(default=None, min_length=1, max_length=64)
     action_ids: list[str] = Field(default_factory=list, max_length=20)
     driver: Optional[Literal["agent", "scripted"]] = None
+    # The console site whose policy and gateway the run exercises. Default: active site.
+    site_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class PlaygroundActionInfo(BaseModel):

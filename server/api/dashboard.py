@@ -35,7 +35,9 @@ def _dashboard_access(container: AppContainer, x_admin_token: Optional[str]) -> 
     """Return 'admin' or 'public', or raise 401 when neither applies."""
     if is_valid_admin_token(container, x_admin_token):
         return "admin"
-    if x_admin_token is None and container.settings.dashboard_public:
+    if x_admin_token is None and (
+        container.settings.dashboard_public or container.config_public
+    ):
         return "public"
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

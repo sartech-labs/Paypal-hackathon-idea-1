@@ -10,7 +10,7 @@
     /* Apply the saved theme before first paint (dark by default). */
     try { var t = localStorage.getItem("ct-theme"); if (t === "light" || t === "system") document.documentElement.dataset.theme = t; } catch (_) {}
   </script>
-  <link rel="stylesheet" href="/_sara/static/dashboard.css?v=18">
+  <link rel="stylesheet" href="/_sara/static/dashboard.css?v=21">
   <link rel="stylesheet" href="/_sara/static/demo.css">
   <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
           integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
@@ -18,7 +18,7 @@
   <script src="/_sara/static/grid_kit.js" defer></script>
   <script src="/_sara/static/paypal_panel.js" defer></script>
   <script src="/_sara/static/analytics.js" defer></script>
-  <script src="/_sara/static/dashboard.js?v=21" defer></script>
+  <script src="/_sara/static/dashboard.js?v=29" defer></script>
 </head>
 <body>
 <header class="appbar">
@@ -64,7 +64,13 @@
         <div class="site-list" id="site-list" role="list" aria-label="Websites">
           <p class="empty">Loading websites...</p>
         </div>
-        <p class="card-sub site-add-note"><span class="info-icon" aria-hidden="true"></span>Adding new website is disabled for demo</p>
+        <form class="site-add" id="site-add-form" autocomplete="off">
+          <div class="site-add-shell">
+            <span aria-hidden="true">https://</span>
+            <input id="site-add-input" placeholder="example.com" spellcheck="false" aria-label="New website URL">
+          </div>
+          <button type="submit" class="primary" id="site-add-button">Add website</button>
+        </form>
 
         <div class="settings-row">
           <div class="deposit-block">
@@ -90,15 +96,13 @@
             <div class="inline-edit" id="cfg-rate-edit-row" hidden>
               <div class="rate-control">
                 <input id="cfg-rate" type="number" min="1" max="1000" step="1" aria-label="Rate limit requests">
-                <span class="rate-unit-label">requests /</span>
                 <select id="cfg-rate-unit" aria-label="Rate limit window">
-                  <option value="1">second</option>
-                  <option value="60" selected>minute</option>
-                  <option value="3600">hour</option>
+                  <option value="1">requests/sec</option>
+                  <option value="60" selected>requests/min</option>
+                  <option value="3600">requests/hour</option>
                 </select>
               </div>
               <button type="button" class="btn-xs primary" id="cfg-rate-save">Save</button>
-              <span class="notice" id="cfg-rate-cap-note" hidden>Capped at 10 req/min for demo</span>
             </div>
           </div>
         </div>

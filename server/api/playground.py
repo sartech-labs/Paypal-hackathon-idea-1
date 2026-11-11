@@ -29,11 +29,19 @@ router = APIRouter(prefix="/playground", tags=["Crawler playground"])
 
 @router.get("/actions", response_model=PlaygroundConfigResponse, summary="List playground actions and agent availability")
 async def list_actions(
+    site_id: Optional[str] = Query(default=None),
     container: AppContainer = Depends(get_container),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> PlaygroundConfigResponse:
     access = _require_view(container, x_admin_token)
-    site = container.site_config
+    try:
+        runtime = container.resolve_site(site_id=site_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "site_not_found", "message": str(exc)},
+        ) from exc
+    site = runtime.site_config
     runner = container.playground_runner
     return PlaygroundConfigResponse(
         actions=action_infos(),
@@ -77,6 +85,14 @@ async def start_run(
                 "message": "Starting playground runs needs the admin token, or DEMO_PUBLIC=true.",
             },
         )
+    try:
+        runtime = container.resolve_site(site_id=payload.site_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "site_not_found", "message": str(exc)},
+        ) from exc
+    site = runtime.site_config
     loop = asyncio.get_running_loop()
 
     def audit(event_type: str, reason_code: str, details: dict) -> Optional[str]:
@@ -89,9 +105,9 @@ async def start_run(
                 event_type=event_type,
                 allowed=allowed,
                 reason_code=reason_code,
-                policy_version=container.site_config.policy_version,
+                policy_version=site.policy_version,
                 payment_mode=container.payment_provider.mode.value,
-                details={**details, "playground_run_id": details.get("run_id")},
+                details={**details, "playground_run_id": details.get("run_id"), "site_id": runtime.site.site_id},
             ),
             loop,
         )
@@ -103,10 +119,11 @@ async def start_run(
             action_ids=(payload.action_ids or None),
             driver=payload.driver,
             base_url=_internal_base_url(request),
-            policy=container.site_config.model_dump(mode="json"),
+            policy=site.model_dump(mode="json"),
             audit=audit,
-            policy_version=container.site_config.policy_version,
+            policy_version=site.policy_version,
             payment_mode=container.payment_provider.mode.value,
+            site_id=runtime.site.site_id,
         )
     except (
         PlaygroundActionError,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from server.config import Settings
 from server.schemas import PolicyDecision, SiteConfig
@@ -27,9 +27,18 @@ class ContentService:
     Never exposes or returns disallowed page content through the gateway.
     """
 
-    def __init__(self, settings: Settings, runtime: Optional[StoredRuntimeConfig] = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        runtime: Optional[StoredRuntimeConfig] = None,
+        *,
+        site_id: Optional[str] = None,
+        site_name: Optional[str] = None,
+    ) -> None:
         self._settings = settings
         self._runtime = runtime or StoredRuntimeConfig()
+        self._site_id = site_id
+        self._site_name = site_name
         self._raw_site_config = self._load_json_file(settings.site_config_path)
         self._site_config = self.build_site_config(self._runtime)
         self._robots_data = self._load_json_file(settings.robots_config_path)
@@ -55,6 +64,10 @@ class ContentService:
         runtime = runtime or self._runtime
         settings = self._settings
         raw = json.loads(json.dumps(self._raw_site_config))
+        if self._site_id is not None:
+            raw["site_id"] = self._site_id
+        if self._site_name is not None:
+            raw["site_name"] = self._site_name
         # Deployment defaults from the environment.
         raw["deposit_amount"] = f"{settings.deposit_amount:.2f}"
         raw["currency"] = settings.paypal_currency
@@ -79,6 +92,11 @@ class ContentService:
             raw["rate_limit_window_seconds"] = runtime.rate_limit_window_seconds
         if runtime.policy_version is not None:
             raw["policy_version"] = runtime.policy_version
+        if runtime.pricing_tiers is not None:
+            # An explicit list (including []) replaces the bundled demo tiers.
+            raw["pricing_tiers"] = [
+                tier.model_dump(mode="json") for tier in runtime.pricing_tiers
+            ]
         raw["pricing_tiers"] = self._apply_tier_price_overrides(
             raw.get("pricing_tiers") or [], settings, runtime.tier_prices
         )

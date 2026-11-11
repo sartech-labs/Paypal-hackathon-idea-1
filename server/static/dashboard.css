@@ -1196,16 +1196,12 @@ footer a { color: var(--text-secondary); }
   background: var(--surface-2);
 }
 .site-row:hover { border-color: var(--border); }
-.site-row[data-selected="true"] {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: var(--accent-soft);
-}
 .site-select {
   display: flex;
   flex: 1;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: 9px;
   min-width: 0;
   padding: 8px 7px;
   border: none;
@@ -1213,9 +1209,11 @@ footer a { color: var(--text-secondary); }
   background: transparent;
   color: var(--text-primary);
   text-align: left;
+  cursor: pointer;
 }
+.site-radio { flex: none; width: 14px; height: 14px; margin: 0; accent-color: var(--accent); cursor: pointer; }
 .site-select:hover:not(:disabled) { background: color-mix(in srgb, var(--surface-1) 60%, transparent); }
-.site-url { overflow: hidden; font-family: var(--mono); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.site-url { flex: 1; min-width: 0; overflow: hidden; font-family: var(--mono); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
 .site-state { display: inline-flex; flex: none; align-items: center; gap: 6px; color: var(--text-muted); font-size: 11.5px; font-weight: 600; }
 .site-dot { width: 7px; height: 7px; border-radius: 50%; background: transparent; border: 1px solid var(--text-muted); }
 .site-row[data-status="live"] .site-dot { border-color: var(--status-good); background: var(--status-good); box-shadow: 0 0 0 3px var(--good-soft); }
@@ -1284,7 +1282,6 @@ footer a { color: var(--text-secondary); }
 }
 .site-add-shell input:focus-visible { outline: none; }
 .site-add > button { flex: none; }
-.site-add-note { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; }
 
 .deposit-block { display: grid; gap: 7px; }
 .deposit-control {
@@ -1417,7 +1414,7 @@ footer a { color: var(--text-secondary); }
 .rate-control {
   display: flex;
   align-items: stretch;
-  width: min(270px, 100%);
+  width: min(320px, 100%);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
@@ -1437,7 +1434,6 @@ footer a { color: var(--text-secondary); }
   font-variant-numeric: tabular-nums;
 }
 .rate-control input:focus-visible { outline: none; }
-.rate-unit-label { padding: 7px 4px 7px 0; color: var(--text-muted); font-size: 12px; white-space: nowrap; }
 .rate-control select {
   flex: none;
   padding: 7px 9px;
@@ -1677,7 +1673,6 @@ body { background-image: none; }
 .hint[hidden] { display: none; }
 
 /* Gateway card: one website row, two settings, then the paths. */
-.site-add-note { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
 .site-list { gap: 0; }
 .site-row {
   padding: 0;
@@ -1687,7 +1682,6 @@ body { background-image: none; }
   background: transparent;
 }
 .site-row:hover { border-color: var(--border); }
-.site-row[data-selected="true"] { border-color: var(--border); background: transparent; }
 .site-select { padding: 8px 2px; }
 .site-select:hover:not(:disabled) { background: transparent; }
 .site-url { font-size: 12.5px; }
@@ -1880,7 +1874,6 @@ body { background-image: none; }
 /* --- Hierarchy pass ---------------------------------------------------------------
    Secondary context is muted, support copy sits below its heading, and status colour
    is reduced to small markers so the primary action stays obvious. */
-.site-add-note { margin: 8px 0 0; font-size: 11.5px; }
 .site-row[data-status="live"] .site-state { color: var(--text-muted); }
 
 .section-head > div { min-width: 0; }
@@ -1924,5 +1917,3 @@ body { background-image: none; }
 .pg-run-hint { margin: -4px 0 10px; text-align: right; font-size: 11.5px; }
 
 .pg-head-actions { margin-left: auto; }
-
-.site-add-note .info-icon { width: 13px; height: 13px; font-size: 9px; }

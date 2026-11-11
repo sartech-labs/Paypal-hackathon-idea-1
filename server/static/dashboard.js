@@ -39,12 +39,19 @@
     config: null,
     configReadOnly: false,
     applying: false,
+    activating: false,
     editingDeposit: false,
     editingRate: false,
     sites: [],
+    sitesError: null,
+    setupMessage: null,
     selectedSiteId: null,
-    appliedSiteId: null,
+    activeSiteId: null,
+    addingSite: false,
+    sitesLoadToken: 0,
     playground: null,
+    playgroundSiteId: null,
+    pgLoadToken: 0,
     pgCanStart: null,
     pgSelected: null,
     pgResults: {},
@@ -293,7 +300,7 @@
     $("page-title").textContent = VIEWS[view];
     if ($("page-head")) $("page-head").hidden = view === "setup";
     if (!fromHash) history.replaceState(null, "", view === "setup" ? window.location.pathname : `#${view}`);
-    if (view === "setup") { loadSetup(); loadPlayground(); }
+    if (view === "setup") loadSetup();
     if (view === "operations" || view === "analytics") loadRequests(true);
     if (view === "policy") loadPolicy();
     if (view === "commerce") loadCommerce();
@@ -979,7 +986,10 @@
 
   // --- websites, access rules, and the plan playground --------------------------------
 
-  const SITE_STORE_KEY = "ct-console-sites-v4";
+  // The backend owns the website list. localStorage only remembers which website the
+  // console was showing, and is used when the backend list cannot be read.
+  const SITE_SELECTED_KEY = "ct-console-site-id";
+  const LEGACY_SITE_STORE_KEY = "ct-console-sites-v4";
   const CURRENCY_SYMBOLS = { USD: "$" };
 
   const PG_BEHAVIORS = [
@@ -990,35 +1000,23 @@
   ];
 
   const RATE_UNIT_LABELS = { 1: "second", 60: "minute", 3600: "hour" };
-  // Demo deployments are open to anonymous visitors. The backend enforces the same cap,
-  // so the console warns instead of letting the API reject the save.
-  const DEMO_RATE_LIMIT_MAX_REQUESTS = 10;
-  const DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS = 60;
-  const DEMO_RATE_LIMIT_WARNING = "Capped at 10 req/min for demo";
+  const RATE_UNITS = [1, 60, 3600];
 
-  function isDemoMode() {
-    return ((state.config && state.config.sara_mode) || (state.data && state.data.sara_mode) || "demo") === "demo";
-  }
-
-  function demoRateLimitExceeded(rate, unit) {
-    const requests = Math.round(Number(rate) || 0);
-    const windowSeconds = Number(unit) || DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS;
-    return requests > DEMO_RATE_LIMIT_MAX_REQUESTS || (requests * 60) / windowSeconds > DEMO_RATE_LIMIT_MAX_REQUESTS;
-  }
-
-  function showRateCapWarning() {
-    const note = $("cfg-rate-cap-note");
-    if (!note) return;
-    note.textContent = DEMO_RATE_LIMIT_WARNING;
-    note.hidden = false;
-  }
-
-  function hideRateCapWarning() {
-    if ($("cfg-rate-cap-note")) $("cfg-rate-cap-note").hidden = true;
+  // The console only offers sec/min/hour. Legacy configs (for example a 330s window
+  // written by an older Crawl-delay merge) map to the nearest preset for editing.
+  function normalizeRateUnit(unit) {
+    const seconds = Number(unit);
+    if (!Number.isFinite(seconds) || seconds <= 0) return 60;
+    if (RATE_UNITS.includes(seconds)) return seconds;
+    return RATE_UNITS.reduce(
+      (best, candidate) => (Math.abs(candidate - seconds) < Math.abs(best - seconds) ? candidate : best),
+      60
+    );
   }
 
   function rateUnitLabel(unit) {
-    return RATE_UNIT_LABELS[Number(unit)] || "minute";
+    const seconds = normalizeRateUnit(unit);
+    return RATE_UNIT_LABELS[seconds] || "minute";
   }
 
   // Radios allow exactly one behavior at a time; the first is selected by default.
@@ -1031,6 +1029,9 @@
   function configFromPolicy(policy) {
     return {
       sara_mode: (state.data && state.data.sara_mode) || "demo",
+      site_id: policy.site_id || "default",
+      site_name: policy.site_name || "SARA site",
+      policy_version: policy.policy_version || "",
       origin_url: "",
       deposit_amount: policy.deposit_amount,
       currency: policy.currency || "USD",
@@ -1044,82 +1045,192 @@
     };
   }
 
+  // A read-only console (no token and no public config) can still show the active site
+  // from /policies. The website list endpoint is admin/public-config only.
+  function siteFromConfig(cfg) {
+    if (!cfg || !cfg.deposit_amount) return null;
+    const origin = String(cfg.origin_url || "");
+    const id = String(cfg.site_id || "default");
+    return normalizeSite({
+      site_id: id,
+      name: cfg.site_name || siteHost(origin) || id,
+      host: siteHost(origin) || cfg.site_name || id,
+      origin_url: origin,
+      status: "live",
+      active: true,
+      deposit_amount: cfg.deposit_amount,
+      currency: cfg.currency || "USD",
+      allowed_paths: cfg.allowed_paths || [],
+      disallowed_paths: cfg.disallowed_paths || [],
+      rate_limit_requests: cfg.rate_limit_requests,
+      rate_limit_window_seconds: cfg.rate_limit_window_seconds,
+      max_requests_per_session: cfg.max_requests_per_session,
+      policy_version: cfg.policy_version || "",
+    });
+  }
+
   function selectedSite() {
     return state.sites.find((site) => site.id === state.selectedSiteId) || state.sites[0] || null;
   }
 
-  function seedSites(cfg) {
-    return [
-      {
-        id: "site_scrapethissite",
-        host: "www.scrapethissite.com",
-        origin: "https://www.scrapethissite.com",
-        applyOrigin: true,
-        status: "live",
-        deposit: "5.00",
-        currency: "USD",
-        allowed: ["/pages", "/login"],
-        disallowed: ["/lessons", "/faq"],
-        rate: 5,
-        unit: 60,
-        dirty: false,
-      },
-    ];
-  }
-
-  function normalizeStoredSites(raw) {
-    if (!Array.isArray(raw) || !raw.length) return null;
-    const units = [1, 60, 3600];
-    const sites = [];
-    for (const [index, item] of raw.entries()) {
-      if (!item || typeof item !== "object") return null;
-      const host = String(item.host || "").trim();
-      if (!host) return null;
-      const allowed = Array.isArray(item.allowed) ? item.allowed.map(String).filter(Boolean) : ["/"];
-      const disallowed = Array.isArray(item.disallowed) ? item.disallowed.map(String).filter(Boolean) : [];
-      const unit = Number(item.unit);
-      const rate = Number(item.rate);
-      sites.push({
-        id: String(item.id || `site_${index}`),
-        host,
-        origin: String(item.origin || ""),
-        applyOrigin: Boolean(item.applyOrigin),
-        status: item.status === "paused" ? "paused" : "live",
-        deposit: String(item.deposit || "5.00"),
-        currency: "USD",
-        allowed,
-        disallowed,
-        rate: Number.isFinite(rate) && rate > 0 ? rate : 5,
-        unit: units.includes(unit) ? unit : 60,
-        dirty: Boolean(item.dirty),
-      });
-    }
-    return sites;
-  }
-
-  function loadStoredSites() {
-    const raw = store.get("localStorage", SITE_STORE_KEY);
-    if (!raw) return null;
+  function storedSelectedSiteId() {
+    const saved = store.get("localStorage", SITE_SELECTED_KEY);
+    if (saved) return saved;
+    // Earlier builds stored the whole website list; only its selected id is still useful.
+    const legacy = store.get("localStorage", LEGACY_SITE_STORE_KEY);
+    if (!legacy) return null;
     try {
-      const parsed = JSON.parse(raw);
-      const sites = normalizeStoredSites(Array.isArray(parsed) ? parsed : parsed && parsed.sites);
-      if (!sites) return null;
-      return {
-        sites,
-        selectedSiteId: (parsed && parsed.selectedSiteId) || null,
-        appliedSiteId: (parsed && parsed.appliedSiteId) || null,
-      };
+      const parsed = JSON.parse(legacy);
+      return (parsed && parsed.selectedSiteId) || null;
     } catch (_) {
       return null;
     }
   }
 
-  function persistSites() {
-    store.set("localStorage", SITE_STORE_KEY, JSON.stringify({
-      sites: state.sites,
-      selectedSiteId: state.selectedSiteId,
-      appliedSiteId: state.appliedSiteId,
-    }));
+  function persistSelectedSite() {
+    store.set("localStorage", SITE_SELECTED_KEY, state.selectedSiteId || null);
+  }
+
+  function siteHost(originUrl) {
+    if (!originUrl) return "";
+    try { return new URL(originUrl).host; } catch (_) { return ""; }
+  }
+
+  // The form shows a fixed "https://" affordance; hide it when the user pastes a full URL.
+  function syncSiteAddPrefix() {
+    const input = $("site-add-input");
+    const prefix = document.querySelector(".site-add-shell > span");
+    if (!input || !prefix) return;
+    prefix.hidden = /^[a-z][a-z0-9+.-]*:\/\//i.test(input.value.trim());
+  }
+
+  // Accept "example.com" or a full URL; the gateway requires an absolute http(s) origin.
+  function normalizeOrigin(value) {
+    let raw = String(value || "").trim().replace(/^\/+/, "");
+    if (!raw) return "";
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) raw = `https://${raw}`;
+    let url;
+    try { url = new URL(raw); } catch (_) { return ""; }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    if (!url.hostname) return "";
+    return url.origin;
+  }
+
+  // GET /admin/sites returns site objects; this is the shape the console renders.
+  function normalizeSite(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const id = String(raw.site_id || raw.id || "").trim();
+    if (!id) return null;
+    const origin = String(raw.origin_url || "").trim();
+    const host = String(raw.host || "").trim() || siteHost(origin) || id;
+    const depositValue = raw.deposit_amount;
+    const rate = Number(raw.rate_limit_requests);
+    const unit = Number(raw.rate_limit_window_seconds);
+    return {
+      id,
+      name: String(raw.name || host),
+      host,
+      origin,
+      savedOrigin: origin,
+      status: raw.status === "paused" ? "paused" : "live",
+      active: Boolean(raw.active),
+      deposit: depositValue === null || depositValue === undefined || depositValue === "" ? "" : String(depositValue),
+      currency: String(raw.currency || "USD"),
+      allowed: Array.isArray(raw.allowed_paths) ? raw.allowed_paths.map(String).filter(Boolean) : [],
+      disallowed: Array.isArray(raw.disallowed_paths) ? raw.disallowed_paths.map(String).filter(Boolean) : [],
+      rate: Number.isFinite(rate) && rate > 0 ? rate : 60,
+      unit: normalizeRateUnit(unit),
+      maxRequests: Number(raw.max_requests_per_session) || null,
+      policyVersion: raw.policy_version ? String(raw.policy_version) : "",
+      version: raw.version,
+      updatedAt: raw.updated_at || "",
+      dirty: false,
+    };
+  }
+
+  // Replace the local list with the gateway's, keeping the user's selection when possible.
+  function applySiteList(body, opts) {
+    const options = opts || {};
+    state.sites = (body.sites || []).map(normalizeSite).filter(Boolean);
+    state.sitesError = null;
+    state.activeSiteId = body.active_site_id || state.activeSiteId || null;
+    if (typeof body.config_public === "boolean") {
+      state.configReadOnly = !(state.token || body.config_public);
+    }
+    let candidate = options.selectId || null;
+    // Keep the active site as the console context unless the caller explicitly selected
+    // another one. A stale localStorage selection must not show a site the gateway is not
+    // actually serving.
+    if (!candidate && state.selectedSiteId === state.activeSiteId) candidate = state.selectedSiteId;
+    if (!candidate) candidate = state.activeSiteId;
+    if (!candidate) candidate = state.selectedSiteId;
+    if (!state.sites.some((site) => site.id === candidate)) candidate = storedSelectedSiteId();
+    if (!state.sites.some((site) => site.id === candidate)) candidate = state.sites.length ? state.sites[0].id : null;
+    state.selectedSiteId = candidate;
+    persistSelectedSite();
+  }
+
+  async function loadSites(opts) {
+    const options = opts || {};
+    const token = (state.sitesLoadToken || 0) + 1;
+    state.sitesLoadToken = token;
+    let result;
+    try {
+      result = await getJson("/admin/sites", { headers: authHeaders() });
+    } catch (_) {
+      result = { ok: false, status: 0, body: null };
+    }
+    // A newer list request (for example a fast site switch) owns the state now.
+    if (token !== state.sitesLoadToken) return true;
+    if (!result.ok || !result.body || !Array.isArray(result.body.sites)) {
+      const fallback = siteFromConfig(state.config);
+      if (fallback) {
+        state.sites = [fallback];
+        state.activeSiteId = fallback.id;
+        state.selectedSiteId = fallback.id;
+        state.sitesError = null;
+        persistSelectedSite();
+        return true;
+      }
+      const message = apiErrorMessage(result.body, result.status, `Could not load the websites (HTTP ${result.status || "unreachable"}).`);
+      state.sitesError = message;
+      if (!options.silent) showBanner(message);
+      return false;
+    }
+    state.sitesError = null;
+    applySiteList(result.body, options);
+    return true;
+  }
+
+  // Fold a RuntimeConfigResponse (PUT /admin/config) into the rendered website.
+  function applyRuntimeConfigToSite(site, cfg) {
+    if (!site || !cfg) return;
+    if (cfg.deposit_amount !== undefined && cfg.deposit_amount !== null && cfg.deposit_amount !== "") {
+      site.deposit = String(cfg.deposit_amount);
+    }
+    if (cfg.currency) site.currency = String(cfg.currency);
+    if (Array.isArray(cfg.allowed_paths)) site.allowed = cfg.allowed_paths.map(String).filter(Boolean);
+    if (Array.isArray(cfg.disallowed_paths)) site.disallowed = cfg.disallowed_paths.map(String).filter(Boolean);
+    if (Number.isFinite(Number(cfg.rate_limit_requests)) && Number(cfg.rate_limit_requests) > 0) {
+      site.rate = Number(cfg.rate_limit_requests);
+    }
+    if (Number(cfg.rate_limit_window_seconds) > 0) {
+      site.unit = normalizeRateUnit(cfg.rate_limit_window_seconds);
+    }
+    if (Number.isFinite(Number(cfg.max_requests_per_session))) {
+      site.maxRequests = Number(cfg.max_requests_per_session);
+    }
+    if (cfg.policy_version) site.policyVersion = String(cfg.policy_version);
+    if (cfg.version !== undefined && cfg.version !== null) site.version = cfg.version;
+    if (cfg.updated_at) site.updatedAt = cfg.updated_at;
+    if (cfg.origin_url) {
+      site.origin = String(cfg.origin_url);
+      site.savedOrigin = String(cfg.origin_url);
+    }
+    if (cfg.site_name) site.name = String(cfg.site_name);
+    if (cfg.status === "live" || cfg.status === "paused") site.status = cfg.status;
+    if (cfg.active_site_id) state.activeSiteId = cfg.active_site_id;
+    site.dirty = false;
   }
 
   function closeSiteMenus(except) {
@@ -1129,12 +1240,32 @@
   }
 
   function showSetupMessage(message) {
+    state.setupMessage = message || null;
     const node = $("cfg-hint");
     if (node) {
       node.textContent = message;
       node.hidden = !message;
     }
     showBanner(message);
+  }
+
+  // FastAPI errors carry either {"detail": {"message": ...}}, a validation error list,
+  // or a plain string.
+  function apiErrorMessage(body, status, fallback) {
+    const detail = body && body.detail;
+    let message = "";
+    if (Array.isArray(detail)) {
+      const first = detail.find((item) => item && (item.msg || item.message)) || detail[0];
+      if (first && typeof first === "object") message = first.msg || first.message || "";
+      else if (typeof first === "string") message = first;
+    } else if (detail && typeof detail === "object") {
+      message = detail.message || detail.error || "";
+    } else if (typeof detail === "string") {
+      message = detail;
+    }
+    if (typeof message !== "string") message = "";
+    if (!message && body && typeof body.message === "string") message = body.message;
+    return message || fallback || `Request failed (HTTP ${status}).`;
   }
 
   // The gateway uses robots-style prefix rules. The console shows the familiar `/*`
@@ -1159,11 +1290,21 @@
     $("sites-count").textContent = `${count} site${count === 1 ? "" : "s"}`;
 
     if (!count) {
-      box.append(el("p", { className: "empty", text: "No websites yet. Add one below." }));
+      box.append(el("p", { className: "empty", text: state.sitesError || "No websites yet. Add one below." }));
       return;
     }
 
     for (const site of state.sites) {
+      const selected = site.id === state.selectedSiteId;
+      const radio = el("input", {
+        type: "radio",
+        name: "site-select",
+        className: "site-radio",
+        value: site.id,
+        "aria-label": `Select ${site.host}`,
+        onchange: () => selectSite(site.id),
+      });
+      radio.checked = selected;
       const menu = el("div", { className: "site-menu", hidden: "hidden" }, [
         el("button", {
           type: "button",
@@ -1181,14 +1322,13 @@
       const row = el("div", {
         className: "site-row",
         role: "listitem",
-        dataset: { selected: String(site.id === state.selectedSiteId), status: site.status },
+        dataset: { selected: String(selected), status: site.status },
       }, [
-        el("button", {
-          type: "button",
+        el("label", {
           className: "site-select",
-          "aria-pressed": String(site.id === state.selectedSiteId),
-          onclick: () => selectSite(site.id),
+          title: `Select ${site.host} to edit its rules`,
         }, [
+          radio,
           el("span", { className: "site-url", text: site.host }),
           el("span", { className: "site-state" }, [
             el("span", { className: "site-dot", "aria-hidden": "true" }),
@@ -1217,57 +1357,201 @@
     }
   }
 
-  function selectSite(siteId) {
-    if (!state.sites.some((site) => site.id === siteId)) return;
-    if (siteId === state.selectedSiteId) return;
+  async function selectSite(siteId) {
+    const site = state.sites.find((item) => item.id === siteId);
+    // Clicking the current selection is a no-op only when the gateway already has it active.
+    const alreadyActive = siteId === state.activeSiteId || Boolean(site && site.active);
+    if (!site || (siteId === state.selectedSiteId && alreadyActive)) return;
+    // Block switching while a write or another activation is in flight so a late response
+    // cannot change the site the console is showing.
+    if (state.applying || state.addingSite || state.activating) return;
+    const previousId = state.selectedSiteId;
+    state.setupMessage = null;
     if (state.pgRunning) stopPlaygroundRun(true);
     state.selectedSiteId = siteId;
     state.editingDeposit = false;
     state.editingRate = false;
     state.pgResults = {};
     state.pgSteps = [];
-    persistSites();
+    persistSelectedSite();
+
+    // Read-only consoles still let the user inspect each website; only the activation
+    // write is skipped. The rest of the console follows the local selection.
+    if (!state.configReadOnly) {
+      state.activating = true;
+      refreshSetupControls();
+      try {
+        const result = await getJson(`/admin/sites/${encodeURIComponent(siteId)}/activate`, {
+          method: "POST",
+          headers: authHeaders(),
+        });
+        if (!result.ok) {
+          showSetupMessage(apiErrorMessage(result.body, result.status, `Could not activate ${site.host} (HTTP ${result.status}).`));
+          state.selectedSiteId = previousId;
+          persistSelectedSite();
+          renderSetupView();
+          await loadPlayground(true);
+          return;
+        }
+        if (result.body && Array.isArray(result.body.sites)) {
+          applySiteList(result.body, { selectId: siteId });
+        } else {
+          state.activeSiteId = siteId;
+          for (const item of state.sites) item.active = item.id === siteId;
+        }
+      } finally {
+        state.activating = false;
+        refreshSetupControls();
+      }
+    }
+    hideBanner();
     renderSetupView();
+    await loadPlayground(true);
   }
 
-  function addSite(event) {
+  async function addSite(event) {
     event.preventDefault();
-    showSetupMessage("Adding new website is disabled for demo");
+    const input = $("site-add-input");
+    if (state.configReadOnly) {
+      showSetupMessage("Read-only. Enter the admin token in the top bar to add a website.");
+      return;
+    }
+    if (state.addingSite || state.applying || state.activating) return;
+    const raw = input ? input.value.trim() : "";
+    if (!raw) {
+      showSetupMessage("Enter the website address, for example example.com.");
+      if (input) input.focus();
+      return;
+    }
+    const origin = normalizeOrigin(raw);
+    if (!origin) {
+      showSetupMessage("Enter a valid website address, for example https://example.com.");
+      if (input) input.focus();
+      return;
+    }
+
+    state.addingSite = true;
+    refreshSetupControls();
+    try {
+      const result = await getJson("/admin/sites", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ origin_url: origin, set_active: true }),
+      });
+      if (!result.ok) {
+        showSetupMessage(apiErrorMessage(result.body, result.status, `Could not add ${origin} (HTTP ${result.status}).`));
+        return;
+      }
+      if (input) input.value = "";
+      syncSiteAddPrefix();
+      state.setupMessage = null;
+      hideBanner();
+      if (state.pgRunning) stopPlaygroundRun(true);
+      state.pgResults = {};
+      state.pgSteps = [];
+      const created = result.body || {};
+      const newId = created.site_id || (created.site && created.site.site_id) || "";
+      const refreshed = await loadSites({ silent: true, selectId: newId || null });
+      if (!refreshed) {
+        // The website was created even if the refresh failed, so show it locally.
+        const fresh = normalizeSite(created);
+        if (fresh && !state.sites.some((item) => item.id === fresh.id)) {
+          state.sites.push(fresh);
+          state.selectedSiteId = fresh.id;
+          state.activeSiteId = created.active_site_id || fresh.id;
+          persistSelectedSite();
+        }
+      }
+      const site = selectedSite();
+      renderSetupView();
+      await loadPlayground(true);
+      toast("good", "✓", "Website added", site ? site.host : origin);
+    } catch (_) {
+      showSetupMessage("Could not reach the gateway to add the website.");
+    } finally {
+      state.addingSite = false;
+      refreshSetupControls();
+    }
   }
 
-  function toggleSite(siteId) {
+  async function toggleSite(siteId) {
     const site = state.sites.find((item) => item.id === siteId);
-    if (!site) return;
-    if (state.pgRunning) stopPlaygroundRun(true);
-    site.status = site.status === "live" ? "paused" : "live";
-    site.dirty = true;
-    state.editingDeposit = false;
-    state.editingRate = false;
-    state.pgResults = {};
-    state.pgSteps = [];
-    persistSites();
+    if (!site || state.applying || state.addingSite || state.activating) return;
+    if (state.configReadOnly) {
+      showSetupMessage("Read-only. Enter the admin token in the top bar to pause or resume a website.");
+      return;
+    }
+    const nextStatus = site.status === "live" ? "paused" : "live";
+    const result = await getJson(`/admin/sites/${encodeURIComponent(siteId)}`, {
+      method: "PUT",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ status: nextStatus }),
+    });
+    if (!result.ok) {
+      showSetupMessage(apiErrorMessage(result.body, result.status, `Could not update ${site.host} (HTTP ${result.status}).`));
+      return;
+    }
+    hideBanner();
+    state.setupMessage = null;
+    const updated = result.body || {};
+    site.status = updated.status === "live" || updated.status === "paused" ? updated.status : nextStatus;
+    if (updated.name) site.name = String(updated.name);
+    if (updated.updated_at) site.updatedAt = updated.updated_at;
+    if (siteId === state.selectedSiteId) {
+      if (state.pgRunning) stopPlaygroundRun(true);
+      state.editingDeposit = false;
+      state.editingRate = false;
+      state.pgResults = {};
+      state.pgSteps = [];
+    }
     renderSetupView();
-    toast(site.status === "live" ? "good" : "neutral", site.status === "live" ? "✓" : "○", `${site.host} ${site.status === "live" ? "resumed" : "paused"}`, site.status === "live" ? "Apply the configuration to make it live." : "The saved configuration is kept.");
+    toast(
+      site.status === "live" ? "good" : "neutral",
+      site.status === "live" ? "✓" : "○",
+      `${site.host} ${site.status === "live" ? "resumed" : "paused"}`,
+      site.status === "live" ? "Apply the configuration to make it live." : "The saved configuration is kept."
+    );
   }
 
-  function removeSite(siteId) {
+  async function removeSite(siteId) {
     if (state.sites.length <= 1) {
       showSetupMessage("Keep at least one website in the console.");
       return;
     }
-    if (state.pgRunning) stopPlaygroundRun(true);
-    const index = state.sites.findIndex((site) => site.id === siteId);
-    if (index < 0) return;
-    const [removed] = state.sites.splice(index, 1);
-    if (state.appliedSiteId === siteId) state.appliedSiteId = null;
-    if (state.selectedSiteId === siteId) state.selectedSiteId = state.sites[Math.max(0, index - 1)].id;
-    state.editingDeposit = false;
-    state.editingRate = false;
-    state.pgResults = {};
-    state.pgSteps = [];
-    persistSites();
+    if (state.configReadOnly) {
+      showSetupMessage("Read-only. Enter the admin token in the top bar to remove a website.");
+      return;
+    }
+    const site = state.sites.find((item) => item.id === siteId);
+    if (!site || state.applying || state.addingSite || state.activating) return;
+    const result = await getJson(`/admin/sites/${encodeURIComponent(siteId)}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    if (!result.ok) {
+      showSetupMessage(apiErrorMessage(result.body, result.status, `Could not remove ${site.host} (HTTP ${result.status}).`));
+      return;
+    }
+    hideBanner();
+    state.setupMessage = null;
+    if (siteId === state.selectedSiteId) {
+      if (state.pgRunning) stopPlaygroundRun(true);
+      state.editingDeposit = false;
+      state.editingRate = false;
+      state.pgResults = {};
+      state.pgSteps = [];
+    }
+    // The gateway activates the next website when the selected one is deleted.
+    if (state.selectedSiteId === siteId) state.selectedSiteId = null;
+    const refreshed = await loadSites({ silent: true });
+    if (!refreshed) {
+      state.sites = state.sites.filter((item) => item.id !== siteId);
+      if (!state.sites.length) state.selectedSiteId = null;
+      persistSelectedSite();
+    }
     renderSetupView();
-    toast("neutral", "−", "Website removed", removed.host);
+    await loadPlayground(true);
+    toast("neutral", "−", "Website removed", site.host);
   }
 
   function renderPathList(tone, paths) {
@@ -1302,7 +1586,7 @@
   function refreshSetupControls() {
     const site = selectedSite();
     const live = Boolean(site && site.status === "live");
-    const disabled = !site || state.configReadOnly || state.applying || !live;
+    const disabled = !site || state.configReadOnly || state.applying || state.activating || !live;
     const canEdit = !state.configReadOnly;
 
     for (const id of ["cfg-deposit-save", "cfg-rate-save"]) {
@@ -1337,40 +1621,29 @@
     if ($("cfg-currency-symbol")) $("cfg-currency-symbol").textContent = symbol;
 
     if ($("cfg-deposit")) $("cfg-deposit").disabled = !canEdit || !site;
-    if ($("site-add-input")) $("site-add-input").disabled = !canEdit;
+    if ($("site-add-input")) $("site-add-input").disabled = !canEdit || state.addingSite || state.activating;
     if ($("site-add-button")) {
-      // Adding websites is disabled in this demo, regardless of edit rights.
-      $("site-add-button").disabled = true;
-      $("site-add-button").title = "Disabled in demo";
+      $("site-add-button").disabled = !canEdit || state.addingSite || state.activating;
+      $("site-add-button").textContent = state.addingSite ? "Adding..." : "Add website";
+      if (canEdit) $("site-add-button").removeAttribute("title");
+      else $("site-add-button").title = "Read-only";
     }
-    for (const node of document.querySelectorAll(".site-menu-toggle")) node.disabled = !canEdit;
+    for (const node of document.querySelectorAll(".site-menu-toggle")) node.disabled = !canEdit || state.activating;
     for (const node of document.querySelectorAll(".rule-path-remove, .rule-path-add input, .rule-path-add button")) {
-      node.disabled = !canEdit || !site;
+      node.disabled = !canEdit || !site || !live || state.applying;
     }
     for (const id of ["allowed-add-input", "disallowed-add-input", "cfg-rate", "cfg-rate-unit"]) {
-      if ($(id)) $(id).disabled = !canEdit || !site;
-    }
-
-    // Demo mode pins the window to a minute; the backend still enforces the 10/min cap.
-    const demo = isDemoMode();
-    if ($("cfg-rate-unit")) {
-      const unitSelect = $("cfg-rate-unit");
-      for (const option of unitSelect.options) {
-        option.disabled = demo && Number(option.value) !== DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS;
-      }
-      if (demo && Number(unitSelect.value) !== DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS) {
-        unitSelect.value = String(DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS);
-        if (site) site.unit = DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS;
-      }
+      if ($(id)) $(id).disabled = !canEdit || !site || !live || state.applying;
     }
 
     let hint = "Changes apply live to the selected website.";
-    if (!site) hint = "Add a website to configure the gateway.";
+    if (state.setupMessage) hint = state.setupMessage;
+    else if (!site) hint = "Add a website to configure the gateway.";
     else if (state.configReadOnly) hint = "Read-only. Enter the admin token in the top bar to apply changes.";
+    else if (state.activating) hint = "Selecting the website...";
     else if (site.status !== "live") hint = `${site.host} is paused. Resume it to apply changes.`;
     else if (state.applying) hint = `Applying the configuration for ${site.host}...`;
     else if (site.dirty) hint = `Unsaved changes for ${site.host}.`;
-    else if (site.id !== state.appliedSiteId) hint = `Preview for ${site.host}. Saving applies it live.`;
     else hint = "";
     if ($("cfg-hint")) {
       $("cfg-hint").textContent = hint;
@@ -1386,12 +1659,9 @@
       return;
     }
     if ($("cfg-deposit")) $("cfg-deposit").value = site.deposit || "";
-    site.currency = "USD";
-    if (isDemoMode()) {
-      site.unit = DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS;
-    }
     if ($("cfg-rate")) $("cfg-rate").value = site.rate || "";
-    if ($("cfg-rate-unit")) $("cfg-rate-unit").value = String(site.unit || 60);
+    site.unit = normalizeRateUnit(site.unit);
+    if ($("cfg-rate-unit")) $("cfg-rate-unit").value = String(site.unit);
     renderRules(site);
     refreshSetupControls();
   }
@@ -1406,20 +1676,16 @@
     const site = selectedSite();
     if (!site) return;
     site.dirty = true;
-    persistSites();
+    state.setupMessage = null;
     refreshSetupControls();
   }
 
   function removePath(tone, path) {
     const site = selectedSite();
-    if (!site) return;
+    if (!site || state.applying || state.activating) return;
     const key = tone === "allowed" ? "allowed" : "disallowed";
     site[key] = site[key].filter((item) => item !== path);
-    state.pgResults = {};
-    state.pgSteps = [];
-    markSiteDirty();
-    renderSiteConfig();
-    renderPlayground();
+    persistPathChange(site);
   }
 
   function addPath(event, tone) {
@@ -1445,59 +1711,63 @@
     }
     site[key].push(value);
     input.value = "";
+    persistPathChange(site);
+  }
+
+  // Path edits persist immediately; the deposit/rate pencil Save buttons keep their own
+  // explicit apply, and the playground's Run test still applies before running.
+  function persistPathChange(site) {
     state.pgResults = {};
     state.pgSteps = [];
     markSiteDirty();
     renderSiteConfig();
     renderPlayground();
+    if (!state.configReadOnly && site.status === "live") {
+      void applySelectedSite({ silent: true });
+    }
   }
 
   async function loadSetup(force) {
     if (force) {
       state.sites = [];
+      state.sitesError = null;
       state.selectedSiteId = null;
-      state.appliedSiteId = null;
+      state.activeSiteId = null;
+      state.setupMessage = null;
       state.pgResults = {};
       state.pgSteps = [];
+      state.playground = null;
+      state.playgroundSiteId = null;
+      state.pgCanStart = null;
       state.config = null;
     }
-    let cfg = state.config;
-    if (!cfg || force) {
+    if (!state.config) {
+      let cfg = null;
       const result = await getJson("/admin/config", { headers: authHeaders() });
-      if (result.ok) {
+      if (result.ok && result.body) {
         cfg = result.body;
       } else {
         const policy = await getJson("/policies", { headers: { Accept: "application/json" } });
-        cfg = policy.ok ? configFromPolicy(policy.body) : null;
+        cfg = policy.ok && policy.body ? configFromPolicy(policy.body) : {};
       }
-      state.config = cfg || {};
+      state.config = cfg;
       state.configReadOnly = !(state.token || Boolean(cfg && cfg.config_public));
     }
-    if (!state.sites.length) {
-      const stored = force ? null : loadStoredSites();
-      if (stored) {
-        state.sites = stored.sites;
-        state.selectedSiteId = stored.selectedSiteId;
-        state.appliedSiteId = stored.appliedSiteId;
-      } else {
-        state.sites = seedSites(cfg);
-        state.selectedSiteId = state.sites[0] ? state.sites[0].id : null;
-        state.appliedSiteId = "site_scrapethissite";
-      }
-      if (!state.sites.some((site) => site.id === state.selectedSiteId)) {
-        state.selectedSiteId = state.sites[0] ? state.sites[0].id : null;
-      }
-      // The demo settles in USD only.
-      for (const site of state.sites) site.currency = "USD";
-      persistSites();
+    // The gateway is the source of truth for the website list; localStorage only helps
+    // pick which website to show when the previous selection is still available.
+    // Reload only when the list is empty so unsaved edits survive view switches.
+    const loaded = state.sites.length ? true : await loadSites({ silent: true });
+    if (!loaded) {
+      showBanner(state.sitesError || "Could not load the websites from the gateway. Check the connection and try again.");
     }
     renderSetupView();
+    await loadPlayground();
   }
 
   async function applySelectedSite(options) {
     const opts = options || {};
     const site = selectedSite();
-    if (!site || state.applying) return false;
+    if (!site || state.applying || state.addingSite) return false;
     if (state.configReadOnly) {
       if (!opts.silent) showSetupMessage("Read-only. Enter the admin token in the top bar to apply changes.");
       return false;
@@ -1511,12 +1781,7 @@
     const unit = Number(site.unit);
     if (!deposit) { showSetupMessage("Enter a deposit amount for this website."); return false; }
     if (!Number.isFinite(rate) || rate < 1) { showSetupMessage("The rate limit must be at least 1 request."); return false; }
-    if (![1, 60, 3600].includes(unit)) { showSetupMessage("Choose a rate-limit window."); return false; }
-    hideRateCapWarning();
-    if (isDemoMode() && demoRateLimitExceeded(rate, unit)) {
-      showRateCapWarning();
-      return false;
-    }
+    if (!Number.isFinite(unit) || unit <= 0) { showSetupMessage("Choose a rate-limit window."); return false; }
 
     state.applying = true;
     refreshSetupControls();
@@ -1528,24 +1793,28 @@
         rate_limit_requests: Math.round(rate),
         rate_limit_window_seconds: unit,
       };
-      if (site.applyOrigin && site.origin) payload.origin_url = site.origin;
-      const result = await getJson("/admin/config", {
+      // Send the origin only when the user actually changed it.
+      if (site.origin && site.origin !== (site.savedOrigin || "")) payload.origin_url = site.origin;
+      const result = await getJson(`/admin/config?site_id=${encodeURIComponent(site.id)}`, {
         method: "PUT",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
       if (!result.ok) {
-        const body = result.body || {};
-        const detail = body.detail && (body.detail.message || body.message);
-        showBanner(detail || body.message || `Configuration was rejected (HTTP ${result.status}).`);
+        showBanner(apiErrorMessage(result.body, result.status, `Configuration was rejected (HTTP ${result.status}).`));
         return false;
       }
-      state.config = result.body;
+      applyRuntimeConfigToSite(site, result.body);
+      state.config = Object.assign({}, state.config, result.body);
       state.configReadOnly = !(state.token || Boolean(result.body && result.body.config_public));
-      site.dirty = false;
-      state.appliedSiteId = site.id;
-      persistSites();
+      // Refresh the website's data from the gateway, keeping the current selection.
+      const refreshed = await loadSites({ silent: true, selectId: site.id });
+      if (refreshed) {
+        const saved = state.sites.find((item) => item.id === site.id);
+        if (saved) saved.dirty = false;
+      }
       hideBanner();
+      state.setupMessage = null;
       renderSiteConfig();
       renderPlayground();
       if (!opts.silent) {
@@ -1908,16 +2177,27 @@
   }
 
   async function loadPlayground(force) {
-    if (state.playground && !force) {
+    const site = selectedSite();
+    const siteId = site ? site.id : "";
+    if (state.playground && !force && state.playgroundSiteId === siteId) {
       renderPlayground();
       return;
     }
-    const result = await getJson("/playground/actions", { headers: authHeaders() });
+    const token = (state.pgLoadToken || 0) + 1;
+    state.pgLoadToken = token;
+    const url = siteId
+      ? `/playground/actions?site_id=${encodeURIComponent(siteId)}`
+      : "/playground/actions";
+    const result = await getJson(url, { headers: authHeaders() });
+    // A newer selection started loading while this request was in flight.
+    if (token !== state.pgLoadToken) return;
     if (result.ok) {
       state.playground = result.body;
+      state.playgroundSiteId = siteId;
       state.pgCanStart = Boolean(result.body && result.body.can_start);
     } else {
       state.playground = null;
+      state.playgroundSiteId = siteId;
       state.pgCanStart = false;
     }
     renderPlayground();
@@ -1958,7 +2238,9 @@
 
   async function runPlaygroundPlan() {
     const site = selectedSite();
-    if (!site || state.pgRunning) return;
+    if (!site || state.pgRunning || state.applying) return;
+    // A paused website cannot run: its gateway traffic is refused.
+    if (site.status !== "live") return;
     const plan = buildPlaygroundPlan();
     const executable = plan.length;
     if (!executable) return;
@@ -1988,7 +2270,7 @@
         const started = await getJson("/playground/runs", {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({ action_id: step.action, driver: "scripted" }),
+          body: JSON.stringify({ action_id: step.action, driver: "scripted", site_id: site.id }),
         });
         if (!started.ok) {
           const body = started.body || {};
@@ -2586,6 +2868,8 @@
 
     state.pgSelected = defaultBehaviorSelection();
     if ($("site-add-form")) $("site-add-form").addEventListener("submit", addSite);
+    if ($("site-add-input")) $("site-add-input").addEventListener("input", syncSiteAddPrefix);
+    syncSiteAddPrefix();
     $("allowed-add-form").addEventListener("submit", (event) => addPath(event, "allowed"));
     $("disallowed-add-form").addEventListener("submit", (event) => addPath(event, "disallowed"));
 
@@ -2614,7 +2898,6 @@
       $("cfg-rate-edit").addEventListener("click", () => {
         state.editingRate = true;
         state.editingDeposit = false;
-        hideRateCapWarning();
         refreshSetupControls();
         if ($("cfg-rate")) {
           $("cfg-rate").focus();
@@ -2635,7 +2918,6 @@
       if (event.key !== "Escape") return;
       state.editingDeposit = false;
       state.editingRate = false;
-      hideRateCapWarning();
       refreshSetupControls();
     };
     for (const id of ["cfg-deposit", "cfg-rate", "cfg-rate-unit"]) {
@@ -2653,7 +2935,6 @@
     $("cfg-rate").addEventListener("input", (event) => {
       const site = selectedSite();
       if (!site) return;
-      hideRateCapWarning();
       site.rate = Number(event.target.value) || 0;
       state.pgResults = {};
       state.pgSteps = [];
@@ -2662,12 +2943,7 @@
     $("cfg-rate-unit").addEventListener("change", (event) => {
       const site = selectedSite();
       if (!site) return;
-      let unit = Number(event.target.value) || 60;
-      if (isDemoMode() && unit !== DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS) {
-        unit = DEMO_RATE_LIMIT_MIN_WINDOW_SECONDS;
-        event.target.value = String(unit);
-      }
-      site.unit = unit;
+      site.unit = normalizeRateUnit(event.target.value);
       state.pgResults = {};
       state.pgSteps = [];
       markSiteDirty();
