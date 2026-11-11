@@ -3,7 +3,7 @@
 # APP_PUBLIC_URL is not needed: the app falls back to Render's RENDER_EXTERNAL_URL.
 services:
   - type: web
-    name: crawlertrust
+    name: sara-gateway
     runtime: docker
     plan: free
     region: oregon
@@ -74,6 +74,10 @@ services:
       - key: PAYPAL_CLIENT_ID
         sync: false
       - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      # Optional: the PayPal business account shown as the payout account until the first
+      # order or a Log in with PayPal connection names it.
+      - key: PAYPAL_MERCHANT_EMAIL
         sync: false
       # PayPal assistant: PayPal's MCP server runs inside the image (@paypal/mcp, stdio).
       - key: PAYPAL_MCP_TRANSPORT
