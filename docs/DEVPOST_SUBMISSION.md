@@ -1,6 +1,6 @@
-# Devpost submission draft
+# Devpost submission
 
-Draft text for the PayPal AI Hackathon 2026 project page. Replace every `[TODO: ...]` before submitting, and keep only claims the team has seen work on a live run.
+Text submitted for the PayPal AI Hackathon 2026 project page. Every claim here was seen working on a live run.
 
 ## Project name
 
@@ -112,28 +112,28 @@ python, fastapi, httpx, pydantic, paypal-rest-api, paypal-orders-v2, paypal-paym
 
 ## Links
 
-- Repository: `https://github.com/sartech-labs/Paypal-hackathon-idea-1` [TODO: make public before submitting]
-- Demo video: [TODO: public YouTube link, under 3 minutes]
+- Repository: https://github.com/sartech-labs/Paypal-hackathon-idea-1
+- Demo video: https://youtu.be/uP0hEgHriYk
 - Live: https://sara-gateway.onrender.com
 
 ## Testing instructions (Devpost field)
 
-Draft for the private testing-instructions field. Fill the sign-in details there only, never in this repository.
+Text for the private testing-instructions field. The sign-in details are only there, never in this repository.
 
-1. Open https://sara-gateway.onrender.com (allow about a minute for it to wake) and sign in with `[TODO: owner email]` / `[TODO: owner password]`.
+1. Open https://sara-gateway.onrender.com (allow about a minute for it to wake) and sign in with the owner email and password given in the Devpost testing instructions.
 2. **Overview** shows the gateway's numbers.
 3. **Websites → Setup** shows the protected website, the connected PayPal account, the deposit, and the rules.
-4. **Websites → Playground:** choose **Price scraper** and run it. Approve the deposit with the PayPal button using `[TODO: Sandbox buyer login]`. The scraper is blocked, its deposit is kept, and the explanation says why. Then run **Polite researcher**: its hold is released.
+4. **Websites → Playground:** choose **Price scraper** and run it. Approve the deposit with the PayPal button using the PayPal Sandbox buyer login given in the Devpost testing instructions. The scraper is blocked, its deposit is kept, and the explanation says why. Then run **Polite researcher**: its hold is released.
 5. **Money → Deposits:** open a deposit to see its PayPal reference, "why this outcome", and **Verify with PayPal**.
 
 To run it locally with no credentials, follow the README's "Run it yourself".
 
 ## Submission checklist
 
-- [ ] Repository is public and the default branch contains this code and the MIT license
-- [ ] Demo video is public on YouTube and under 3 minutes ([`DEMO_SCRIPT.md`](DEMO_SCRIPT.md))
+- [x] Repository is public and the default branch contains this code and the MIT license
+- [x] Demo video is public on YouTube and under 3 minutes ([`DEMO_SCRIPT.md`](DEMO_SCRIPT.md))
 - [ ] The live site is set up again after the last deploy (website added, PayPal connected, deposit and rules set) and opened a few minutes before the deadline
-- [ ] Testing instructions filled in on Devpost
-- [ ] Prize categories selected: overall, Best Use of PayPal + AI, Best Use of Agentic Commerce, Best Demo Delivery, Most Impactful, plus the sponsor categories that apply (AG Grid, Render). At most one Grand Prize and one Sponsor Prize, or one Honorable Mention and one Sponsor Prize.
+- [x] Testing instructions filled in on Devpost
+- [x] Prize categories selected: overall, Best Use of PayPal + AI, Best Use of Agentic Commerce, Best Demo Delivery, Most Impactful, plus the sponsor categories that apply (AG Grid, Render). At most one Grand Prize and one Sponsor Prize, or one Honorable Mention and one Sponsor Prize.
 - [ ] Deadline: Thursday 12 November 2026, 12:00 pm Pacific
-- [ ] Every `[TODO]` in this file resolved
+- [x] Every `[TODO]` in this file resolved

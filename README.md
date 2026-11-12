@@ -8,6 +8,7 @@ SARA is a gateway a website owner puts in front of their site. Every AI agent th
 
 By [Sartech Labs](https://github.com/sartech-labs) (Safe And Responsible Technology).
 
+- **Demo video (under 3 minutes):** https://youtu.be/uP0hEgHriYk
 - **Live:** https://sara-gateway.onrender.com. The console is private; sign-in details are in our Devpost submission. The service runs on Render's free plan, so the first visit after a quiet spell can take about a minute to wake it.
 - **Run it yourself:** [quick start](#run-it-yourself), no credentials needed in mock mode.
 - **Full reference:** configuration, API, architecture, state machines, security and tests are in [`docs/REFERENCE.md`](docs/REFERENCE.md).
