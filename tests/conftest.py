@@ -137,3 +137,9 @@ async def complete_onboarding_flow(
     session_issue = ses_resp.json()
 
     return challenge, verified_deposit, session_issue
+
+
+@pytest.fixture(autouse=True)
+def _offline_origin_redirect_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Adding a website checks the origin's home-page redirect; keep tests off the network."""
+    monkeypatch.setattr("server.dependencies.canonical_origin", lambda origin_url, **_: origin_url)

@@ -272,3 +272,39 @@ async def test_forward_never_leaks_the_owner_console_cookie() -> None:
     set_cookies = [value for key, value in mixed.headers.multi_items() if key.lower() == "set-cookie"]
     assert set_cookies == ["site_session=abc; Path=/"]
     assert only_ours.status_code == 200
+
+
+def _redirecting(status: int, location: str | None) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        headers = {"location": location} if location else {}
+        return httpx.Response(status, headers=headers, text="Redirecting...")
+
+    return httpx.MockTransport(handler)
+
+
+@pytest.mark.parametrize(
+    ("origin", "status", "location", "expected"),
+    [
+        ("https://example.com", 308, "https://www.example.com/", "https://www.example.com"),
+        ("https://www.example.com", 301, "https://example.com/", "https://example.com"),
+        ("http://example.com", 301, "https://example.com/", "https://example.com"),
+        ("https://example.com", 302, "/home", "https://example.com"),
+        ("https://example.com", 302, "https://evil.example.net/", "https://example.com"),
+        ("https://example.com", 302, "https://example.com.evil.net/", "https://example.com"),
+        ("https://example.com", 200, None, "https://example.com"),
+        ("https://example.com", 308, None, "https://example.com"),
+    ],
+)
+def test_canonical_origin_follows_only_same_site_redirects(origin, status, location, expected) -> None:
+    from server.services.origin_proxy import canonical_origin
+
+    assert canonical_origin(origin, transport=_redirecting(status, location)) == expected
+
+
+def test_canonical_origin_keeps_the_address_when_the_site_is_unreachable() -> None:
+    from server.services.origin_proxy import canonical_origin
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no route")
+
+    assert canonical_origin("https://example.com", transport=httpx.MockTransport(handler)) == "https://example.com"

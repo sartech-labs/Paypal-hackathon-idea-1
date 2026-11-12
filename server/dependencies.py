@@ -47,7 +47,7 @@ from server.services.payment_service import (
 from server.services.paypal_assistant import PayPalAssistant
 from server.services.paypal_mcp import PayPalMCPClient
 from server.services.policy_assistant import PolicyAssistant
-from server.services.origin_proxy import OriginProxy
+from server.services.origin_proxy import OriginProxy, canonical_origin
 from server.services.payment_methods import PaymentMethodStore
 from server.services.playground import PlaygroundRunner
 from server.services.policy_engine import PolicyEngine
@@ -105,6 +105,8 @@ class AppContainer:
     ) -> None:
         self.settings = settings
         self.owner_auth = OwnerAuth(settings)
+        # Replaceable in tests so adding a site never reaches the network.
+        self.canonical_origin = canonical_origin
         self.paypal_login = PayPalLogin(settings)
         # Multi-site registry, stored in the same file as the old flat config.
         self.registry_store = SiteRegistryStore(
@@ -410,6 +412,16 @@ class AppContainer:
         )
         if not origin_url:
             raise ValueError("Origin URL is required.")
+        # Follow the home page's redirect when it stays on the same site (example.com ->
+        # www.example.com), and validate the final address exactly like the one given.
+        resolved = await asyncio.to_thread(self.canonical_origin, origin_url)
+        if resolved != origin_url:
+            origin_url = validate_origin_url(
+                resolved,
+                allow_private=allow_private_origin,
+                allowlist=self.origin_allowlist,
+                require_allowlist=False,
+            )
         # Gateway traffic is routed by Host, so two sites for the same host would be ambiguous.
         new_host = host_of(origin_url)
         if new_host and any(host_of(site.config.origin_url) == new_host for site in self.registry.sites):

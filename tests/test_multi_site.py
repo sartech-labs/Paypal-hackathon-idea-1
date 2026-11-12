@@ -869,3 +869,18 @@ async def test_dashboard_counts_each_website_separately(
         after = await data("all")
         assert {d["crawler_id"] for d in after["deposits"]} == {"crawler-b"}
         assert after["kpis"]["policy_violations"] == 0
+
+
+@pytest.mark.asyncio
+async def test_adding_a_site_stores_its_same_site_redirect_target(
+    test_settings: Settings, fake_clock: FakeClock, monkeypatch
+) -> None:
+    _patch_origins(monkeypatch)
+    app = create_app(settings=test_settings, rate_limiter=SlidingWindowRateLimiter(clock=fake_clock))
+    app.state.container.canonical_origin = lambda url: url.replace("://site-a", "://www.site-a")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+        created = await _create_site(client, "http://site-a.internal")
+        assert created["origin_url"] == "http://www.site-a.internal"
+        # The bare and www forms are the same website: adding it again is refused.
+        again = await client.post("/admin/sites", headers=ADMIN, json={"origin_url": "http://www.site-a.internal"})
+        assert again.status_code == 422

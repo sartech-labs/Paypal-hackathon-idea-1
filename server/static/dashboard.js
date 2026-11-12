@@ -227,6 +227,7 @@
 
   function httpTone(status) {
     if (status === 200) return "good";
+    if (status >= 300 && status < 400) return "neutral";
     if (status === 402) return "warning";
     if (status === 429) return "serious";
     return "critical";
@@ -2645,6 +2646,10 @@
           r.prompt_injection ? "Allowed. The page contains a hidden instruction aimed at AI agents." : `Allowed${r.remaining_session_budget != null ? ` · ${r.remaining_session_budget} requests left in the session` : ""}.`));
       } else if (r.status === 404) {
         lab.rows.push(labRow("info", "Page not found", `GET ${path}`, 404, r.reason || "The website has no page at this path."));
+      } else if (r.status >= 300 && r.status < 400) {
+        // The website answered with a redirect; the gateway let the request through.
+        lab.rows.push(labRow("info", "Redirected by the website", `GET ${path}`, r.status,
+          "Allowed by the gateway. The website sent the agent to another address instead of a page."));
       } else {
         lab.rows.push(labRow("bad", "Blocked by the gateway", `GET ${path}`, r.status,
           `${humanize(r.reason_code || "")}${r.reason ? ` · ${r.reason}` : ""}${r.disqualifying ? " · counts against the deposit" : ""}`));

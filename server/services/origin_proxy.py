@@ -17,7 +17,7 @@ import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -26,6 +26,48 @@ logger = logging.getLogger("sara.origin")
 # The owner's signed console session cookie (server.core.owner_auth.COOKIE_NAME). Named here
 # rather than imported so the proxy does not depend on the sign-in module.
 CONSOLE_COOKIE = "sara_owner"
+
+
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+def _site_key(host: Optional[str]) -> str:
+    """A host without a leading "www.", so example.com and www.example.com match."""
+    host = (host or "").lower().rstrip(".")
+    return host[4:] if host.startswith("www.") else host
+
+
+def canonical_origin(
+    origin_url: str,
+    *,
+    timeout_seconds: float = 6.0,
+    transport: Optional[httpx.BaseTransport] = None,
+) -> str:
+    """The address a website really serves from, when its home page redirects on the same site.
+
+    Many sites redirect example.com to www.example.com (or http to https). The gateway must
+    forward to the final address, or every agent request just receives the redirect. Only a
+    single redirect to the same site is followed; anything else keeps the address as given.
+    """
+    try:
+        with httpx.Client(timeout=timeout_seconds, transport=transport, follow_redirects=False) as client:
+            response = client.get(
+                origin_url.rstrip("/") + "/",
+                headers={"User-Agent": "Mozilla/5.0 (compatible; SARA-Gateway/1.0; +origin check)"},
+            )
+    except (httpx.HTTPError, ValueError):
+        return origin_url
+    if response.status_code not in REDIRECT_STATUSES:
+        return origin_url
+    location = response.headers.get("location")
+    if not location:
+        return origin_url
+    target = urlsplit(urljoin(origin_url.rstrip("/") + "/", location))
+    if target.scheme not in ("http", "https") or not target.hostname:
+        return origin_url
+    if _site_key(target.hostname) != _site_key(urlsplit(origin_url).hostname):
+        return origin_url
+    return f"{target.scheme}://{target.netloc}"
 
 
 def _strip_console_cookie(value: str) -> Optional[str]:
