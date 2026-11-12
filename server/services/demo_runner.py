@@ -409,7 +409,9 @@ class DemoRunner:
         )
         try:
             with self._http_factory(base_url) as http:
-                if self.agent_signer is not None and run.persona != "rogue" and hasattr(http, "auth"):
+                # Playground test agents (goal runs) are unsigned: each is a new agent, so one
+                # test's kept deposit never raises the price for the owner's next test.
+                if self.agent_signer is not None and run.persona not in ("rogue", "goal") and hasattr(http, "auth"):
                     http.auth = self.agent_signer
                 # A playground test agent goes to the website the owner picked.
                 if run.site_id and hasattr(http, "headers"):

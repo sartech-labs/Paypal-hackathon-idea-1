@@ -3,6 +3,7 @@
    Status colors always travel with an icon or a label: color never carries meaning alone. */
 
 :root {
+  --brand-green: #2fb565;
   color-scheme: dark;
   --page: #0a0e15;
   --page-glow: radial-gradient(1200px 520px at 12% -10%, rgba(64, 120, 255, 0.10), transparent 60%),
@@ -46,6 +47,7 @@
 }
 
 :root[data-theme="light"] {
+  --brand-green: #025922;
   color-scheme: light;
   --page: #f5f6f8;
   --page-glow: radial-gradient(1200px 520px at 12% -10%, rgba(64, 120, 255, 0.07), transparent 60%);
@@ -81,6 +83,7 @@
 
 @media (prefers-color-scheme: light) {
   :root[data-theme="system"] {
+    --brand-green: #025922;
     color-scheme: light;
     --page: #f5f6f8;
     --page-glow: radial-gradient(1200px 520px at 12% -10%, rgba(64, 120, 255, 0.07), transparent 60%);
@@ -168,7 +171,15 @@ h1, h2, h3 { letter-spacing: -0.01em; }
   color: var(--text-primary);
   text-decoration: none;
 }
-.brand-mark svg { width: 26px; height: 26px; flex: none; }
+.brand-logo {
+  display: block;
+  width: 100px;
+  height: 31px;
+  flex: none;
+  background: var(--brand-green);
+  -webkit-mask: url("/_sara/static/brand/sara-logo.png") left center / contain no-repeat;
+  mask: url("/_sara/static/brand/sara-logo.png") left center / contain no-repeat;
+}
 .brand-name { font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
 .brand-tag {
   padding: 1px 8px;

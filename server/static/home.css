@@ -9,6 +9,7 @@
   --text-2: #a9b4c8;
   --muted: #7684a0;
   --accent: #5b8cff;
+  --brand-green: #2fb565;
   --accent-2: #8fb0ff;
   --good: #36d399;
   --good-bg: rgba(54, 211, 153, 0.12);
@@ -74,8 +75,14 @@ code { font-family: var(--mono); font-size: 0.88em; color: var(--accent-2); }
 }
 .topbar-inner { display: flex; align-items: center; justify-content: space-between; height: 68px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--accent); text-decoration: none; }
-.brand svg { width: 26px; height: 26px; }
-.brand span { color: var(--text); font: 700 20px/1 var(--display); letter-spacing: 0.02em; }
+.brand-logo {
+  display: block;
+  width: 113px;
+  height: 35px;
+  background: var(--brand-green);
+  -webkit-mask: url("/_sara/static/brand/sara-logo.png") left center / contain no-repeat;
+  mask: url("/_sara/static/brand/sara-logo.png") left center / contain no-repeat;
+}
 .topnav { display: flex; align-items: center; gap: 22px; }
 .topnav > a:not(.btn) { color: var(--text-2); font-size: 14.5px; text-decoration: none; }
 .topnav > a:not(.btn):hover { color: var(--text); }
