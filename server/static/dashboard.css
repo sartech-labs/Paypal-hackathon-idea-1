@@ -2559,3 +2559,11 @@ button.primary.paypal-button:hover:not(:disabled) { background: #f2b52a; border-
 .lab-pay p strong { color: var(--text-primary); }
 .lab-pay .lab-pay-note { grid-column: 1 / -1; }
 @media (max-width: 560px) { .lab-pay { grid-template-columns: minmax(0, 1fr); } }
+
+/* Deposits: the table across the top, then the inspector and PayPal side by side, so a
+   selected deposit and its PayPal check fill the screen instead of a narrow side column. */
+.view[data-view="deposits"] .layout { grid-template-columns: minmax(0, 1fr); }
+.view[data-view="deposits"] .col-side { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+@media (max-width: 1100px) {
+  .view[data-view="deposits"] .col-side { grid-template-columns: minmax(0, 1fr); }
+}

@@ -24,12 +24,42 @@ W, H = 1536, 864
 WAIT_PERSON = 15 * 60 * 1000  # a person signing in
 
 
+PAYPAL_WEB = "https://www.sandbox.paypal.com"
+
+
+def record_paypal_activity(browser, out: Path, account: str, say) -> str | None:
+    """Record a Sandbox PayPal account's activity: the person signs in, then opens the SARA payment."""
+    ctx = browser.new_context(viewport={"width": W, "height": H}, record_video_dir=str(out / f"raw_{account}"),
+                              record_video_size={"width": W, "height": H}, locale="en-US")
+    page = ctx.new_page()
+    t0 = time.monotonic()
+    page.goto(f"{PAYPAL_WEB}/signin", wait_until="domcontentloaded")
+    print(f"{time.monotonic() - t0:8.2f}s  {account}_signin", flush=True)
+    say(f"sign in to PayPal with the Sandbox {account} account")
+    page.wait_for_url(lambda url: "/signin" not in url and "/authflow" not in url and "/auth/" not in url, timeout=WAIT_PERSON)
+    page.wait_for_load_state("domcontentloaded")
+    page.wait_for_timeout(2500)
+    print(f"{time.monotonic() - t0:8.2f}s  {account}_signed_in", flush=True)
+    page.goto(f"{PAYPAL_WEB}/myaccount/activities/", wait_until="domcontentloaded")
+    page.wait_for_timeout(5000)
+    print(f"{time.monotonic() - t0:8.2f}s  {account}_activity", flush=True)
+    say(f"in the {account} account's activity, open the latest SARA $5.00 payment, then close that tab")
+    page.wait_for_event("close", timeout=WAIT_PERSON)
+    print(f"{time.monotonic() - t0:8.2f}s  {account}_closed", flush=True)
+    path = page.video.path() if page.video else None
+    ctx.close()
+    return path
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="https://sara-gateway.onrender.com")
     ap.add_argument("--site", default="https://sartechlabs.com")
     ap.add_argument("--deposit", default="5")
     ap.add_argument("--out", default="video-out/rec_live")
+    ap.add_argument("--window", default="", help="window position x,y, for example 1940,0 for a second screen")
+    ap.add_argument("--skip-paypal-proof", action="store_true")
+    ap.add_argument("--only-paypal-proof", action="store_true", help="record only the PayPal account activity")
     ap.add_argument("--headless", action="store_true", help="for a dry run against a local mock gateway")
     args = ap.parse_args()
     base = args.base.rstrip("/")
@@ -39,7 +69,14 @@ def main() -> None:
     marks: dict[str, float] = {}
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=args.headless, args=[f"--window-size={W + 16},{H + 140}"])
+        browser = pw.chromium.launch(headless=args.headless, args=[f"--window-size={W + 16},{H + 140}"] + ([f"--window-position={args.window}"] if args.window else []))
+        if args.only_paypal_proof:
+            for account in ("business", "personal"):
+                path = record_paypal_activity(browser, out, account, lambda m: print(f"WAITING FOR YOU: {m}", flush=True))
+                if path:
+                    shutil.copyfile(path, out / f"paypal_{account}.webm")
+            browser.close()
+            return
         ctx = browser.new_context(viewport={"width": W, "height": H}, record_video_dir=str(out / "raw"),
                                   record_video_size={"width": W, "height": H})
         page = ctx.new_page()
@@ -213,7 +250,7 @@ def main() -> None:
         mark("deposit_opened")
         page.wait_for_timeout(4000)
         verify = page.locator("#paypal-panel button", has_text="Verify deposit with PayPal")
-        glide("#paypal-panel", "start")
+        glide("#explain-card", "start")
         verify_text = ""
         if verify.is_enabled():
             verify.click()
@@ -236,11 +273,19 @@ def main() -> None:
         video_path = page.video.path()
         popup_videos = [p.video.path() for p in popups if p.video]
         ctx.close()
+
+        # 7. Proof in PayPal itself: each Sandbox account's own activity (the person signs in).
+        proof_videos = {}
+        for account in ([] if args.skip_paypal_proof else ["business", "personal"]):
+            proof_videos[account] = record_paypal_activity(browser, out, account, say)
         browser.close()
 
     shutil.copyfile(video_path, out / "live.webm")
     for i, path in enumerate(popup_videos, 1):
         shutil.copyfile(path, out / f"popup_{i}.webm")
+    for account, path in proof_videos.items():
+        if path:
+            shutil.copyfile(path, out / f"paypal_{account}.webm")
     (out / "marks.json").write_text(json.dumps(marks, indent=2), encoding="utf-8")
     (out / "verify.txt").write_text(verify_text, encoding="utf-8")
     print("saved", out)

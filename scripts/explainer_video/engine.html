@@ -263,12 +263,29 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:#000}
 .headline .meta{font:600 24px 'JetBrains Mono',monospace;color:var(--muted);margin-bottom:12px}
 .headline h3{font:800 52px/1.15 Inter}
 .headline mark{background:linear-gradient(transparent 55%,rgba(224,53,43,.35) 55%);color:inherit;padding:0 4px}
+
+/* SARA logo (mask filled with the brand green) */
+.lmark,.llock{display:inline-block;background:#2FB565;-webkit-mask:url(/server/static/brand/sara-mark.png) center/contain no-repeat;mask:url(/server/static/brand/sara-mark.png) center/contain no-repeat}
+.llock{-webkit-mask-image:url(/server/static/brand/sara-logo.png);mask-image:url(/server/static/brand/sara-logo.png)}
+.paper .lmark,.paper .llock{background:#025922}
+.brandmark .lmark{width:34px;height:34px}
+.bpatch .lmark{width:22px;height:22px}
+.flood .shield .lmark{width:76px;height:76px}
+/* title card */
+.title{text-align:center}
+.title .llock{width:760px;height:235px}
+.title h2{font:800 76px Inter;letter-spacing:-.03em;margin-top:40px}
+.title h2 em{font-style:normal;color:#3DDC84}.title h2 i{font-style:normal;color:#FF5D5D}
+.title p{font:600 30px 'JetBrains Mono',monospace;color:var(--muted);margin-top:30px;letter-spacing:.03em}
+.title .pills{display:flex;gap:18px;justify-content:center;margin-top:34px}
+.title .pills span{font:700 28px Inter;padding:12px 26px;border-radius:999px;background:var(--card);border:1px solid var(--line)}
+.end .llock{width:560px;height:173px;margin-bottom:10px}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script>
-const SHIELD = '<svg viewBox="0 0 32 32"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="#5B8CFF"/><path d="m10 16 4 4 8-8" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/></svg>';
+const SHIELD = '<span class="lmark"></span>';
 const SHIELD_W = '<svg viewBox="0 0 32 32"><path d="M16 2 4 7v8c0 7.5 5.1 13.7 12 15 6.9-1.3 12-7.5 12-15V7z" fill="#fff"/><path d="m10 16 4 4 8-8" stroke="#2F5BFF" stroke-width="3" fill="none" stroke-linecap="round"/></svg>';
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const rich = (s) => esc(s).replace(/\*([^*]+)\*/g, '<em style="font-style:inherit;color:var(--accent)">$1</em>');
@@ -612,9 +629,18 @@ V.tiles = (v, s, cue, A) => {
   return el;
 };
 
+V.title = (v, s, cue, A) => {
+  const el = h(`<div class="title"><span class="llock it"></span><h2 class="it">${v.tagline}</h2><p class="it">${esc(v.sub)}</p><div class="pills it">${(v.pills || []).map((p) => `<span>${esc(p)}</span>`).join('')}</div></div>`);
+  anim(A, el.querySelector('.llock'), 0.1, 'pop', 0.7, { sfx: 'impact' });
+  anim(A, el.querySelector('h2'), cue(v.cue, 0.9), 'rise', 0.5);
+  anim(A, el.querySelector('p'), cue(v.subCue, 1.5), 'rise', 0.5);
+  anim(A, el.querySelector('.pills'), cue(v.pillsCue, 1.9), 'rise', 0.5);
+  return el;
+};
+
 V.end = (v, s, cue, A) => {
-  const el = h(`<div class="end"><div class="orb it">${SHIELD_W}</div><h2 class="it">${rich(v.title)}</h2><p class="it">${rich(v.sub)}</p><div class="pills it">${v.pills.map((p) => `<span>${esc(p)}</span>`).join('')}</div><div class="repo it">${esc(v.repo)}</div></div>`);
-  ['.orb', 'h2', 'p', '.pills', '.repo'].forEach((q, i) => anim(A, el.querySelector(q), 0.1 + i * 0.35, i ? 'rise' : 'pop', 0.5));
+  const el = h(`<div class="end"><div class="orb it" style="display:none"></div><span class="llock it"></span><h2 class="it">${rich(v.title)}</h2><p class="it">${rich(v.sub)}</p><div class="pills it">${v.pills.map((p) => `<span>${esc(p)}</span>`).join('')}</div><div class="repo it">${esc(v.repo)}</div></div>`);
+  ['.llock', 'h2', 'p', '.pills', '.repo'].forEach((q, i) => anim(A, el.querySelector(q), 0.1 + i * 0.35, i ? 'rise' : 'pop', 0.5));
   return el;
 };
 

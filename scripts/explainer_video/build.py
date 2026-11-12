@@ -135,15 +135,23 @@ def cut_frames(sb: dict, tl: list[dict]) -> None:
         speed = (v["to"] - v["from"]) / info["dur"]
         v["speed"] = speed
         stamp = fdir / "spec.json"
-        spec = {"from": v["from"], "to": v["to"], "dur": info["dur"], "src": v["src"]}
+        spec = {"from": v["from"], "to": v["to"], "dur": info["dur"], "src": v["src"], "crop": v.get("crop")}
         if stamp.exists() and json.loads(stamp.read_text()) == spec:
             continue
         shutil.rmtree(fdir, ignore_errors=True)
         fdir.mkdir(parents=True)
         print(f"  frames {sc['id']}: {v['from']}-{v['to']}s at {speed:.2f}x", flush=True)
         run([FF, "-y", "-v", "error", "-ss", str(v["from"]), "-to", str(v["to"]), "-i", str(OUT / v["src"]),
-             "-vf", f"setpts=(PTS-STARTPTS)/{speed:.5f},fps={FPS},scale=1340:754:flags=lanczos", "-q:v", "3", str(fdir / "%05d.jpg")])
+             "-vf", f"setpts=(PTS-STARTPTS)/{speed:.5f},fps={FPS},{_frame_filter(v)}", "-q:v", "3", str(fdir / "%05d.jpg")])
         stamp.write_text(json.dumps(spec))
+
+
+def _frame_filter(v: dict) -> str:
+    """Scale a recording to the browser frame; with "crop" (w:h:x:y), show that part, centered."""
+    if not v.get("crop"):
+        return "scale=1340:754:flags=lanczos"
+    return (f"crop={v['crop']},scale=1340:754:force_original_aspect_ratio=decrease:flags=lanczos,"
+            "pad=1340:754:(ow-iw)/2:(oh-ih)/2:color=0xE9EDF3")
 
 
 # --- render ------------------------------------------------------------------------------
@@ -396,8 +404,9 @@ def main() -> None:
     ap.add_argument("--only-preview", default="")
     ap.add_argument("--force-voice", action="store_true")
     ap.add_argument("--skip-voice", action="store_true")
+    ap.add_argument("--storyboard", default="storyboard.json")
     args = ap.parse_args()
-    sb = json.loads((HERE / "storyboard.json").read_text(encoding="utf-8"))
+    sb = json.loads((HERE / args.storyboard).read_text(encoding="utf-8"))
     BUILD.mkdir(parents=True, exist_ok=True)
     if not args.skip_voice:
         make_voice(sb, args.force_voice)
