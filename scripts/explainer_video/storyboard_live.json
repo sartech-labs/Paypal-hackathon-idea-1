@@ -163,7 +163,7 @@
    "theme": "paper",
    "chapter": "// who it hurts: website owners",
    "counter": null,
-   "vo": "So owners either block every agent, and lose the customers behind them, or let them all in, and pay for the bad ones.",
+   "vo": "So owners either block every agent and lose the customers behind them, or let them all in and pay for the bad ones.",
    "caption": "Owners *block every agent* and lose the customers behind them, / or *let them all in* and pay for the bad ones.",
    "visual": {
     "type": "walls",
@@ -216,8 +216,8 @@
    "visual": {
     "type": "rec",
     "src": "rec_live/live.webm",
-    "from": 0.6,
-    "to": 6.8,
+    "from": 0.5,
+    "to": 6.5,
     "url": "sara-gateway.onrender.com",
     "badge": "LIVE · PayPal Sandbox"
    },
@@ -233,8 +233,8 @@
    "visual": {
     "type": "rec",
     "src": "rec_live/live.webm",
-    "from": 28.9,
-    "to": 46.5,
+    "from": 27.0,
+    "to": 44.5,
     "url": "sara-gateway.onrender.com/console · Websites → Setup",
     "badge": "LIVE · PayPal Sandbox"
    },
@@ -250,8 +250,8 @@
    "visual": {
     "type": "rec",
     "src": "rec_live/live.webm",
-    "from": 46.5,
-    "to": 56.5,
+    "from": 44.5,
+    "to": 51.5,
     "url": "sandbox.paypal.com · Log in with PayPal",
     "badge": "LIVE · PayPal Sandbox"
    },
@@ -267,8 +267,8 @@
    "visual": {
     "type": "rec",
     "src": "rec_live/live.webm",
-    "from": 73.6,
-    "to": 86.5,
+    "from": 62.2,
+    "to": 75.5,
     "url": "sara-gateway.onrender.com/console · Websites → Setup",
     "badge": "LIVE · PayPal Sandbox",
     "cam": [
@@ -285,15 +285,15 @@
   {
    "id": "L12",
    "theme": "midnight",
-   "chapter": "// playground · attack your own site",
+   "chapter": "// playground · agents that act like real ones",
    "counter": null,
-   "vo": "Now I attack my own site. This AI price scraper is told to copy everything. The gateway answers with a 402: pay a deposit first.",
-   "caption": "Now I *attack my own site* with an AI price scraper. / The gateway answers *402:* pay a deposit first.",
+   "vo": "Before real agents arrive, I test my own site in the playground. Its AI agents behave just like real ones, good or bad. This price scraper is told to copy everything. The gateway answers with a 402: pay a deposit first.",
+   "caption": "I test my own site in the *playground:* AI agents that behave *just like real ones.* / This price scraper gets a *402:* pay a deposit first.",
    "visual": {
     "type": "rec",
     "src": "rec_live/live.webm",
-    "from": 86.5,
-    "to": 104.0,
+    "from": 75.5,
+    "to": 94.2,
     "url": "sara-gateway.onrender.com/console · Websites → Playground",
     "badge": "LIVE · PayPal Sandbox"
    },
@@ -309,8 +309,8 @@
    "visual": {
     "type": "rec",
     "src": "rec_live/popup_1.webm",
-    "from": 18.4,
-    "to": 24.6,
+    "from": 11.5,
+    "to": 16.3,
     "crop": "580:520:0:0",
     "url": "sandbox.paypal.com · approve the deposit",
     "badge": "LIVE · PayPal Sandbox"
@@ -327,8 +327,8 @@
    "visual": {
     "type": "rec",
     "src": "rec_live/live.webm",
-    "from": 129.0,
-    "to": 171.0,
+    "from": 110.6,
+    "to": 139.8,
     "url": "sara-gateway.onrender.com/console · Playground (sped up)",
     "badge": "LIVE · PayPal Sandbox",
     "cam": [
@@ -353,8 +353,8 @@
    "visual": {
     "type": "rec",
     "src": "rec_live/live.webm",
-    "from": 172.0,
-    "to": 178.9,
+    "from": 140.0,
+    "to": 147.7,
     "url": "sara-gateway.onrender.com/console · Playground",
     "badge": "LIVE · PayPal Sandbox",
     "cam": [
@@ -378,8 +378,8 @@
    "visual": {
     "type": "rec",
     "src": "rec_live/live.webm",
-    "from": 200.5,
-    "to": 261.0,
+    "from": 168.4,
+    "to": 221.6,
     "url": "sara-gateway.onrender.com/console · Playground (sped up)",
     "badge": "LIVE · PayPal Sandbox",
     "cam": [
@@ -398,27 +398,27 @@
    "theme": "midnight",
    "chapter": "// the money · AG Grid",
    "counter": null,
-   "vo": "Every deposit lands in the money dashboard, built on AG Grid, with its PayPal reference. Verify with PayPal checks it against PayPal's own records, through PayPal's MCP server. Every field matches.",
-   "caption": "Every deposit, in an *AG Grid* dashboard, with its PayPal reference. / *Verify with PayPal* checks PayPal's own records through *PayPal's MCP server.*",
+   "vo": "Every deposit lands in the money dashboard with its PayPal reference. Verify with PayPal checks PayPal's own records, through PayPal's MCP server. Every field matches.",
+   "caption": "Every deposit, with its *PayPal reference.* / *Verify with PayPal* checks PayPal's own records through *PayPal's MCP server.*",
    "visual": {
     "type": "rec",
     "src": "rec_live/live.webm",
-    "from": 262.2,
-    "to": 294.0,
+    "from": 224.1,
+    "to": 255.5,
     "url": "sara-gateway.onrender.com/console · Money → Deposits",
     "badge": "LIVE · PayPal Sandbox",
     "cam": [
      {
       "cue": "Verify",
-      "x": 0.6,
-      "y": 0.45,
-      "s": 1.2
+      "x": 0.72,
+      "y": 0.5,
+      "s": 1.35
      },
      {
       "cue": "matches",
-      "x": 0.78,
-      "y": 0.42,
-      "s": 1.5
+      "x": 0.75,
+      "y": 0.45,
+      "s": 1.6
      }
     ]
    },
@@ -434,8 +434,8 @@
    "visual": {
     "type": "rec",
     "src": "rec_live/live.webm",
-    "from": 294.1,
-    "to": 300.4,
+    "from": 255.6,
+    "to": 262.0,
     "url": "sara-gateway.onrender.com/console · Money → Earnings",
     "badge": "LIVE · PayPal Sandbox"
    },
@@ -451,8 +451,8 @@
    "visual": {
     "type": "rec",
     "src": "rec_live/live.webm",
-    "from": 300.5,
-    "to": 306.4,
+    "from": 262.0,
+    "to": 268.0,
     "url": "sara-gateway.onrender.com/console · Overview",
     "badge": "LIVE · PayPal Sandbox",
     "cam": [
@@ -460,6 +460,110 @@
       "cue": "who",
       "x": 0.55,
       "y": 0.3,
+      "s": 1.4
+     }
+    ]
+   },
+   "act": 3
+  },
+  {
+   "id": "G01",
+   "theme": "midnight",
+   "chapter": "// AG Grid · a gateway with more agent traffic",
+   "counter": null,
+   "vo": "With more agents through the gateway, every table is AG Grid. The owner filters kept or returned deposits, sorts any column, expands a row for its PayPal IDs, and sees every blocked request with the rule it broke.",
+   "caption": "Every table is *AG Grid:* filter, sort, and expand a row for its *PayPal IDs.* / Every blocked request, with the *rule it broke.*",
+   "visual": {
+    "type": "rec",
+    "src": "rec_grid/grid.webm",
+    "from": 9.6,
+    "to": 33.0,
+    "url": "localhost:8014/console · Money → Deposits · Agents → Violations",
+    "badge": "LOCAL · PayPal Sandbox",
+    "cam": [
+     {
+      "cue": "filters",
+      "x": 0.5,
+      "y": 0.35,
+      "s": 1.3
+     },
+     {
+      "cue": "expands",
+      "x": 0.5,
+      "y": 0.35,
+      "s": 1.35
+     },
+     {
+      "cue": "blocked",
+      "x": 0.5,
+      "y": 0.55,
+      "s": 1.25
+     }
+    ]
+   },
+   "act": 3
+  },
+  {
+   "id": "G02",
+   "theme": "midnight",
+   "chapter": "// AG Studio · analytics",
+   "counter": null,
+   "vo": "And AG Studio turns the same records into live dashboards: deposit outcomes, money kept and released, attacks by type, and how each AI agent behaved.",
+   "caption": "*AG Studio* dashboards: deposit outcomes, money kept and released, / *attacks by type,* and how each AI agent behaved.",
+   "visual": {
+    "type": "rec",
+    "src": "rec_grid/grid.webm",
+    "from": 34.0,
+    "to": 58.4,
+    "url": "localhost:8014/console · Money → Analytics",
+    "badge": "LOCAL · PayPal Sandbox"
+   },
+   "act": 3
+  },
+  {
+   "id": "P01",
+   "theme": "midnight",
+   "chapter": "// proof in PayPal · the website owner's account",
+   "counter": null,
+   "vo": "And here is the proof in PayPal itself. In the website owner's account, the rule breaker's five dollars is completed, and the honest agent's hold is canceled.",
+   "caption": "Proof in *PayPal itself:* the owner's account. / The rule breaker's $5: *Completed.* The honest agent's hold: *Canceled.*",
+   "visual": {
+    "type": "rec",
+    "src": "rec_live/paypal_business.webm",
+    "from": 70.5,
+    "to": 78.5,
+    "url": "sandbox.paypal.com · business account · Recent activity",
+    "badge": "LIVE · PayPal Sandbox",
+    "cam": [
+     {
+      "cue": "owner's",
+      "x": 0.55,
+      "y": 0.32,
+      "s": 1.5
+     }
+    ]
+   },
+   "act": 3
+  },
+  {
+   "id": "P02",
+   "theme": "midnight",
+   "chapter": "// proof in PayPal · the agent's account",
+   "counter": null,
+   "vo": "And in the account that paid for the agent, the same SARA deposit, paid to the website.",
+   "caption": "The account that paid for the agent: / the same *SARA deposit,* paid to the website.",
+   "visual": {
+    "type": "rec",
+    "src": "rec_live/paypal_personal.webm",
+    "from": 42.0,
+    "to": 56.5,
+    "url": "sandbox.paypal.com · personal account · Activities",
+    "badge": "LIVE · PayPal Sandbox",
+    "cam": [
+     {
+      "cue": "SARA",
+      "x": 0.6,
+      "y": 0.55,
       "s": 1.4
      }
     ]

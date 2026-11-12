@@ -863,8 +863,10 @@ SANDBOX_VAULT_CARD: dict[str, str] = {
     "name": "SARA Sandbox Agent",
 }
 
+# PayPal's Sandbox stopped accepting the 4032 0393 test Visa for these orders in November 2026
+# (PAYER_CANNOT_PAY), so deposits use the same published test Visa as saved cards.
 SANDBOX_TEST_CARD: dict[str, str] = {
-    "number": "4032039317984658",
+    "number": "4111111111111111",
     "expiry": "2030-12",
     "security_code": "123",
     "name": "SARA Sandbox Agent",
